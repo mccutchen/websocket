@@ -1,4 +1,4 @@
-# github.com/mccutchen/websocket
+# websocket
 
 [![Documentation](https://pkg.go.dev/badge/github.com/mccutchen/websocket)](https://pkg.go.dev/github.com/mccutchen/websocket)
 [![Build status](https://github.com/mccutchen/websocket/actions/workflows/test.yaml/badge.svg)](https://github.com/mccutchen/websocket/actions/workflows/test.yaml)
