@@ -155,7 +155,9 @@ func (s *WebSocket) Serve(handler Handler) {
 
 	// best effort attempt to ensure that our websocket conenctions do not
 	// exceed the maximum request duration
-	conn.SetDeadline(time.Now().Add(s.maxDuration))
+	if err := conn.SetDeadline(time.Now().Add(s.maxDuration)); err != nil {
+		panic(fmt.Errorf("websocket: serve: failed to set deadline on connection: %s", err))
+	}
 
 	// errors intentionally ignored here. it's serverLoop's responsibility to
 	// properly close the websocket connection with a useful error message, and
@@ -474,6 +476,6 @@ func acceptKey(clientKey string) string {
 	// Magic value comes from RFC 6455 section 1.3: Opening Handshake
 	// https://www.rfc-editor.org/rfc/rfc6455#section-1.3
 	h := sha1.New()
-	io.WriteString(h, clientKey+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+	_, _ = io.WriteString(h, clientKey+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }

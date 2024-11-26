@@ -169,7 +169,7 @@ func TestHandshakeOrder(t *testing.T) {
 			}
 			assert.Equal(t, fmt.Sprint(r), "websocket: handshake already completed", "incorrect panic message")
 		}()
-		ws.Handshake()
+		_ = ws.Handshake()
 	})
 
 	t.Run("handshake not completed", func(t *testing.T) {
@@ -323,7 +323,7 @@ func TestConnectionLimits(t *testing.T) {
 
 		// should cause the client end of the connection to close well before
 		// the max request time configured above
-		conn.SetDeadline(time.Now().Add(clientTimeout))
+		assert.NilError(t, conn.SetDeadline(time.Now().Add(clientTimeout)))
 
 		reqParts := []string{
 			"GET /websocket/echo HTTP/1.1",
