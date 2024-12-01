@@ -155,11 +155,13 @@ func (s *WebSocket) Serve(handler Handler) {
 
 	// best effort attempt to ensure that our websocket conenctions do not
 	// exceed the maximum request duration
-	if err := conn.SetDeadline(time.Now().Add(s.maxDuration)); err != nil {
-		panic(fmt.Errorf("websocket: serve: failed to set deadline on connection: %s", err))
+	if s.maxDuration > 0 {
+		if err := conn.SetDeadline(time.Now().Add(s.maxDuration)); err != nil {
+			panic(fmt.Errorf("websocket: serve: failed to set deadline on connection: %s", err))
+		}
 	}
 
-	// errors intentionally ignored here. it's serverLoop's responsibility to
+	// errors intentionally ignored here. it's serveLoop's responsibility to
 	// properly close the websocket connection with a useful error message, and
 	// any unexpected error returned from serverLoop is not actionable.
 	_ = s.serveLoop(s.r.Context(), buf, handler)
