@@ -241,7 +241,7 @@ func (s *WebSocket) serveLoop(ctx context.Context, buf *bufio.ReadWriter, handle
 	}
 }
 
-func nextFrame(buf *bufio.ReadWriter) (*Frame, error) {
+func nextFrame(buf io.Reader) (*Frame, error) {
 	bb := make([]byte, 2)
 	if _, err := io.ReadFull(buf, bb); err != nil {
 		return nil, err
