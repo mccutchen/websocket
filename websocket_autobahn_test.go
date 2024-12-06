@@ -191,7 +191,8 @@ func loadSummary(t *testing.T, testDir string) autobahnReportSummary {
 func loadReport(t *testing.T, testDir string, reportFile string) autobahnReportResult {
 	t.Helper()
 	reportPath := path.Join(testDir, "report", reportFile)
-	t.Logf("report path: %s", reportPath)
+	t.Logf("report data: %s", reportPath)
+	t.Logf("report html: file://%s", strings.Replace(reportPath, ".json", ".html", 1))
 	f, err := os.Open(reportPath)
 	assert.NilError(t, err)
 	var report autobahnReportResult

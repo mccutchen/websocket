@@ -4,8 +4,9 @@ package websocket
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -106,6 +107,7 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 	for {
 		select {
 		case <-ctx.Done():
+			_ = c.Close()
 			return nil, ctx.Err()
 		default:
 			if c.closed.Load() {
@@ -115,20 +117,20 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 
 		frame, err := nextFrame(c.buf)
 		if err != nil {
-			return nil, c.closeWithError(StatusServerError, err)
+			return nil, c.closeWithErrorReturned(StatusServerError, err)
 		}
 
 		if err := validateFrame(frame, c.maxFragmentSize); err != nil {
-			return nil, c.closeWithError(StatusProtocolError, err)
+			return nil, c.closeWithErrorReturned(StatusProtocolError, err)
 		}
 
 		switch frame.Opcode {
 		case OpcodeBinary, OpcodeText:
 			if msg != nil {
-				return nil, c.closeWithError(StatusProtocolError, errors.New("expected continuation frame"))
+				return nil, c.closeWithErrorReturned(StatusProtocolError, ErrContinuationExpected)
 			}
 			if frame.Opcode == OpcodeText && !utf8.Valid(frame.Payload) {
-				return nil, c.closeWithError(StatusUnsupportedPayload, errors.New("invalid UTF-8"))
+				return nil, c.closeWithErrorReturned(StatusUnsupportedPayload, ErrInvalidUT8)
 			}
 			msg = &Message{
 				Binary:  frame.Opcode == OpcodeBinary,
@@ -136,26 +138,28 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 			}
 		case OpcodeContinuation:
 			if msg == nil {
-				return nil, c.closeWithError(StatusProtocolError, errors.New("unexpected continuation frame"))
+				return nil, c.closeWithErrorReturned(StatusProtocolError, ErrInvalidContinuation)
 			}
 			if !msg.Binary && !utf8.Valid(frame.Payload) {
-				return nil, c.closeWithError(StatusUnsupportedPayload, errors.New("invalid UTF-8"))
+				return nil, c.closeWithErrorReturned(StatusUnsupportedPayload, ErrInvalidUT8)
 			}
 			msg.Payload = append(msg.Payload, frame.Payload...)
 			if len(msg.Payload) > c.maxMessageSize {
-				return nil, c.closeWithError(StatusTooLarge, fmt.Errorf("message size %d exceeds maximum of %d bytes", len(msg.Payload), c.maxMessageSize))
+				return nil, c.closeWithErrorReturned(StatusTooLarge, fmt.Errorf("message size %d exceeds maximum of %d bytes", len(msg.Payload), c.maxMessageSize))
 			}
 		case OpcodeClose:
-			return nil, c.closeWithError(StatusNormalClosure, nil)
+			_ = c.Close()
+			return nil, io.EOF
 		case OpcodePing:
 			frame.Opcode = OpcodePong
 			if err := writeFrame(c.buf, frame); err != nil {
 				return nil, err
 			}
+			continue
 		case OpcodePong:
-			// no-op
+			continue // no-op
 		default:
-			return nil, c.closeWithError(StatusProtocolError, fmt.Errorf("unsupported opcode: %v", frame.Opcode))
+			return nil, c.closeWithErrorReturned(StatusProtocolError, fmt.Errorf("unsupported opcode: %v", frame.Opcode))
 		}
 
 		if frame.Fin {
@@ -214,4 +218,9 @@ func (c *Conn) closeWithError(code StatusCode, err error) error {
 	}
 	_ = writeCloseFrame(c.buf, code, err)
 	return c.conn.Close()
+}
+
+func (c *Conn) closeWithErrorReturned(code StatusCode, err error) error {
+	_ = c.closeWithError(code, err)
+	return err
 }

@@ -22,7 +22,12 @@ testcover: testci
 	go tool cover -html=$(COVERAGE_PATH)
 .PHONY: testcover
 
-# Run the autobahn fuzzingclient test suite
+# Run the autobahn fuzzingclient test suite (requires docker running locally).
+#
+# To run only a subset of autobahn tests, specify them in an AUTOBAHN_CASES env
+# var:
+#
+#     AUTOBAHN_CASES=5.7,6.12.* make testautobahn
 testautobahn:
 	AUTOBAHN_TESTS=1 AUTOBAHN_OPEN_REPORT=1 go test -v -run ^TestWebSocketServer$$ $(TEST_ARGS) ./...
 .PHONY: autobahntests

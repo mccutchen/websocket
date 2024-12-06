@@ -13,6 +13,12 @@ import (
 
 const requiredVersion = "13"
 
+var (
+	ErrContinuationExpected = errors.New("expected continuation frame")
+	ErrInvalidContinuation  = errors.New("unexpected continuation frame")
+	ErrInvalidUT8           = errors.New("invalid UTF-8")
+)
+
 // Opcode is a websocket OPCODE.
 type Opcode uint8
 
@@ -61,6 +67,14 @@ type Frame struct {
 type Message struct {
 	Binary  bool
 	Payload []byte
+}
+
+func (m Message) String() string {
+	if m.Binary {
+		return fmt.Sprintf("Message{Binary: %v, Payload: %v}", m.Binary, m.Payload)
+	} else {
+		return fmt.Sprintf("Message{Binary: %v, Payload: %q}", m.Binary, m.Payload)
+	}
 }
 
 func nextFrame(buf io.Reader) (*Frame, error) {
