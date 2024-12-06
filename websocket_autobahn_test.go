@@ -54,16 +54,16 @@ func TestWebSocketServer(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ws := websocket.New(w, r, websocket.Limits{
+		ws, err := websocket.Accept(w, r, websocket.Limits{
 			MaxDuration:     30 * time.Second,
 			MaxFragmentSize: 1024 * 1024 * 16,
 			MaxMessageSize:  1024 * 1024 * 16,
 		})
-		if err := ws.Handshake(); err != nil {
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		ws.Serve(websocket.EchoHandler)
+		ws.Serve(r.Context(), websocket.EchoHandler)
 	}))
 	defer srv.Close()
 

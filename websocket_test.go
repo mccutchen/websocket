@@ -17,7 +17,7 @@ import (
 	"github.com/mccutchen/websocket/internal/testing/assert"
 )
 
-func TestHandshake(t *testing.T) {
+func TestAccept(t *testing.T) {
 	testCases := map[string]struct {
 		reqHeaders      map[string]string
 		wantStatus      int
@@ -117,12 +117,12 @@ func TestHandshake(t *testing.T) {
 			t.Parallel()
 
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				ws := websocket.New(w, r, websocket.Limits{})
-				if err := ws.Handshake(); err != nil {
+				ws, err := websocket.Accept(w, r, websocket.Limits{})
+				if err != nil {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
 				}
-				ws.Serve(websocket.EchoHandler)
+				ws.Serve(r.Context(), websocket.EchoHandler)
 			}))
 			defer srv.Close()
 
@@ -140,89 +140,47 @@ func TestHandshake(t *testing.T) {
 			}
 		})
 	}
-}
 
-func TestHandshakeOrder(t *testing.T) {
-	handshakeReq := httptest.NewRequest(http.MethodGet, "/websocket/echo", nil)
-	for k, v := range map[string]string{
-		"Connection":            "upgrade",
-		"Upgrade":               "websocket",
-		"Sec-WebSocket-Key":     "dGhlIHNhbXBsZSBub25jZQ==",
-		"Sec-WebSocket-Version": "13",
-	} {
-		handshakeReq.Header.Set(k, v)
+	// hijack failure cases w/ shared setup
+	{
+		handshakeReq := httptest.NewRequest(http.MethodGet, "/websocket/echo", nil)
+		for k, v := range map[string]string{
+			"Connection":            "upgrade",
+			"Upgrade":               "websocket",
+			"Sec-WebSocket-Key":     "dGhlIHNhbXBsZSBub25jZQ==",
+			"Sec-WebSocket-Version": "13",
+		} {
+			handshakeReq.Header.Set(k, v)
+		}
+
+		t.Run("http.Hijack not implemented", func(t *testing.T) {
+			// confirm that httptest.ResponseRecorder does not implmeent
+			// http.Hjijacker
+			var w http.ResponseWriter = httptest.NewRecorder()
+			_, ok := w.(http.Hijacker)
+			assert.Equal(t, ok, false, "expected httptest.ResponseRecorder not to implement http.Hijacker")
+
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("expected to catch panic on when http.Hijack not implemented")
+				}
+				assert.Equal(t, fmt.Sprint(r), "websocket: accept: server does not support hijacking", "incorrect panic message")
+			}()
+			websocket.Accept(w, handshakeReq, websocket.Limits{})
+		})
+
+		t.Run("hijack failed", func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("expected to catch panic on Serve before Handshake")
+				}
+				assert.Equal(t, fmt.Sprint(r), "websocket: accept: hijack failed: error hijacking connection", "incorrect panic message")
+			}()
+			websocket.Accept(&brokenHijackResponseWriter{}, handshakeReq, websocket.Limits{})
+		})
 	}
-
-	t.Run("double handshake", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		ws := websocket.New(w, handshakeReq, websocket.Limits{})
-
-		// first handshake succeeds
-		assert.NilError(t, ws.Handshake())
-		assert.Equal(t, w.Code, http.StatusSwitchingProtocols, "incorrect status code")
-
-		// second handshake fails
-		defer func() {
-			r := recover()
-			if r == nil {
-				t.Fatalf("expected to catch panic on double handshake")
-			}
-			assert.Equal(t, fmt.Sprint(r), "websocket: handshake already completed", "incorrect panic message")
-		}()
-		_ = ws.Handshake()
-	})
-
-	t.Run("handshake not completed", func(t *testing.T) {
-		defer func() {
-			r := recover()
-			if r == nil {
-				t.Fatalf("expected to catch panic on Serve before Handshake")
-			}
-			assert.Equal(t, fmt.Sprint(r), "websocket: serve: handshake not completed", "incorrect panic message")
-		}()
-		w := httptest.NewRecorder()
-		websocket.New(w, handshakeReq, websocket.Limits{}).Serve(nil)
-	})
-
-	t.Run("http.Hijack not implemented", func(t *testing.T) {
-		// confirm that httptest.ResponseRecorder does not implmeent
-		// http.Hjijacker
-		var rw http.ResponseWriter = httptest.NewRecorder()
-		_, ok := rw.(http.Hijacker)
-		assert.Equal(t, ok, false, "expected httptest.ResponseRecorder not to implement http.Hijacker")
-
-		w := httptest.NewRecorder()
-		ws := websocket.New(w, handshakeReq, websocket.Limits{})
-
-		assert.NilError(t, ws.Handshake())
-		assert.Equal(t, w.Code, http.StatusSwitchingProtocols, "incorrect status code")
-
-		defer func() {
-			r := recover()
-			if r == nil {
-				t.Fatalf("expected to catch panic on when http.Hijack not implemented")
-			}
-			assert.Equal(t, fmt.Sprint(r), "websocket: serve: server does not support hijacking", "incorrect panic message")
-		}()
-		ws.Serve(nil)
-	})
-
-	t.Run("hijack failed", func(t *testing.T) {
-		w := &brokenHijackResponseWriter{}
-		ws := websocket.New(w, handshakeReq, websocket.Limits{})
-
-		assert.NilError(t, ws.Handshake())
-		assert.Equal(t, w.Code, http.StatusSwitchingProtocols, "incorrect status code")
-
-		defer func() {
-			r := recover()
-			if r == nil {
-				t.Fatalf("expected to catch panic on Serve before Handshake")
-			}
-			assert.Equal(t, fmt.Sprint(r), "websocket: serve: hijack failed: error hijacking connection", "incorrect panic message")
-		}()
-		ws.Serve(nil)
-	})
 }
 
 func TestConnectionLimits(t *testing.T) {
@@ -232,17 +190,17 @@ func TestConnectionLimits(t *testing.T) {
 		maxDuration := 500 * time.Millisecond
 
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ws := websocket.New(w, r, websocket.Limits{
+			ws, err := websocket.Accept(w, r, websocket.Limits{
 				MaxDuration: maxDuration,
 				// TODO: test these limits as well
 				MaxFragmentSize: 128,
 				MaxMessageSize:  256,
 			})
-			if err := ws.Handshake(); err != nil {
+			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			ws.Serve(websocket.EchoHandler)
+			ws.Serve(r.Context(), websocket.EchoHandler)
 		}))
 		defer srv.Close()
 
@@ -303,16 +261,16 @@ func TestConnectionLimits(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer wg.Done()
 			start := time.Now()
-			ws := websocket.New(w, r, websocket.Limits{
+			ws, err := websocket.Accept(w, r, websocket.Limits{
 				MaxDuration:     serverTimeout,
 				MaxFragmentSize: 128,
 				MaxMessageSize:  256,
 			})
-			if err := ws.Handshake(); err != nil {
+			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			ws.Serve(websocket.EchoHandler)
+			ws.Serve(r.Context(), websocket.EchoHandler)
 			elapsedServerTime = time.Since(start)
 		}))
 		defer srv.Close()
@@ -346,6 +304,7 @@ func TestConnectionLimits(t *testing.T) {
 			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 			assert.NilError(t, err)
 			assert.StatusCode(t, resp, http.StatusSwitchingProtocols)
+			t.Logf("handshake completed")
 		}
 
 		// next, we try to read from the connection, expecting the connection
@@ -361,6 +320,7 @@ func TestConnectionLimits(t *testing.T) {
 			// close client connection, which should interrupt the server's
 			// blocking read call on the connection
 			conn.Close()
+			t.Logf("client connection closed")
 
 			assert.Equal(t, os.IsTimeout(err), true, "expected timeout error")
 			assert.RoughlyEqual(t, elapsedClientTime, clientTimeout, 10*time.Millisecond)

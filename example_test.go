@@ -8,18 +8,16 @@ import (
 )
 
 func ExampleEchoHandler() {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
-		ws := websocket.New(w, r, websocket.Limits{
+	http.ListenAndServe(":8080", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, websocket.Limits{
 			MaxDuration:     10 * time.Second,
 			MaxFragmentSize: 10 * 1024,
 			MaxMessageSize:  512 * 1024,
 		})
-		if err := ws.Handshake(); err != nil {
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		ws.Serve(websocket.EchoHandler)
-	})
-	http.ListenAndServe(":8080", mux)
+		ws.Serve(r.Context(), websocket.EchoHandler)
+	}))
 }
