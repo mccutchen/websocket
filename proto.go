@@ -17,6 +17,7 @@ var (
 	ErrContinuationExpected = errors.New("expected continuation frame")
 	ErrInvalidContinuation  = errors.New("unexpected continuation frame")
 	ErrInvalidUT8           = errors.New("invalid UTF-8")
+	ErrUnmaskedClientFrame  = errors.New("received unmasked client frame")
 )
 
 // Opcode is a websocket OPCODE.
@@ -77,10 +78,10 @@ func (m Message) String() string {
 	}
 }
 
-func nextFrame(buf io.Reader) (*Frame, error) {
+func readFrame(buf io.Reader) (*Frame, error) {
 	bb := make([]byte, 2)
 	if _, err := io.ReadFull(buf, bb); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error reading frame header: %w", err)
 	}
 
 	b0 := bb[0]
@@ -97,7 +98,7 @@ func nextFrame(buf io.Reader) (*Frame, error) {
 	// Per https://datatracker.ietf.org/doc/html/rfc6455#section-5.2, all
 	// client frames must be masked.
 	if masked := b1 & 0b10000000; masked == 0 {
-		return nil, fmt.Errorf("received unmasked client frame")
+		return nil, ErrUnmaskedClientFrame
 	}
 
 	var payloadLength uint64
@@ -109,24 +110,24 @@ func nextFrame(buf io.Reader) (*Frame, error) {
 		// Payload length is represented in the next 2 bytes (16-bit unsigned integer)
 		var l uint16
 		if err := binary.Read(buf, binary.BigEndian, &l); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error reading 2-byte extended payload length: %w", err)
 		}
 		payloadLength = uint64(l)
 	case b1-128 == 127:
 		// Payload length is represented in the next 8 bytes (64-bit unsigned integer)
 		if err := binary.Read(buf, binary.BigEndian, &payloadLength); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error reading 8-byte extended payload length: %w", err)
 		}
 	}
 
 	mask := make([]byte, 4)
 	if _, err := io.ReadFull(buf, mask); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error reading mask key: %w", err)
 	}
 
 	payload := make([]byte, payloadLength)
 	if _, err := io.ReadFull(buf, payload); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error reading payload: %w", err)
 	}
 
 	for i, b := range payload {
@@ -209,9 +210,9 @@ func writeCloseFrame(dst *bufio.ReadWriter, code StatusCode, err error) error {
 	})
 }
 
-// frameResponse splits a message into N frames with payloads of at most
+// messageFrames splits a message into N frames with payloads of at most
 // fragmentSize bytes.
-func frameResponse(msg *Message, fragmentSize int) []*Frame {
+func messageFrames(msg *Message, fragmentSize int) []*Frame {
 	var result []*Frame
 
 	fin := false
@@ -277,7 +278,7 @@ func validateFrame(frame *Frame, maxFragmentSize int) error {
 		// and MUST NOT be fragmented.
 		// https://datatracker.ietf.org/doc/html/rfc6455#section-5.5
 		if len(frame.Payload) > 125 {
-			return fmt.Errorf("frame payload size %d exceeds 125 bytes", len(frame.Payload))
+			return fmt.Errorf("control frame %v payload size %d exceeds 125 bytes", frame.Opcode, len(frame.Payload))
 		}
 		if !frame.Fin {
 			return fmt.Errorf("control frame %v must not be fragmented", frame.Opcode)

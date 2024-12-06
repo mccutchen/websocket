@@ -113,7 +113,7 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 		default:
 		}
 
-		frame, err := nextFrame(c.buf)
+		frame, err := readFrame(c.buf)
 		if err != nil {
 			return nil, c.closeWithErrorReturned(StatusServerError, err)
 		}
@@ -157,18 +157,18 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 		case OpcodePong:
 			continue // no-op
 		default:
-			return nil, c.closeWithErrorReturned(StatusProtocolError, fmt.Errorf("unsupported opcode: %v", frame.Opcode))
+			return nil, c.closeOnReadError(StatusProtocolError, fmt.Errorf("unsupported opcode: %v", frame.Opcode))
 		}
 
 		if frame.Fin {
+			c.hooks.OnReadMessage(c.clientKey, msg)
 			return msg, nil
 		}
 	}
 }
 
 func (c *Conn) Write(ctx context.Context, msg *Message) error {
-	frames := frameResponse(msg, c.maxFragmentSize)
-	for _, frame := range frames {
+	for _, frame := range messageFrames(msg, c.maxFragmentSize) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
