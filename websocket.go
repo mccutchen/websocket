@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -25,27 +24,48 @@ var EchoHandler Handler = func(_ context.Context, msg *Message) (*Message, error
 	return msg, nil
 }
 
-// Limits define the limits imposed on a websocket connection.
-type Limits struct {
+// Options define the limits imposed on a websocket connection.
+type Options struct {
+	Hooks           Hooks
 	MaxDuration     time.Duration
 	MaxFragmentSize int
 	MaxMessageSize  int
 }
 
+type Hooks struct {
+	// OnClose is called when the connection is closed.
+	OnClose func(ClientKey, StatusCode, error)
+	// OnReadError is called when a read error occurs.
+	OnReadError func(ClientKey, error)
+	// OnReadFrame is called when a frame is read.
+	OnReadFrame func(ClientKey, *Frame)
+	// OnReadMessage is called when a complete message is read.
+	OnReadMessage func(ClientKey, *Message)
+	// OnWriteError is called when a write error occurs.
+	OnWriteError func(ClientKey, error)
+	// OnWriteFrame is called when a frame is written.
+	OnWriteFrame func(ClientKey, *Frame)
+	// OnWriteMessage is called when a complete message is written.
+	OnWriteMessage func(ClientKey, *Message)
+}
+
 // Conn is a websocket connection.
 type Conn struct {
-	conn   net.Conn
-	buf    *bufio.ReadWriter
-	closed *atomic.Bool
+	conn      net.Conn
+	buf       *bufio.ReadWriter
+	clientKey ClientKey
+	closedCh  chan struct{}
 
+	hooks           Hooks
 	maxDuration     time.Duration
 	maxFragmentSize int
 	maxMessageSize  int
 }
 
 // Accept upgrades an HTTP connection to a websocket connection.
-func Accept(w http.ResponseWriter, r *http.Request, limits Limits) (*Conn, error) {
-	if err := handshake(w, r); err != nil {
+func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Conn, error) {
+	clientKey, err := handshake(w, r)
+	if err != nil {
 		return nil, fmt.Errorf("websocket: accept: handshake failed: %w", err)
 	}
 
@@ -61,8 +81,8 @@ func Accept(w http.ResponseWriter, r *http.Request, limits Limits) (*Conn, error
 
 	// best effort attempt to ensure that our websocket conenctions do not
 	// exceed the maximum request duration
-	if limits.MaxDuration > 0 {
-		if err := conn.SetDeadline(time.Now().Add(limits.MaxDuration)); err != nil {
+	if opts.MaxDuration > 0 {
+		if err := conn.SetDeadline(time.Now().Add(opts.MaxDuration)); err != nil {
 			panic(fmt.Errorf("websocket: serve: failed to set deadline on connection: %s", err))
 		}
 	}
@@ -70,33 +90,60 @@ func Accept(w http.ResponseWriter, r *http.Request, limits Limits) (*Conn, error
 	return &Conn{
 		conn:            conn,
 		buf:             buf,
-		closed:          &atomic.Bool{},
-		maxDuration:     limits.MaxDuration,
-		maxFragmentSize: limits.MaxFragmentSize,
-		maxMessageSize:  limits.MaxMessageSize,
+		closedCh:        make(chan struct{}),
+		clientKey:       clientKey,
+		hooks:           setupHooks(opts.Hooks),
+		maxDuration:     opts.MaxDuration,
+		maxFragmentSize: opts.MaxFragmentSize,
+		maxMessageSize:  opts.MaxMessageSize,
 	}, nil
+}
+
+func setupHooks(hooks Hooks) Hooks {
+	if hooks.OnClose == nil {
+		hooks.OnClose = func(ClientKey, StatusCode, error) {}
+	}
+	if hooks.OnReadError == nil {
+		hooks.OnReadError = func(ClientKey, error) {}
+	}
+	if hooks.OnReadFrame == nil {
+		hooks.OnReadFrame = func(ClientKey, *Frame) {}
+	}
+	if hooks.OnReadMessage == nil {
+		hooks.OnReadMessage = func(ClientKey, *Message) {}
+	}
+	if hooks.OnWriteError == nil {
+		hooks.OnWriteError = func(ClientKey, error) {}
+	}
+	if hooks.OnWriteFrame == nil {
+		hooks.OnWriteFrame = func(ClientKey, *Frame) {}
+	}
+	if hooks.OnWriteMessage == nil {
+		hooks.OnWriteMessage = func(ClientKey, *Message) {}
+	}
+	return hooks
 }
 
 // handshake validates the request and performs the WebSocket handshake, after
 // which only websocket frames should be written to the underlying connection.
-func handshake(w http.ResponseWriter, r *http.Request) error {
+func handshake(w http.ResponseWriter, r *http.Request) (ClientKey, error) {
 	if strings.ToLower(r.Header.Get("Upgrade")) != "websocket" {
-		return fmt.Errorf("missing required `Upgrade: websocket` header")
+		return "", fmt.Errorf("missing required `Upgrade: websocket` header")
 	}
 	if v := r.Header.Get("Sec-Websocket-Version"); v != requiredVersion {
-		return fmt.Errorf("only websocket version %q is supported, got %q", requiredVersion, v)
+		return "", fmt.Errorf("only websocket version %q is supported, got %q", requiredVersion, v)
 	}
 
 	clientKey := r.Header.Get("Sec-Websocket-Key")
 	if clientKey == "" {
-		return fmt.Errorf("missing required `Sec-Websocket-Key` header")
+		return "", fmt.Errorf("missing required `Sec-Websocket-Key` header")
 	}
 
 	w.Header().Set("Connection", "upgrade")
 	w.Header().Set("Upgrade", "websocket")
 	w.Header().Set("Sec-Websocket-Accept", acceptKey(clientKey))
 	w.WriteHeader(http.StatusSwitchingProtocols)
-	return nil
+	return ClientKey(clientKey), nil
 }
 
 // Read reads a single websocket message from the connection. Ping/pong frames
@@ -115,20 +162,20 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 
 		frame, err := readFrame(c.buf)
 		if err != nil {
-			return nil, c.closeWithErrorReturned(StatusServerError, err)
+			return nil, c.closeOnReadError(StatusServerError, err)
 		}
-
 		if err := validateFrame(frame, c.maxFragmentSize); err != nil {
-			return nil, c.closeWithErrorReturned(StatusProtocolError, err)
+			return nil, c.closeOnReadError(StatusProtocolError, err)
 		}
+		c.hooks.OnReadFrame(c.clientKey, frame)
 
 		switch frame.Opcode {
 		case OpcodeBinary, OpcodeText:
 			if msg != nil {
-				return nil, c.closeWithErrorReturned(StatusProtocolError, ErrContinuationExpected)
+				return nil, c.closeOnReadError(StatusProtocolError, ErrContinuationExpected)
 			}
 			if frame.Opcode == OpcodeText && !utf8.Valid(frame.Payload) {
-				return nil, c.closeWithErrorReturned(StatusUnsupportedPayload, ErrInvalidUT8)
+				return nil, c.closeOnReadError(StatusUnsupportedPayload, ErrInvalidUT8)
 			}
 			msg = &Message{
 				Binary:  frame.Opcode == OpcodeBinary,
@@ -136,14 +183,14 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 			}
 		case OpcodeContinuation:
 			if msg == nil {
-				return nil, c.closeWithErrorReturned(StatusProtocolError, ErrInvalidContinuation)
+				return nil, c.closeOnReadError(StatusProtocolError, ErrInvalidContinuation)
 			}
 			if !msg.Binary && !utf8.Valid(frame.Payload) {
-				return nil, c.closeWithErrorReturned(StatusUnsupportedPayload, ErrInvalidUT8)
+				return nil, c.closeOnReadError(StatusUnsupportedPayload, ErrInvalidUT8)
 			}
 			msg.Payload = append(msg.Payload, frame.Payload...)
 			if len(msg.Payload) > c.maxMessageSize {
-				return nil, c.closeWithErrorReturned(StatusTooLarge, fmt.Errorf("message size %d exceeds maximum of %d bytes", len(msg.Payload), c.maxMessageSize))
+				return nil, c.closeOnReadError(StatusTooLarge, fmt.Errorf("message size %d exceeds maximum of %d bytes", len(msg.Payload), c.maxMessageSize))
 			}
 		case OpcodeClose:
 			_ = c.Close()
@@ -177,9 +224,11 @@ func (c *Conn) Write(ctx context.Context, msg *Message) error {
 		default:
 		}
 		if err := writeFrame(c.buf, frame); err != nil {
-			return err
+			return c.closeOnWriteError(StatusServerError, err)
 		}
+		c.hooks.OnWriteFrame(c.clientKey, frame)
 	}
+	c.hooks.OnWriteMessage(c.clientKey, msg)
 	return nil
 }
 
@@ -199,6 +248,7 @@ func (c *Conn) Serve(ctx context.Context, handler Handler) {
 
 		if resp != nil {
 			if err := c.Write(ctx, resp); err != nil {
+				// an error in Write() closes the connection
 				return
 			}
 		}
@@ -210,12 +260,20 @@ func (c *Conn) Close() error {
 }
 
 func (c *Conn) closeWithError(code StatusCode, err error) error {
+	defer c.hooks.OnClose(c.clientKey, code, err)
 	close(c.closedCh)
 	_ = writeCloseFrame(c.buf, code, err)
 	return c.conn.Close()
 }
 
-func (c *Conn) closeWithErrorReturned(code StatusCode, err error) error {
+func (c *Conn) closeOnReadError(code StatusCode, err error) error {
+	defer c.hooks.OnReadError(c.clientKey, err)
+	_ = c.closeWithError(code, err)
+	return err
+}
+
+func (c *Conn) closeOnWriteError(code StatusCode, err error) error {
+	defer c.hooks.OnWriteError(c.clientKey, err)
 	_ = c.closeWithError(code, err)
 	return err
 }

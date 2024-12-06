@@ -117,7 +117,7 @@ func TestAccept(t *testing.T) {
 			t.Parallel()
 
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				ws, err := websocket.Accept(w, r, websocket.Limits{})
+				ws, err := websocket.Accept(w, r, websocket.Options{})
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
@@ -167,7 +167,7 @@ func TestAccept(t *testing.T) {
 				}
 				assert.Equal(t, fmt.Sprint(r), "websocket: accept: server does not support hijacking", "incorrect panic message")
 			}()
-			websocket.Accept(w, handshakeReq, websocket.Limits{})
+			websocket.Accept(w, handshakeReq, websocket.Options{})
 		})
 
 		t.Run("hijack failed", func(t *testing.T) {
@@ -178,7 +178,7 @@ func TestAccept(t *testing.T) {
 				}
 				assert.Equal(t, fmt.Sprint(r), "websocket: accept: hijack failed: error hijacking connection", "incorrect panic message")
 			}()
-			websocket.Accept(&brokenHijackResponseWriter{}, handshakeReq, websocket.Limits{})
+			websocket.Accept(&brokenHijackResponseWriter{}, handshakeReq, websocket.Options{})
 		})
 	}
 }
@@ -190,7 +190,7 @@ func TestConnectionLimits(t *testing.T) {
 		maxDuration := 500 * time.Millisecond
 
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ws, err := websocket.Accept(w, r, websocket.Limits{
+			ws, err := websocket.Accept(w, r, websocket.Options{
 				MaxDuration: maxDuration,
 				// TODO: test these limits as well
 				MaxFragmentSize: 128,
@@ -261,7 +261,7 @@ func TestConnectionLimits(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer wg.Done()
 			start := time.Now()
-			ws, err := websocket.Accept(w, r, websocket.Limits{
+			ws, err := websocket.Accept(w, r, websocket.Options{
 				MaxDuration:     serverTimeout,
 				MaxFragmentSize: 128,
 				MaxMessageSize:  256,

@@ -20,6 +20,9 @@ var (
 	ErrUnmaskedClientFrame  = errors.New("received unmasked client frame")
 )
 
+// ClientKey is a websocket client key.
+type ClientKey string
+
 // Opcode is a websocket OPCODE.
 type Opcode uint8
 

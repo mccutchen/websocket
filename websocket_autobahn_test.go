@@ -38,6 +38,32 @@ var defaultExcludedTestCases = []string{
 	"13.*",
 }
 
+func newTestHooks(t *testing.T) websocket.Hooks {
+	return websocket.Hooks{
+		OnClose: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
+			t.Logf("client=%s OnClose code=%v err=%q", key, code, err)
+		},
+		OnReadError: func(key websocket.ClientKey, err error) {
+			t.Logf("client=%s OnReadError err=%q", key, err)
+		},
+		OnReadFrame: func(key websocket.ClientKey, frame *websocket.Frame) {
+			t.Logf("client=%s OnReadFrame frame=%#v", key, frame)
+		},
+		OnReadMessage: func(key websocket.ClientKey, msg *websocket.Message) {
+			t.Logf("client=%s OnReadMessage msg=%#v", key, msg)
+		},
+		OnWriteError: func(key websocket.ClientKey, err error) {
+			t.Logf("client=%s OnWriteError err=%q", key, err)
+		},
+		OnWriteFrame: func(key websocket.ClientKey, frame *websocket.Frame) {
+			t.Logf("client=%s OnWriteFrame frame=%#v", key, frame)
+		},
+		OnWriteMessage: func(key websocket.ClientKey, msg *websocket.Message) {
+			t.Logf("client=%s OnWriteMessage msg=%#v", key, msg)
+		},
+	}
+}
+
 func TestWebSocketServer(t *testing.T) {
 	t.Parallel()
 
@@ -47,14 +73,17 @@ func TestWebSocketServer(t *testing.T) {
 
 	includedTestCases := defaultIncludedTestCases
 	excludedTestCases := defaultExcludedTestCases
+	var hooks websocket.Hooks
 	if userTestCases := os.Getenv("AUTOBAHN_CASES"); userTestCases != "" {
 		t.Logf("using AUTOBAHN_CASES=%q", userTestCases)
 		includedTestCases = strings.Split(userTestCases, ",")
 		excludedTestCases = []string{}
+		hooks = newTestHooks(t)
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ws, err := websocket.Accept(w, r, websocket.Limits{
+		ws, err := websocket.Accept(w, r, websocket.Options{
+			Hooks:           hooks,
 			MaxDuration:     30 * time.Second,
 			MaxFragmentSize: 1024 * 1024 * 16,
 			MaxMessageSize:  1024 * 1024 * 16,

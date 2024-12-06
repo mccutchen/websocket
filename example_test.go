@@ -9,7 +9,7 @@ import (
 
 func ExampleEchoHandler() {
 	http.ListenAndServe(":8080", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ws, err := websocket.Accept(w, r, websocket.Limits{
+		ws, err := websocket.Accept(w, r, websocket.Options{
 			MaxDuration:     10 * time.Second,
 			MaxFragmentSize: 10 * 1024,
 			MaxMessageSize:  512 * 1024,
