@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -106,13 +105,12 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 	var msg *Message
 	for {
 		select {
+		case <-c.closedCh:
+			return nil, io.EOF
 		case <-ctx.Done():
 			_ = c.Close()
 			return nil, ctx.Err()
 		default:
-			if c.closed.Load() {
-				panic("websocket: read: connection already closed")
-			}
 		}
 
 		frame, err := nextFrame(c.buf)
@@ -174,10 +172,9 @@ func (c *Conn) Write(ctx context.Context, msg *Message) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-c.closedCh:
+			return io.EOF
 		default:
-			if c.closed.Load() {
-				panic("websocket: write: connection already closed")
-			}
 		}
 		if err := writeFrame(c.buf, frame); err != nil {
 			return err
@@ -213,9 +210,7 @@ func (c *Conn) Close() error {
 }
 
 func (c *Conn) closeWithError(code StatusCode, err error) error {
-	if c.closed.Swap(true) {
-		panic("websocket: close: connection already closed")
-	}
+	close(c.closedCh)
 	_ = writeCloseFrame(c.buf, code, err)
 	return c.conn.Close()
 }
