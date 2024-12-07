@@ -27,7 +27,8 @@ var EchoHandler Handler = func(_ context.Context, msg *Message) (*Message, error
 // Options define the limits imposed on a websocket connection.
 type Options struct {
 	Hooks           Hooks
-	MaxDuration     time.Duration
+	ReadTimeout     time.Duration
+	WriteTimeout    time.Duration
 	MaxFragmentSize int
 	MaxMessageSize  int
 }
@@ -51,13 +52,18 @@ type Hooks struct {
 
 // Conn is a websocket connection.
 type Conn struct {
-	conn      net.Conn
-	buf       *bufio.ReadWriter
-	clientKey ClientKey
-	closedCh  chan struct{}
+	// connection state
+	conn     net.Conn
+	buf      *bufio.ReadWriter
+	closedCh chan struct{}
 
-	hooks           Hooks
-	maxDuration     time.Duration
+	// observability
+	clientKey ClientKey
+	hooks     Hooks
+
+	// limits
+	readTimeout     time.Duration
+	writeTimeout    time.Duration
 	maxFragmentSize int
 	maxMessageSize  int
 }
@@ -79,21 +85,14 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Conn, error)
 		panic(fmt.Errorf("websocket: accept: hijack failed: %s", err))
 	}
 
-	// best effort attempt to ensure that our websocket conenctions do not
-	// exceed the maximum request duration
-	if opts.MaxDuration > 0 {
-		if err := conn.SetDeadline(time.Now().Add(opts.MaxDuration)); err != nil {
-			panic(fmt.Errorf("websocket: serve: failed to set deadline on connection: %s", err))
-		}
-	}
-
 	return &Conn{
 		conn:            conn,
 		buf:             buf,
 		closedCh:        make(chan struct{}),
 		clientKey:       clientKey,
 		hooks:           setupHooks(opts.Hooks),
-		maxDuration:     opts.MaxDuration,
+		readTimeout:     opts.ReadTimeout,
+		writeTimeout:    opts.WriteTimeout,
 		maxFragmentSize: opts.MaxFragmentSize,
 		maxMessageSize:  opts.MaxMessageSize,
 	}, nil
@@ -158,9 +157,10 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 			_ = c.Close()
 			return nil, ctx.Err()
 		default:
+			c.resetReadDeadline()
 		}
 
-		frame, err := readFrame(c.buf)
+		frame, err := ReadFrame(c.buf)
 		if err != nil {
 			return nil, c.closeOnReadError(StatusServerError, err)
 		}
@@ -197,7 +197,7 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 			return nil, io.EOF
 		case OpcodePing:
 			frame.Opcode = OpcodePong
-			if err := writeFrame(c.buf, frame); err != nil {
+			if err := WriteFrame(c.buf, frame); err != nil {
 				return nil, err
 			}
 			continue
@@ -222,8 +222,9 @@ func (c *Conn) Write(ctx context.Context, msg *Message) error {
 		case <-c.closedCh:
 			return io.EOF
 		default:
+			c.resetWriteDeadline()
 		}
-		if err := writeFrame(c.buf, frame); err != nil {
+		if err := WriteFrame(c.buf, frame); err != nil {
 			return c.closeOnWriteError(StatusServerError, err)
 		}
 		c.hooks.OnWriteFrame(c.clientKey, frame)
@@ -276,4 +277,22 @@ func (c *Conn) closeOnWriteError(code StatusCode, err error) error {
 	defer c.hooks.OnWriteError(c.clientKey, err)
 	_ = c.closeWithError(code, err)
 	return err
+}
+
+func (c *Conn) resetReadDeadline() {
+	if c.readTimeout <= 0 {
+		return
+	}
+	if err := c.conn.SetReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
+		panic(fmt.Sprintf("websocket: failed to set read deadline: %s", err))
+	}
+}
+
+func (c *Conn) resetWriteDeadline() {
+	if c.writeTimeout <= 0 {
+		return
+	}
+	if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
+		panic(fmt.Sprintf("websocket: failed to set write deadline: %s", err))
+	}
 }

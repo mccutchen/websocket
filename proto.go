@@ -81,7 +81,8 @@ func (m Message) String() string {
 	}
 }
 
-func readFrame(buf io.Reader) (*Frame, error) {
+// ReadFrame reads a websocket frame from the wire.
+func ReadFrame(buf io.Reader) (*Frame, error) {
 	bb := make([]byte, 2)
 	if _, err := io.ReadFull(buf, bb); err != nil {
 		return nil, fmt.Errorf("error reading frame header: %w", err)
@@ -147,7 +148,8 @@ func readFrame(buf io.Reader) (*Frame, error) {
 	}, nil
 }
 
-func writeFrame(dst *bufio.ReadWriter, frame *Frame) error {
+// WriteFrame writes a websocket frame to the wire.
+func WriteFrame(dst *bufio.ReadWriter, frame *Frame) error {
 	// FIN, RSV1-3, OPCODE
 	var b1 byte
 	if frame.Fin {
@@ -206,7 +208,7 @@ func writeCloseFrame(dst *bufio.ReadWriter, code StatusCode, err error) error {
 	if err != nil {
 		payload = append(payload, []byte(err.Error())...)
 	}
-	return writeFrame(dst, &Frame{
+	return WriteFrame(dst, &Frame{
 		Fin:     true,
 		Opcode:  OpcodeClose,
 		Payload: payload,
