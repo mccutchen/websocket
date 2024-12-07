@@ -1,7 +1,7 @@
 # Default flags used by the test, testci, testcover targets
 COVERAGE_PATH ?= coverage.out
 COVERAGE_ARGS ?= -covermode=atomic -coverprofile=$(COVERAGE_PATH)
-TEST_ARGS     ?= -race $(COVERAGE_ARGS)
+TEST_ARGS     ?= -race -timeout 90s
 
 # 3rd party tools
 LINT        := go run github.com/mgechev/revive@v1.5.1
