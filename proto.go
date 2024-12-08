@@ -89,37 +89,40 @@ func ReadFrame(buf io.Reader) (*Frame, error) {
 		return nil, fmt.Errorf("error reading frame header: %w", err)
 	}
 
-	b0 := bb[0]
-	b1 := bb[1]
-
+	// parse first header byte
 	var (
+		b0     = bb[0]
 		fin    = b0&0b10000000 != 0
 		rsv1   = b0&0b01000000 != 0
 		rsv2   = b0&0b00100000 != 0
 		rsv3   = b0&0b00010000 != 0
 		opcode = Opcode(b0 & 0b00001111)
-		masked = b1&0b10000000 != 0
 	)
 
-	var payloadLength uint64
-	switch {
-	case b1-128 <= 125:
-		// Payload length is directly represented in the second byte
-		payloadLength = uint64(b1 - 128)
-	case b1-128 == 126:
+	// parse second header byte
+	var (
+		b1            = bb[1]
+		masked        = b1&0b10000000 != 0
+		payloadLength = uint64(b1 & 0b01111111)
+	)
+
+	// figure out if we need to read an "extended" payload length
+	switch payloadLength {
+	case 126:
 		// Payload length is represented in the next 2 bytes (16-bit unsigned integer)
 		var l uint16
 		if err := binary.Read(buf, binary.BigEndian, &l); err != nil {
 			return nil, fmt.Errorf("error reading 2-byte extended payload length: %w", err)
 		}
 		payloadLength = uint64(l)
-	case b1-128 == 127:
+	case 127:
 		// Payload length is represented in the next 8 bytes (64-bit unsigned integer)
 		if err := binary.Read(buf, binary.BigEndian, &payloadLength); err != nil {
 			return nil, fmt.Errorf("error reading 8-byte extended payload length: %w", err)
 		}
 	}
 
+	// read mask key (if present)
 	var mask []byte
 	if masked {
 		mask = make([]byte, 4)
@@ -128,11 +131,11 @@ func ReadFrame(buf io.Reader) (*Frame, error) {
 		}
 	}
 
+	// read & optionally unmask payload
 	payload := make([]byte, payloadLength)
 	if _, err := io.ReadFull(buf, payload); err != nil {
 		return nil, fmt.Errorf("error reading payload: %w", err)
 	}
-
 	if masked {
 		for i, b := range payload {
 			payload[i] = b ^ mask[i%4]
