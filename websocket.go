@@ -215,7 +215,9 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 }
 
 func (c *Conn) Write(ctx context.Context, msg *Message) error {
+	c.hooks.OnWriteMessage(c.clientKey, msg)
 	for _, frame := range messageFrames(msg, c.maxFragmentSize) {
+		c.hooks.OnWriteFrame(c.clientKey, frame)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -227,9 +229,7 @@ func (c *Conn) Write(ctx context.Context, msg *Message) error {
 		if err := WriteFrame(c.buf, frame); err != nil {
 			return c.closeOnWriteError(StatusServerError, err)
 		}
-		c.hooks.OnWriteFrame(c.clientKey, frame)
 	}
-	c.hooks.OnWriteMessage(c.clientKey, msg)
 	return nil
 }
 
@@ -261,20 +261,20 @@ func (c *Conn) Close() error {
 }
 
 func (c *Conn) closeWithError(code StatusCode, err error) error {
-	defer c.hooks.OnClose(c.clientKey, code, err)
+	c.hooks.OnClose(c.clientKey, code, err)
 	close(c.closedCh)
 	_ = writeCloseFrame(c.buf, code, err)
 	return c.conn.Close()
 }
 
 func (c *Conn) closeOnReadError(code StatusCode, err error) error {
-	defer c.hooks.OnReadError(c.clientKey, err)
+	c.hooks.OnReadError(c.clientKey, err)
 	_ = c.closeWithError(code, err)
 	return err
 }
 
 func (c *Conn) closeOnWriteError(code StatusCode, err error) error {
-	defer c.hooks.OnWriteError(c.clientKey, err)
+	c.hooks.OnWriteError(c.clientKey, err)
 	_ = c.closeWithError(code, err)
 	return err
 }
