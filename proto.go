@@ -1,7 +1,6 @@
 package websocket
 
 import (
-	"bufio"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
@@ -152,7 +151,11 @@ func ReadFrame(buf io.Reader) (*Frame, error) {
 }
 
 // WriteFrame writes a websocket frame to the wire.
-func WriteFrame(dst *bufio.ReadWriter, frame *Frame) error {
+func WriteFrame(dst io.Writer, frame *Frame) error {
+	// worst case payload size is 13 header bytes + payload size, where 13 is
+	// (1 byte header) + (1-8 byte length) + (0-4 byte mask key)
+	buf := make([]byte, 0, 13+len(frame.Payload))
+
 	// FIN, RSV1-3, OPCODE
 	var b1 byte
 	if frame.Fin {
@@ -168,49 +171,44 @@ func WriteFrame(dst *bufio.ReadWriter, frame *Frame) error {
 		b1 |= 0b00010000
 	}
 	b1 |= uint8(frame.Opcode) & 0b00001111
-	if err := dst.WriteByte(b1); err != nil {
-		return err
-	}
+	buf = append(buf, b1)
 
 	// payload length
 	payloadLen := int64(len(frame.Payload))
 	switch {
 	case payloadLen <= 125:
-		if err := dst.WriteByte(byte(payloadLen)); err != nil {
-			return err
-		}
+		buf = append(buf, byte(payloadLen))
 	case payloadLen <= 65535:
-		if err := dst.WriteByte(126); err != nil {
-			return err
-		}
-		if err := binary.Write(dst, binary.BigEndian, uint16(payloadLen)); err != nil {
-			return err
-		}
+		buf = append(buf, 126)
+		buf = binary.BigEndian.AppendUint16(buf, uint16(payloadLen))
 	default:
-		if err := dst.WriteByte(127); err != nil {
-			return err
-		}
-		if err := binary.Write(dst, binary.BigEndian, payloadLen); err != nil {
-			return err
-		}
+		buf = append(buf, 127)
+		buf = binary.BigEndian.AppendUint64(buf, uint64(payloadLen))
 	}
 
 	// payload
-	if _, err := dst.Write(frame.Payload); err != nil {
-		return err
-	}
+	buf = append(buf, frame.Payload...)
 
-	return dst.Flush()
+	n, err := dst.Write(buf)
+	if err != nil {
+		return fmt.Errorf("error writing frame: %w", err)
+	}
+	if n != len(buf) {
+		return fmt.Errorf("short write: %d != %d", n, len(buf))
+	}
+	return nil
 }
 
 // writeCloseFrame writes a close frame to the wire, with an optional error
 // message.
-func writeCloseFrame(dst *bufio.ReadWriter, code StatusCode, err error) error {
-	var payload []byte
-	payload = binary.BigEndian.AppendUint16(payload, uint16(code))
+func writeCloseFrame(dst io.Writer, code StatusCode, err error) error {
+	var errMsg []byte
 	if err != nil {
-		payload = append(payload, []byte(err.Error())...)
+		errMsg = []byte(err.Error())
 	}
+	payload := make([]byte, 0, 2+len(errMsg))
+	payload = binary.BigEndian.AppendUint16(payload, uint16(code))
+	payload = append(payload, errMsg...)
 	return WriteFrame(dst, &Frame{
 		Fin:     true,
 		Opcode:  OpcodeClose,
