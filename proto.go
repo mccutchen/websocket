@@ -18,6 +18,7 @@ var (
 	ErrInvalidContinuation  = errors.New("unexpected continuation frame")
 	ErrInvalidUT8           = errors.New("invalid UTF-8")
 	ErrUnmaskedClientFrame  = errors.New("received unmasked client frame")
+	ErrUnsupportedRSVBits   = errors.New("frame has unsupported RSV bits set")
 )
 
 // ClientKey is a websocket client key.
@@ -64,6 +65,7 @@ type Frame struct {
 	RSV2    bool
 	Opcode  Opcode
 	Payload []byte
+	Masked  bool
 }
 
 // Message is an application-level message from the client, which may be
@@ -97,13 +99,8 @@ func ReadFrame(buf io.Reader) (*Frame, error) {
 		rsv2   = b0&0b00100000 != 0
 		rsv3   = b0&0b00010000 != 0
 		opcode = Opcode(b0 & 0b00001111)
+		masked = b1&0b10000000 != 0
 	)
-
-	// Per https://datatracker.ietf.org/doc/html/rfc6455#section-5.2, all
-	// client frames must be masked.
-	if masked := b1 & 0b10000000; masked == 0 {
-		return nil, ErrUnmaskedClientFrame
-	}
 
 	var payloadLength uint64
 	switch {
@@ -124,9 +121,12 @@ func ReadFrame(buf io.Reader) (*Frame, error) {
 		}
 	}
 
-	mask := make([]byte, 4)
-	if _, err := io.ReadFull(buf, mask); err != nil {
-		return nil, fmt.Errorf("error reading mask key: %w", err)
+	var mask []byte
+	if masked {
+		mask = make([]byte, 4)
+		if _, err := io.ReadFull(buf, mask); err != nil {
+			return nil, fmt.Errorf("error reading mask key: %w", err)
+		}
 	}
 
 	payload := make([]byte, payloadLength)
@@ -134,8 +134,10 @@ func ReadFrame(buf io.Reader) (*Frame, error) {
 		return nil, fmt.Errorf("error reading payload: %w", err)
 	}
 
-	for i, b := range payload {
-		payload[i] = b ^ mask[i%4]
+	if masked {
+		for i, b := range payload {
+			payload[i] = b ^ mask[i%4]
+		}
 	}
 
 	return &Frame{
@@ -145,6 +147,7 @@ func ReadFrame(buf io.Reader) (*Frame, error) {
 		RSV3:    rsv3,
 		Opcode:  opcode,
 		Payload: payload,
+		Masked:  masked,
 	}, nil
 }
 
@@ -266,11 +269,15 @@ var reservedStatusCodes = map[uint16]bool{
 	2999: true,
 }
 
-func validateFrame(frame *Frame, maxFragmentSize int) error {
+func validateFrame(frame *Frame, maxFragmentSize int, requireMask bool) error {
 	// We do not support any extensions, per the spec all RSV bits must be 0:
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
 	if frame.RSV1 || frame.RSV2 || frame.RSV3 {
-		return fmt.Errorf("frame has unsupported RSV bits set")
+		return ErrUnsupportedRSVBits
+	}
+
+	if requireMask && !frame.Masked {
+		return ErrUnmaskedClientFrame
 	}
 
 	switch frame.Opcode {

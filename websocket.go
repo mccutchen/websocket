@@ -56,6 +56,7 @@ type Conn struct {
 	conn     net.Conn
 	buf      *bufio.ReadWriter
 	closedCh chan struct{}
+	server   bool
 
 	// observability
 	clientKey ClientKey
@@ -89,6 +90,7 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Conn, error)
 		conn:            conn,
 		buf:             buf,
 		closedCh:        make(chan struct{}),
+		server:          true,
 		clientKey:       clientKey,
 		hooks:           setupHooks(opts.Hooks),
 		readTimeout:     opts.ReadTimeout,
@@ -162,9 +164,13 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 
 		frame, err := ReadFrame(c.buf)
 		if err != nil {
-			return nil, c.closeOnReadError(StatusServerError, err)
+			code := StatusServerError
+			if err == io.EOF {
+				code = StatusNormalClosure
+			}
+			return nil, c.closeOnReadError(code, err)
 		}
-		if err := validateFrame(frame, c.maxFragmentSize); err != nil {
+		if err := validateFrame(frame, c.maxFragmentSize, c.server); err != nil {
 			return nil, c.closeOnReadError(StatusProtocolError, err)
 		}
 		c.hooks.OnReadFrame(c.clientKey, frame)
