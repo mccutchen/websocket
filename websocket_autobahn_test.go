@@ -117,7 +117,7 @@ func TestWebSocketServer(t *testing.T) {
 		for caseName, result := range results {
 			result := result
 			t.Run("autobahn/"+caseName, func(t *testing.T) {
-				if result.Behavior == "FAILED" || result.BehaviorClose == "FAILED" {
+				if result.Failed() {
 					report := loadReport(t, testDir, result.ReportFile)
 					t.Errorf("description: %s", report.Description)
 					t.Errorf("expectation: %s", report.Expectation)
@@ -128,7 +128,7 @@ func TestWebSocketServer(t *testing.T) {
 		}
 	}
 
-	t.Logf("autobahn test report: %s", path.Join(testDir, "report/index.html"))
+	t.Logf("autobahn test report: file://%s", path.Join(testDir, "report/index.html"))
 	if os.Getenv("AUTOBAHN_OPEN_REPORT") != "" {
 		runCmd(t, exec.Command("open", path.Join(testDir, "report/index.html")))
 	}
@@ -214,4 +214,8 @@ type autobahnReportResult struct {
 	ReportFile    string `json:"reportfile"`
 	Result        string `json:"result"`
 	ResultClose   string `json:"resultClose"`
+}
+
+func (r autobahnReportResult) Failed() bool {
+	return r.Behavior != "OK" || r.BehaviorClose != "OK"
 }
