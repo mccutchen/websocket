@@ -160,21 +160,21 @@ func WriteFrame(dst io.Writer, frame *Frame) error {
 	buf := make([]byte, 0, 13+len(frame.Payload))
 
 	// FIN, RSV1-3, OPCODE
-	var b1 byte
+	var b0 byte
 	if frame.Fin {
-		b1 |= 0b10000000
+		b0 |= 0b10000000
 	}
 	if frame.RSV1 {
-		b1 |= 0b01000000
+		b0 |= 0b01000000
 	}
 	if frame.RSV2 {
-		b1 |= 0b00100000
+		b0 |= 0b00100000
 	}
 	if frame.RSV3 {
-		b1 |= 0b00010000
+		b0 |= 0b00010000
 	}
-	b1 |= uint8(frame.Opcode) & 0b00001111
-	buf = append(buf, b1)
+	b0 |= uint8(frame.Opcode) & 0b00001111
+	buf = append(buf, b0)
 
 	// payload length
 	payloadLen := int64(len(frame.Payload))
