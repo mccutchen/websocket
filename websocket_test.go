@@ -11,10 +11,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -190,7 +188,7 @@ func TestAccept(t *testing.T) {
 
 func TestConnectionLimits(t *testing.T) {
 	// XXX FIXME: need to rework this in terms of read/write deadlines!
-	t.Run("maximum request duration is enforced", func(t *testing.T) {
+	t.Run("server enforces read deadline", func(t *testing.T) {
 		t.Parallel()
 
 		maxDuration := 500 * time.Millisecond
@@ -212,36 +210,24 @@ func TestConnectionLimits(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		t.Logf("httptest server addr: %s", srv.Listener.Addr())
-		log.Printf("XXX server addr:\n%s", srv.Listener.Addr())
-		<-time.After(20 * time.Second)
-
-		proc := startTCPDump(t, srv.Listener.Addr())
-		defer func() {
-			log.Println(proc)
-			assert.NilError(t, proc.Signal(syscall.SIGTERM))
-			_, err := proc.Wait()
-			assert.NilError(t, err)
-		}()
-
 		conn, err := net.Dial("tcp", srv.Listener.Addr().String())
 		assert.NilError(t, err)
 		defer conn.Close()
 
-		reqParts := []string{
-			"GET /websocket/echo HTTP/1.1",
-			"Host: test",
-			"Connection: upgrade",
-			"Upgrade: websocket",
-			"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
-			"Sec-WebSocket-Version: 13",
-		}
-		reqBytes := []byte(strings.Join(reqParts, "\r\n") + "\r\n\r\n")
-		t.Logf("raw request:\n%q", reqBytes)
-
 		// first, we write the request line and headers, which should cause the
 		// server to respond with a 101 Switching Protocols response.
 		{
+			reqParts := []string{
+				"GET /websocket/echo HTTP/1.1",
+				"Host: test",
+				"Connection: upgrade",
+				"Upgrade: websocket",
+				"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+				"Sec-WebSocket-Version: 13",
+			}
+			reqBytes := []byte(strings.Join(reqParts, "\r\n") + "\r\n\r\n")
+			t.Logf("raw request:\n%q", reqBytes)
+
 			n, err := conn.Write(reqBytes)
 			assert.NilError(t, err)
 			assert.Equal(t, n, len(reqBytes), "incorrect number of bytes written")
@@ -258,27 +244,26 @@ func TestConnectionLimits(t *testing.T) {
 			resp, err := io.ReadAll(conn)
 			elapsed := time.Since(start)
 
-			t.Logf("elapsed time: %s", elapsed)
-			t.Logf("XXX payload size:  %v", len(resp))
-			t.Logf("XXX payload bytes: %v", resp)
-
+			// client read should succeed, because we expect the server to send
+			// a close frame when its read deadline is reached
 			assert.NilError(t, err)
-			assert.Equal(t, len(resp) > 0, true, "expected non-empty response")
+			assert.RoughlyEqual(t, elapsed, maxDuration, 25*time.Millisecond)
 
 			frame, err := websocket.ReadFrame(bytes.NewBuffer(resp))
 			assert.NilError(t, err)
-			assert.RoughlyEqual(t, elapsed, maxDuration, 25*time.Millisecond)
-			t.Logf("got frame: %#v", frame)
 			assert.Equal(t, frame.Opcode, websocket.OpcodeClose, "expected close frame")
+
+			// extract close status code and message from payload
 			assert.Equal(t, len(frame.Payload) >= 2, true, "expected close frame payload to be at least 2 bytes, got %v", frame.Payload)
 			statusCode := websocket.StatusCode(binary.BigEndian.Uint16(frame.Payload[:2]))
-			assert.Equal(t, statusCode, websocket.StatusNormalClosure, "expected normal closure status code")
-			// FIXME: compare status code, wherever we can find it?
-			// assert.Equal(t, frame.???, websocket.StatusNormalClosure, "expected normal closure status code")
+			closeMsg := string(frame.Payload[2:])
+			t.Logf("got close frame: code=%v msg=%q", statusCode, closeMsg)
+			assert.Equal(t, statusCode, websocket.StatusServerError, "expected server error status code")
+			assert.Contains(t, closeMsg, "timeout", "expected timeout close message")
 
 			// confirm connection is closed
-			_, err = conn.Write([]byte("0"))
-			assert.Error(t, err, net.ErrClosed)
+			_, err = conn.Read(make([]byte, 1))
+			assert.Error(t, err, io.EOF)
 		}
 	})
 
@@ -420,45 +405,5 @@ func newTestHooks(t *testing.T) websocket.Hooks {
 		OnWriteMessage: func(key websocket.ClientKey, msg *websocket.Message) {
 			log.Printf("XXX hook client=%s OnWriteMessage msg=%#v", key, msg)
 		},
-	}
-}
-
-func startTCPDump(t *testing.T, addr net.Addr) *os.Process {
-	t.Helper()
-
-	host, port, err := net.SplitHostPort(addr.String())
-	assert.NilError(t, err)
-
-	ouptputPath := "dump.pcap"
-
-	cmd := exec.Command("tcpdump", "-w", ouptputPath, "-i", "lo0", "tcp", "port", port)
-	fmt.Printf("XXX TCPDUMP CMD: %v\n", cmd.String())
-
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	t.Logf("running tcpdump to capture %s:%s traffic: %s", host, port, cmd.String())
-	assert.NilError(t, cmd.Start())
-	<-time.After(500 * time.Millisecond)
-	waitForFile(t, ouptputPath)
-	return cmd.Process
-}
-
-func waitForFile(t *testing.T, path string) {
-	t.Helper()
-
-	timeout := time.After(2 * time.Second)
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-timeout:
-			t.Fatalf("file %q did not appear in time", path)
-		case <-ticker.C:
-			if _, err := os.Stat(path); err == nil {
-				return
-			}
-		}
 	}
 }

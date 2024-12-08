@@ -57,9 +57,13 @@ func TestWebSocketServer(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := websocket.Accept(w, r, websocket.Options{
-			Hooks:           hooks,
-			ReadTimeout:     500 * time.Millisecond,
-			WriteTimeout:    500 * time.Millisecond,
+			Hooks: hooks,
+			// long ReadTimeout because some autobahn test cases (e.g. 5.19
+			// sleep up to 1 second between frames)
+			ReadTimeout:  1000 * time.Millisecond,
+			WriteTimeout: 500 * time.Millisecond,
+			// some autobahn test cases send large frames, so we need to
+			// support large fragments and messages
 			MaxFragmentSize: 1024 * 1024 * 16,
 			MaxMessageSize:  1024 * 1024 * 16,
 		})
@@ -121,8 +125,10 @@ func TestWebSocketServer(t *testing.T) {
 					report := loadReport(t, testDir, result.ReportFile)
 					t.Errorf("description: %s", report.Description)
 					t.Errorf("expectation: %s", report.Expectation)
-					t.Errorf("result:      %s", report.Result)
-					t.Errorf("close:       %s", report.ResultClose)
+					t.Errorf("want result: %s", report.Result)
+					t.Errorf("got result:  %s", report.Behavior)
+					t.Errorf("want close:  %s", report.ResultClose)
+					t.Errorf("got close:   %s", report.BehaviorClose)
 				}
 			})
 		}
@@ -217,5 +223,9 @@ type autobahnReportResult struct {
 }
 
 func (r autobahnReportResult) Failed() bool {
-	return r.Behavior != "OK" || r.BehaviorClose != "OK"
+	okayBehavior := map[string]bool{
+		"OK":            true,
+		"INFORMATIONAL": true,
+	}
+	return !(okayBehavior[r.Behavior] && okayBehavior[r.BehaviorClose])
 }

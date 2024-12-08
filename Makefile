@@ -29,7 +29,7 @@ testcover: testci
 #
 #     AUTOBAHN_CASES=5.7,6.12.* make testautobahn
 testautobahn:
-	AUTOBAHN_TESTS=1 AUTOBAHN_OPEN_REPORT=1 go test -v -run ^TestWebSocketServer$$ $(TEST_ARGS) ./...
+	AUTOBAHN_TESTS=1 AUTOBAHN_OPEN_REPORT=1 go test -run ^TestWebSocketServer$$ $(TEST_ARGS) ./...
 .PHONY: autobahntests
 
 
