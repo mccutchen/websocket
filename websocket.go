@@ -180,9 +180,6 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 			if msg != nil {
 				return nil, c.closeOnReadError(StatusProtocolError, ErrContinuationExpected)
 			}
-			if frame.Opcode == OpcodeText && !utf8.Valid(frame.Payload) {
-				return nil, c.closeOnReadError(StatusUnsupportedPayload, ErrInvalidUT8)
-			}
 			msg = &Message{
 				Binary:  frame.Opcode == OpcodeBinary,
 				Payload: frame.Payload,
@@ -190,9 +187,6 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 		case OpcodeContinuation:
 			if msg == nil {
 				return nil, c.closeOnReadError(StatusProtocolError, ErrInvalidContinuation)
-			}
-			if !msg.Binary && !utf8.Valid(frame.Payload) {
-				return nil, c.closeOnReadError(StatusUnsupportedPayload, ErrInvalidUT8)
 			}
 			msg.Payload = append(msg.Payload, frame.Payload...)
 			if len(msg.Payload) > c.maxMessageSize {
@@ -215,6 +209,9 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 
 		if frame.Fin {
 			c.hooks.OnReadMessage(c.clientKey, msg)
+			if !msg.Binary && !utf8.Valid(msg.Payload) {
+				return nil, c.closeOnReadError(StatusUnsupportedPayload, ErrInvalidUT8)
+			}
 			return msg, nil
 		}
 	}
