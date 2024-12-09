@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -187,7 +186,8 @@ func TestAccept(t *testing.T) {
 }
 
 func TestConnectionLimits(t *testing.T) {
-	// XXX FIXME: need to rework this in terms of read/write deadlines!
+	// TODO: need to rework these tests in terms of read/write deadlines rather
+	// than total request time.
 	t.Run("server enforces read deadline", func(t *testing.T) {
 		t.Parallel()
 
@@ -385,25 +385,25 @@ func newTestHooks(t *testing.T) websocket.Hooks {
 	t.Helper()
 	return websocket.Hooks{
 		OnClose: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
-			log.Printf("XXX hook client=%s OnClose code=%v err=%q", key, code, err)
+			t.Logf("client=%s OnClose code=%v err=%q", key, code, err)
 		},
 		OnReadError: func(key websocket.ClientKey, err error) {
-			log.Printf("XXX hook client=%s OnReadError err=%q", key, err)
+			t.Logf("client=%s OnReadError err=%q", key, err)
 		},
 		OnReadFrame: func(key websocket.ClientKey, frame *websocket.Frame) {
-			log.Printf("XXX hook client=%s OnReadFrame frame=%#v", key, frame)
+			t.Logf("client=%s OnReadFrame frame=%#v", key, frame)
 		},
 		OnReadMessage: func(key websocket.ClientKey, msg *websocket.Message) {
-			log.Printf("XXX hook client=%s OnReadMessage msg=%#v", key, msg)
+			t.Logf("client=%s OnReadMessage msg=%#v", key, msg)
 		},
 		OnWriteError: func(key websocket.ClientKey, err error) {
-			log.Printf("XXX hook client=%s OnWriteError err=%q", key, err)
+			t.Logf("client=%s OnWriteError err=%q", key, err)
 		},
 		OnWriteFrame: func(key websocket.ClientKey, frame *websocket.Frame) {
-			log.Printf("XXX hook client=%s OnWriteFrame frame=%#v", key, frame)
+			t.Logf("client=%s OnWriteFrame frame=%#v", key, frame)
 		},
 		OnWriteMessage: func(key websocket.ClientKey, msg *websocket.Message) {
-			log.Printf("XXX hook client=%s OnWriteMessage msg=%#v", key, msg)
+			t.Logf("client=%s OnWriteMessage msg=%#v", key, msg)
 		},
 	}
 }
