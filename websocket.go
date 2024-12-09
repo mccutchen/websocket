@@ -33,6 +33,8 @@ type Options struct {
 	MaxMessageSize  int
 }
 
+// Hooks define the callbacks that are called during the lifecycle of a
+// websocket connection.
 type Hooks struct {
 	// OnClose is called when the connection is closed.
 	OnClose func(ClientKey, StatusCode, error)
@@ -218,6 +220,9 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 	}
 }
 
+// Write writes a single websocket message to the connection, after splitting
+// it into fragments (if necessary). The connection will be closed on any
+// error.
 func (c *Conn) Write(ctx context.Context, msg *Message) error {
 	c.hooks.OnWriteMessage(c.clientKey, msg)
 	for _, frame := range messageFrames(msg, c.maxFragmentSize) {
@@ -238,6 +243,9 @@ func (c *Conn) Write(ctx context.Context, msg *Message) error {
 	return nil
 }
 
+// Serve is a basic high-level handler for a request-response style websocket
+// connection, where handler is called for each incoming message and its return
+// value is sent back to the client.
 func (c *Conn) Serve(ctx context.Context, handler Handler) {
 	for {
 		msg, err := c.Read(ctx)
@@ -261,6 +269,7 @@ func (c *Conn) Serve(ctx context.Context, handler Handler) {
 	}
 }
 
+// Close closes a websocket connection.
 func (c *Conn) Close() error {
 	return c.closeWithError(StatusNormalClosure, nil)
 }
