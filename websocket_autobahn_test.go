@@ -26,13 +26,6 @@ var defaultIncludedTestCases = []string{
 }
 
 var defaultExcludedTestCases = []string{
-	// These cases all seem to rely on the server accepting fragmented text
-	// frames with invalid utf8 payloads, but the spec seems to indicate that
-	// every text fragment must be valid utf8 on its own.
-	"6.2.3",
-	"6.2.4",
-	"6.4.2",
-
 	// Compression extensions are not supported
 	"12.*",
 	"13.*",
