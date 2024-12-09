@@ -60,7 +60,7 @@ func TestWebSocketServer(t *testing.T) {
 			Hooks: hooks,
 			// long ReadTimeout because some autobahn test cases (e.g. 5.19
 			// sleep up to 1 second between frames)
-			ReadTimeout:  1000 * time.Millisecond,
+			ReadTimeout:  2000 * time.Millisecond,
 			WriteTimeout: 500 * time.Millisecond,
 			// some autobahn test cases send large frames, so we need to
 			// support large fragments and messages
