@@ -43,6 +43,7 @@ type StatusCode uint16
 // See the RFC for the set of defined status codes:
 // https://datatracker.ietf.org/doc/html/rfc6455#section-7.4.1
 const (
+	StatusNoStatus           StatusCode = 0
 	StatusNormalClosure      StatusCode = 1000
 	StatusGoingAway          StatusCode = 1001
 	StatusProtocolError      StatusCode = 1002
@@ -205,13 +206,16 @@ func WriteFrame(dst io.Writer, frame *Frame) error {
 // writeCloseFrame writes a close frame to the wire, with an optional error
 // message.
 func writeCloseFrame(dst io.Writer, code StatusCode, err error) error {
-	var errMsg []byte
-	if err != nil {
-		errMsg = []byte(err.Error())
+	var payload []byte
+	if code > 0 {
+		var errMsg []byte
+		if err != nil {
+			errMsg = []byte(err.Error())
+		}
+		payload = make([]byte, 0, 2+len(errMsg))
+		payload = binary.BigEndian.AppendUint16(payload, uint16(code))
+		payload = append(payload, errMsg...)
 	}
-	payload := make([]byte, 0, 2+len(errMsg))
-	payload = binary.BigEndian.AppendUint16(payload, uint16(code))
-	payload = append(payload, errMsg...)
 	return WriteFrame(dst, &Frame{
 		Fin:     true,
 		Opcode:  OpcodeClose,
