@@ -40,7 +40,7 @@ func DeepEqual[T any](t *testing.T, got, want T, msg string, arg ...any) {
 func NilError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
-		t.Fatalf("expected nil error, got %s (%T)", err, err)
+		t.Fatalf("expected nil error, got %q (%T)", err, err)
 	}
 }
 
@@ -53,7 +53,7 @@ func Error(t *testing.T, got, expected error) {
 				return
 			}
 		}
-		t.Fatalf("expected error %v, got %v", expected, got)
+		t.Fatalf("expected error %q, got %v", expected, got)
 	}
 }
 

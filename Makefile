@@ -1,7 +1,7 @@
 # Default flags used by the test, testci, testcover targets
 COVERAGE_PATH ?= coverage.out
 COVERAGE_ARGS ?= -covermode=atomic -coverprofile=$(COVERAGE_PATH)
-TEST_ARGS     ?= -race $(COVERAGE_ARGS)
+TEST_ARGS     ?= -race -timeout 90s
 
 # 3rd party tools
 LINT        := go run github.com/mgechev/revive@v1.5.1
@@ -22,9 +22,14 @@ testcover: testci
 	go tool cover -html=$(COVERAGE_PATH)
 .PHONY: testcover
 
-# Run the autobahn fuzzingclient test suite
+# Run the autobahn fuzzingclient test suite (requires docker running locally).
+#
+# To run only a subset of autobahn tests, specify them in an AUTOBAHN_CASES env
+# var:
+#
+#     AUTOBAHN_CASES=5.7,6.12.* make testautobahn
 testautobahn:
-	AUTOBAHN_TESTS=1 AUTOBAHN_OPEN_REPORT=1 go test -v -run ^TestWebSocketServer$$ $(TEST_ARGS) ./...
+	AUTOBAHN_TESTS=1 AUTOBAHN_OPEN_REPORT=1 go test -run ^TestWebSocketServer$$ $(TEST_ARGS) ./...
 .PHONY: autobahntests
 
 
