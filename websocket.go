@@ -4,12 +4,10 @@ package websocket
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -169,11 +167,6 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 			code := StatusServerError
 			if err == io.EOF {
 				code = StatusNormalClosure
-			} else if isTimeoutError(err) {
-				// autobahn tests 6.4.1 and 6.4.2 expect a close frame with no
-				// status code on a read timeout. seems wrong to me, but
-				// currently needed to pass the autobahn test suite.
-				code = StatusNoStatus
 			}
 			return nil, c.closeOnReadError(code, err)
 		}
@@ -305,8 +298,4 @@ func (c *Conn) resetWriteDeadline() {
 	if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
 		panic(fmt.Sprintf("websocket: failed to set write deadline: %s", err))
 	}
-}
-
-func isTimeoutError(err error) bool {
-	return errors.Is(err, os.ErrDeadlineExceeded)
 }
