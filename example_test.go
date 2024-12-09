@@ -1,6 +1,7 @@
 package websocket_test
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -8,7 +9,7 @@ import (
 )
 
 func ExampleEchoHandler() {
-	http.ListenAndServe(":8080", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := websocket.Accept(w, r, websocket.Options{
 			ReadTimeout:     500 * time.Millisecond,
 			WriteTimeout:    500 * time.Millisecond,
@@ -20,5 +21,8 @@ func ExampleEchoHandler() {
 			return
 		}
 		ws.Serve(r.Context(), websocket.EchoHandler)
-	}))
+	})
+	if err := http.ListenAndServe(":8080", handler); err != nil {
+		log.Fatalf("error starting server: %v", err)
+	}
 }

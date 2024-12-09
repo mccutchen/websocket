@@ -170,7 +170,7 @@ func TestAccept(t *testing.T) {
 				}
 				assert.Equal(t, fmt.Sprint(r), "websocket: accept: server does not support hijacking", "incorrect panic message")
 			}()
-			websocket.Accept(w, handshakeReq, websocket.Options{})
+			_, _ = websocket.Accept(w, handshakeReq, websocket.Options{})
 		})
 
 		t.Run("hijack failed", func(t *testing.T) {
@@ -181,7 +181,7 @@ func TestAccept(t *testing.T) {
 				}
 				assert.Equal(t, fmt.Sprint(r), "websocket: accept: hijack failed: error hijacking connection", "incorrect panic message")
 			}()
-			websocket.Accept(&brokenHijackResponseWriter{}, handshakeReq, websocket.Options{})
+			_, _ = websocket.Accept(&brokenHijackResponseWriter{}, handshakeReq, websocket.Options{})
 		})
 	}
 }
