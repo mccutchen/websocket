@@ -60,7 +60,7 @@ func TestWebSocketServer(t *testing.T) {
 			Hooks: hooks,
 			// long ReadTimeout because some autobahn test cases (e.g. 5.19
 			// sleep up to 1 second between frames)
-			ReadTimeout:  2000 * time.Millisecond,
+			ReadTimeout:  5000 * time.Millisecond,
 			WriteTimeout: 500 * time.Millisecond,
 			// some autobahn test cases send large frames, so we need to
 			// support large fragments and messages
@@ -117,21 +117,19 @@ func TestWebSocketServer(t *testing.T) {
 		t.Fatalf("empty autobahn test summary; check autobahn logs for problems connecting to test server at %q", targetURL)
 	}
 
-	for _, results := range summary {
-		for caseName, result := range results {
-			result := result
-			t.Run("autobahn/"+caseName, func(t *testing.T) {
-				if result.Failed() {
-					report := loadReport(t, testDir, result.ReportFile)
-					t.Errorf("description: %s", report.Description)
-					t.Errorf("expectation: %s", report.Expectation)
-					t.Errorf("want result: %s", report.Result)
-					t.Errorf("got result:  %s", report.Behavior)
-					t.Errorf("want close:  %s", report.ResultClose)
-					t.Errorf("got close:   %s", report.BehaviorClose)
-				}
-			})
-		}
+	for _, result := range summary {
+		result := result
+		t.Run("autobahn/"+result.ID, func(t *testing.T) {
+			if result.Failed() {
+				report := loadReport(t, testDir, result.ReportFile)
+				t.Errorf("description: %s", report.Description)
+				t.Errorf("expectation: %s", report.Expectation)
+				t.Errorf("want result: %s", report.Result)
+				t.Errorf("got result:  %s", report.Behavior)
+				t.Errorf("want close:  %s", report.ResultClose)
+				t.Errorf("got close:   %s", report.BehaviorClose)
+			}
+		})
 	}
 
 	t.Logf("autobahn test report: file://%s", path.Join(testDir, "report/index.html"))
@@ -188,14 +186,21 @@ func newTestDir(t *testing.T) string {
 	return testDir
 }
 
-func loadSummary(t *testing.T, testDir string) autobahnReportSummary {
+func loadSummary(t *testing.T, testDir string) []autobahnReportResult {
 	t.Helper()
 	f, err := os.Open(path.Join(testDir, "report", "index.json"))
 	assert.NilError(t, err)
 	defer f.Close()
 	var summary autobahnReportSummary
 	assert.NilError(t, json.NewDecoder(f).Decode(&summary))
-	return summary
+	var results []autobahnReportResult
+	for _, serverResults := range summary {
+		for id, result := range serverResults {
+			result.ID = id
+			results = append(results, result)
+		}
+	}
+	return results
 }
 
 func loadReport(t *testing.T, testDir string, reportFile string) autobahnReportResult {
@@ -210,9 +215,10 @@ func loadReport(t *testing.T, testDir string, reportFile string) autobahnReportR
 	return report
 }
 
-type autobahnReportSummary map[string]map[string]autobahnReportResult
+type autobahnReportSummary map[string]map[string]autobahnReportResult // server -> case -> result
 
 type autobahnReportResult struct {
+	ID            string `json:"id"`
 	Behavior      string `json:"behavior"`
 	BehaviorClose string `json:"behaviorClose"`
 	Description   string `json:"description"`
@@ -226,6 +232,22 @@ func (r autobahnReportResult) Failed() bool {
 	okayBehavior := map[string]bool{
 		"OK":            true,
 		"INFORMATIONAL": true,
+	}
+	allowNonStrict := map[string]bool{
+		// Some weirdness in these test cases, where they expect the server to
+		// time out and close the connection, but it's not clear after exactly
+		// how long the timeout should happen (and, AFAICT, other test cases
+		// expect a different timeout).
+		//
+		// The cases pass with "NON-STRICT" results when the timeout is not
+		// hit, as long as we return the expected 1007 status code.
+		"6.4.1": true,
+		"6.4.2": true,
+		"6.4.3": true,
+		"6.4.4": true,
+	}
+	if allowNonStrict[r.ID] {
+		okayBehavior["NON-STRICT"] = true
 	}
 	return !(okayBehavior[r.Behavior] && okayBehavior[r.BehaviorClose])
 }
