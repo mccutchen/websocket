@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -59,6 +60,15 @@ type Hooks struct {
 	OnWriteMessage func(ClientKey, *Message)
 }
 
+type ConnState string
+
+const (
+	ConnStateUnknown ConnState = "unknown"
+	ConnStateOpen    ConnState = "open"
+	ConnStateClosing ConnState = "closing"
+	ConnStateClosed  ConnState = "closed"
+)
+
 // Conn is a websocket connection.
 type Conn struct {
 	// connection state
@@ -66,6 +76,9 @@ type Conn struct {
 	buf      *bufio.ReadWriter
 	closedCh chan struct{}
 	isServer bool
+
+	state ConnState
+	mu    sync.Mutex
 
 	// observability
 	clientKey ClientKey
