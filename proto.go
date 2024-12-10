@@ -12,6 +12,7 @@ import (
 
 const requiredVersion = "13"
 
+// Protocol-level errors.
 var (
 	ErrContinuationExpected = errors.New("expected continuation frame")
 	ErrInvalidContinuation  = errors.New("unexpected continuation frame")
@@ -78,9 +79,8 @@ type Message struct {
 func (m Message) String() string {
 	if m.Binary {
 		return fmt.Sprintf("Message{Binary: %v, Payload: %v}", m.Binary, m.Payload)
-	} else {
-		return fmt.Sprintf("Message{Binary: %v, Payload: %q}", m.Binary, m.Payload)
 	}
+	return fmt.Sprintf("Message{Binary: %v, Payload: %q}", m.Binary, m.Payload)
 }
 
 // ReadFrame reads a websocket frame from the wire.
