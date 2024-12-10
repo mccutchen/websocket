@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -27,6 +28,13 @@ const (
 	ClientMode      = true
 )
 
+func (m Mode) String() string {
+	if m == ServerMode {
+		return "server"
+	}
+	return "client"
+}
+
 // Options define the limits imposed on a websocket connection.
 type Options struct {
 	Hooks          Hooks
@@ -41,12 +49,22 @@ type deadliner interface {
 	SetWriteDeadline(time.Time) error
 }
 
+type ConnState string
+
+const (
+	ConnStateOpen    ConnState = "open"
+	ConnStateClosing ConnState = "closing"
+	ConnStateClosed  ConnState = "closed"
+)
+
 // Websocket is a websocket connection.
 type Websocket struct {
+	conn io.ReadWriteCloser
+	mode Mode
+
 	// connection state
-	conn     io.ReadWriteCloser
-	closedCh chan struct{}
-	mode     Mode
+	state ConnState
+	mu    sync.Mutex
 
 	// observability
 	clientKey ClientKey
@@ -95,7 +113,7 @@ func New(src io.ReadWriteCloser, clientKey ClientKey, mode Mode, opts Options) *
 	}
 	return &Websocket{
 		conn:           src,
-		closedCh:       make(chan struct{}),
+		state:          ConnStateOpen,
 		mode:           mode,
 		clientKey:      clientKey,
 		hooks:          opts.Hooks,
@@ -149,13 +167,20 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 	var msg *Message
 	for {
 		select {
-		case <-ws.closedCh:
-			return nil, io.EOF
 		case <-ctx.Done():
-			_ = ws.Close()
-			return nil, ctx.Err()
+			// If context is canceled due to deadline, treat it as a read error and
+			// initiate server closure.
+			//
+			// Otherwise, assume the client closed the connection and there's nothing
+			// for us to do besides close our end.
+			//
+			// TODO: hook for context cancellation/timeout/early closure?
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return nil, ws.closeOnReadError(ctx.Err())
+			}
+			return nil, ws.Close()
 		default:
-			ws.resetReadDeadline()
+			ws.resetReadDeadline(ctx)
 		}
 
 		frame, err := ReadFrame(ws.conn, ws.mode, ws.maxFrameSize)
@@ -168,6 +193,17 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		ws.hooks.OnReadFrame(ws.clientKey, frame)
 
 		opcode := frame.Opcode()
+
+		// if we're waiting for a close frame, ignore all other frames and keep
+		// reading till we get one (or time out)
+		//
+		// FIXME: making a recursive call here is a hack, there's probably a
+		// better way to structure this.
+		state := ws.getState()
+		if state == ConnStateClosing && opcode != OpcodeClose {
+			return ws.ReadMessage(ctx)
+		}
+
 		switch opcode {
 		case OpcodeBinary, OpcodeText:
 			if msg != nil {
@@ -186,8 +222,25 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 			msg.Payload = append(msg.Payload, frame.Payload...)
 		case OpcodeClose:
-			_ = ws.Close()
-			return nil, io.EOF
+			switch state {
+			case ConnStateOpen:
+				ws.setState(ConnStateClosing)
+				ws.hooks.OnCloseHandshakeStart(ws.clientKey, ClientMode, StatusNormalClosure, nil)
+				// TODO: this responds with the same closing code that we
+				// received. Should we either a) parse the incoming close frame
+				// so that the hook gets the correct status code or b) always
+				// close with a normal closure here instead of echoing the
+				// incoming frame?
+				if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
+					return nil, fmt.Errorf("websocket: read: failed to write close handshake reply: %w", err)
+				}
+				continue
+			case ConnStateClosing:
+				ws.hooks.OnCloseHandshakeDone(ws.clientKey, ClientMode, StatusNormalClosure, nil)
+				return nil, ws.Close()
+			default:
+				return nil, ws.closeOnReadError(fmt.Errorf("websocket: read: unexpected close frame in state %q", state))
+			}
 		case OpcodePing:
 			frame = NewFrame(OpcodePong, true, frame.Payload)
 			ws.hooks.OnWriteFrame(ws.clientKey, frame)
@@ -220,11 +273,9 @@ func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 		ws.hooks.OnWriteFrame(ws.clientKey, frame)
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-ws.closedCh:
-			return io.EOF
+			return ws.Close()
 		default:
-			ws.resetWriteDeadline()
+			ws.resetWriteDeadline(ctx)
 		}
 		if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
 			return ws.closeOnWriteError(err)
@@ -276,9 +327,11 @@ func (ws *Websocket) Close() error {
 
 func (ws *Websocket) closeWithError(err error) error {
 	code, reason := statusCodeForError(err)
-	ws.hooks.OnClose(ws.clientKey, code, err)
-	close(ws.closedCh)
-	if err := WriteFrame(ws.conn, ws.mask(), NewCloseFrame(code, reason)); err != nil {
+	frame := NewCloseFrame(code, reason)
+	ws.setState(ConnStateClosed)
+	ws.hooks.OnCloseHandshakeStart(ws.clientKey, ws.mode, code, err)
+	ws.hooks.OnWriteFrame(ws.clientKey, frame)
+	if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
 		return fmt.Errorf("websocket: failed to write close frame: %w", err)
 	}
 	if err := ws.conn.Close(); err != nil {
@@ -299,22 +352,62 @@ func (ws *Websocket) closeOnWriteError(err error) error {
 	return err
 }
 
-func (ws *Websocket) resetReadDeadline() {
-	if ws.readTimeout <= 0 {
+// chooseDeadline returns an appropriate deadline by choosing the sooner of
+// the context's deadline (if it has one) and the timeout.
+func chooseDeadline(ctx context.Context, timeout time.Duration, nowSource func() time.Time) time.Time {
+	timeoutDeadline := nowSource().Add(timeout)
+	ctxDeadline, ok := ctx.Deadline()
+	if ok && timeoutDeadline.After(ctxDeadline) {
+		return ctxDeadline
+	}
+	return timeoutDeadline
+}
+
+func (ws *Websocket) resetReadDeadline(ctx context.Context) {
+	deadline := chooseDeadline(ctx, ws.readTimeout, time.Now)
+	if deadline.IsZero() {
 		return
 	}
-	if err := ws.conn.(deadliner).SetReadDeadline(time.Now().Add(ws.readTimeout)); err != nil {
+	if err := ws.conn.(deadliner).SetReadDeadline(deadline); err != nil {
 		panic(fmt.Sprintf("websocket: failed to set read deadline: %s", err))
 	}
 }
 
-func (ws *Websocket) resetWriteDeadline() {
-	if ws.writeTimeout <= 0 {
+func (ws *Websocket) resetWriteDeadline(ctx context.Context) {
+	deadline := chooseDeadline(ctx, ws.writeTimeout, time.Now)
+	if deadline.IsZero() {
 		return
 	}
-	if err := ws.conn.(deadliner).SetWriteDeadline(time.Now().Add(ws.writeTimeout)); err != nil {
+	if err := ws.conn.(deadliner).SetWriteDeadline(deadline); err != nil {
 		panic(fmt.Sprintf("websocket: failed to set write deadline: %s", err))
 	}
+}
+
+var validTransitions = map[ConnState][]ConnState{
+	ConnStateOpen:    {ConnStateClosing},
+	ConnStateClosing: {ConnStateClosed},
+}
+
+func (ws *Websocket) setState(newState ConnState) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	isValid := false
+	for _, s := range validTransitions[ws.state] {
+		if newState == s {
+			isValid = true
+			break
+		}
+	}
+	if !isValid {
+		panic(fmt.Errorf("websocket: setState: invalid transition from %q to %q", ws.state, newState))
+	}
+	ws.state = newState
+}
+
+func (ws *Websocket) getState() ConnState {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	return ws.state
 }
 
 // ClientKey returns the [ClientKey] for a connection.
@@ -359,8 +452,10 @@ func statusCodeForError(err error) (StatusCode, string) {
 // Hooks define the callbacks that are called during the lifecycle of a
 // websocket connection.
 type Hooks struct {
-	// OnClose is called when the connection is closed.
-	OnClose func(ClientKey, StatusCode, error)
+	// OnCloseStart is called when the a close handshake is initiated.
+	OnCloseHandshakeStart func(client ClientKey, initiatedBy Mode, code StatusCode, err error)
+	// OnCloseHandshakeDone is called when the close handshake is complete.
+	OnCloseHandshakeDone func(client ClientKey, initiatedBy Mode, code StatusCode, err error)
 	// OnReadError is called when a read error occurs.
 	OnReadError func(ClientKey, error)
 	// OnReadFrame is called when a frame is read.
@@ -377,8 +472,11 @@ type Hooks struct {
 
 // setupHooks ensures that all hooks have a default no-op function if unset.
 func setupHooks(hooks *Hooks) {
-	if hooks.OnClose == nil {
-		hooks.OnClose = func(ClientKey, StatusCode, error) {}
+	if hooks.OnCloseHandshakeStart == nil {
+		hooks.OnCloseHandshakeStart = func(ClientKey, Mode, StatusCode, error) {}
+	}
+	if hooks.OnCloseHandshakeDone == nil {
+		hooks.OnCloseHandshakeDone = func(ClientKey, Mode, StatusCode, error) {}
 	}
 	if hooks.OnReadError == nil {
 		hooks.OnReadError = func(ClientKey, error) {}

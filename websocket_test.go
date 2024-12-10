@@ -887,8 +887,11 @@ func setupWebsocketClient(t testing.TB, conn net.Conn, opts websocket.Options) *
 func newTestHooks(t testing.TB) websocket.Hooks {
 	t.Helper()
 	return websocket.Hooks{
-		OnClose: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
-			t.Logf("HOOK: client=%s OnClose code=%v err=%v", key, code, err)
+		OnCloseHandshakeStart: func(key websocket.ClientKey, initiatedBy websocket.Mode, code websocket.StatusCode, err error) {
+			t.Logf("HOOK: client=%s OnCloseSHandshakeStart initiatedBy=%q code=%v err=%q", initiatedBy, key, code, err)
+		},
+		OnCloseHandshakeDone: func(key websocket.ClientKey, initiatedBy websocket.Mode, code websocket.StatusCode, err error) {
+			t.Logf("HOOK: client=%s OnCloseHandshakeDone initiatedBy=%q code=%v err=%q", initiatedBy, key, code, err)
 		},
 		OnReadError: func(key websocket.ClientKey, err error) {
 			t.Logf("HOOK: client=%s OnReadError err=%v", key, err)
