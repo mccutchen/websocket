@@ -197,9 +197,10 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 			return nil, io.EOF
 		case OpcodePing:
 			frame.Opcode = OpcodePong
-			if err := WriteFrame(c.conn, frame); err != nil {
+			if err := WriteFrame(c.buf, frame); err != nil {
 				return nil, err
 			}
+			_ = c.buf.Flush()
 			continue
 		case OpcodePong:
 			continue // no-op
@@ -229,10 +230,11 @@ func (c *Conn) Write(ctx context.Context, msg *Message) error {
 		default:
 			c.resetWriteDeadline()
 		}
-		if err := WriteFrame(c.conn, frame); err != nil {
+		if err := WriteFrame(c.buf, frame); err != nil {
 			return c.closeOnWriteError(StatusServerError, err)
 		}
 	}
+	_ = c.buf.Flush()
 	return nil
 }
 
@@ -266,7 +268,8 @@ func (c *Conn) Close() error {
 func (c *Conn) closeWithError(code StatusCode, err error) error {
 	c.hooks.OnClose(c.clientKey, code, err)
 	close(c.closedCh)
-	_ = writeCloseFrame(c.conn, code, err)
+	_ = writeCloseFrame(c.buf, code, err)
+	_ = c.buf.Flush()
 	return c.conn.Close()
 }
 
