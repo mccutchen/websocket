@@ -397,8 +397,11 @@ var (
 func newTestHooks(t *testing.T) websocket.Hooks {
 	t.Helper()
 	return websocket.Hooks{
-		OnClose: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
-			t.Logf("client=%s OnClose code=%v err=%q", key, code, err)
+		OnCloseHandshakeStart: func(key websocket.ClientKey, initiatedBy string, code websocket.StatusCode, err error) {
+			t.Logf("client=%s OnCloseSHandshakeStart initiatedBy=%q code=%v err=%q", initiatedBy, key, code, err)
+		},
+		OnCloseHandshakeDone: func(key websocket.ClientKey, initiatedBy string, code websocket.StatusCode, err error) {
+			t.Logf("client=%s OnCloseHandshakeDone initiatedBy=%q code=%v err=%q", initiatedBy, key, code, err)
 		},
 		OnReadError: func(key websocket.ClientKey, err error) {
 			t.Logf("client=%s OnReadError err=%q", key, err)

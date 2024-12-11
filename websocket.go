@@ -44,8 +44,10 @@ type Options struct {
 // Hooks define the callbacks that are called during the lifecycle of a
 // websocket connection.
 type Hooks struct {
-	// OnClose is called when the connection is closed.
-	OnClose func(ClientKey, StatusCode, error)
+	// OnCloseStart is called when the a close handshake is initiated.
+	OnCloseHandshakeStart func(client ClientKey, initiatedBy string, code StatusCode, err error)
+	// OnCloseHandshakeDone is called when the close handshake is complete.
+	OnCloseHandshakeDone func(client ClientKey, initiatedBy string, code StatusCode, err error)
 	// OnReadError is called when a read error occurs.
 	OnReadError func(ClientKey, error)
 	// OnReadFrame is called when a frame is read.
@@ -119,6 +121,7 @@ func newConn(conn net.Conn, buf *bufio.ReadWriter, clientKey ClientKey, opts Opt
 		buf:             buf,
 		closedCh:        make(chan struct{}),
 		isServer:        true,
+		state:           ConnStateOpen,
 		clientKey:       clientKey,
 		hooks:           opts.Hooks,
 		readTimeout:     opts.ReadTimeout,
@@ -141,8 +144,11 @@ func setDefaults(opts *Options) {
 
 // setupHooks ensures that all hooks have a default no-op function if unset.
 func setupHooks(hooks *Hooks) {
-	if hooks.OnClose == nil {
-		hooks.OnClose = func(ClientKey, StatusCode, error) {}
+	if hooks.OnCloseHandshakeStart == nil {
+		hooks.OnCloseHandshakeStart = func(ClientKey, string, StatusCode, error) {}
+	}
+	if hooks.OnCloseHandshakeDone == nil {
+		hooks.OnCloseHandshakeDone = func(ClientKey, string, StatusCode, error) {}
 	}
 	if hooks.OnReadError == nil {
 		hooks.OnReadError = func(ClientKey, error) {}
@@ -195,8 +201,8 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 		case <-c.closedCh:
 			return nil, io.EOF
 		case <-ctx.Done():
-			_ = c.Close()
-			return nil, ctx.Err()
+			// TODO: hook for context cancellation/timeout/early closure?
+			return nil, c.Close()
 		default:
 			c.resetReadDeadline()
 		}
@@ -213,6 +219,19 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 			return nil, c.closeOnReadError(StatusProtocolError, err)
 		}
 		c.hooks.OnReadFrame(c.clientKey, frame)
+
+		// if we're waiting for a close frame, ignore all other frames and keep
+		// reading till we get one (or time out)
+		//
+		// FIXME: making a recursive call here is a hack, there's probably a
+		// better way to structure this.
+		c.mu.Lock()
+		state := c.state
+		if state == ConnStateClosing && frame.Opcode != OpcodeClose {
+			c.mu.Unlock()
+			return c.Read(ctx)
+		}
+		c.mu.Unlock()
 
 		switch frame.Opcode {
 		case OpcodeBinary, OpcodeText:
@@ -232,8 +251,30 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 				return nil, c.closeOnReadError(StatusTooLarge, fmt.Errorf("message size %d exceeds maximum of %d bytes", len(msg.Payload), c.maxMessageSize))
 			}
 		case OpcodeClose:
-			_ = c.Close()
-			return nil, io.EOF
+			switch state {
+			case ConnStateOpen:
+				c.mu.Lock()
+				c.state = ConnStateClosing
+				c.mu.Unlock()
+				c.hooks.OnCloseHandshakeStart(c.clientKey, "self", StatusNormalClosure, nil)
+				// TODO: this responds with the same closing code that we
+				// received. Should we either a) parse the incoming close frame
+				// so that the hook gets the correct status code or b) always
+				// close with a normal closure here instead of echoing the
+				// incoming frame?
+				if err := WriteFrame(c.buf, frame); err != nil {
+					return nil, fmt.Errorf("websocket: read: failed to write close handshake reply: %w", err)
+				}
+				if err := c.buf.Flush(); err != nil {
+					return nil, fmt.Errorf("websocket: read: failed to flush close handshake reply: %w", err)
+				}
+				continue
+			case ConnStateClosing:
+				c.hooks.OnCloseHandshakeDone(c.clientKey, "self", StatusNormalClosure, nil)
+				return nil, c.Close()
+			default:
+				return nil, c.closeOnReadError(StatusProtocolError, fmt.Errorf("websocket: read: unexpected close frame in state %q", state))
+			}
 		case OpcodePing:
 			frame.Opcode = OpcodePong
 			c.hooks.OnWriteFrame(c.clientKey, frame)
@@ -309,11 +350,15 @@ func (c *Conn) Serve(ctx context.Context, handler Handler) {
 
 // Close closes a websocket connection.
 func (c *Conn) Close() error {
-	return c.closeWithError(StatusNormalClosure, nil)
+	c.mu.Lock()
+	c.state = ConnStateClosed
+	c.mu.Unlock()
+	close(c.closedCh)
+	return c.conn.Close()
 }
 
 func (c *Conn) closeWithError(code StatusCode, err error) error {
-	c.hooks.OnClose(c.clientKey, code, err)
+	c.hooks.OnCloseHandshakeStart(c.clientKey, "server", code, err)
 	close(c.closedCh)
 	if err := writeCloseFrame(c.buf, code, err); err != nil {
 		return fmt.Errorf("websocket: failed to write close frame: %w", err)
