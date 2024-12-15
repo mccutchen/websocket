@@ -44,7 +44,6 @@ type StatusCode uint16
 // See the RFC for the set of defined status codes:
 // https://datatracker.ietf.org/doc/html/rfc6455#section-7.4.1
 const (
-	StatusNoStatus           StatusCode = 0
 	StatusNormalClosure      StatusCode = 1000
 	StatusGoingAway          StatusCode = 1001
 	StatusProtocolError      StatusCode = 1002
