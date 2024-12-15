@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>echoserver example client</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+            margin: 20px;
+        }
+
+        #output {
+            margin-top: 10px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            background: #f9f9f9;
+            height: 200px;
+            overflow-y: scroll;
+            white-space: pre-wrap;
+        }
+
+        input,
+        button {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>echoserver example client</h1>
+    <form id="connectionForm">
+        <label for="serverUrl">WebSocket Server URL:</label>
+        <input type="text" id="serverUrl" value="ws://localhost:8080/" size="50">
+        <button type="button" id="connectButton">Connect</button>
+    </form>
+
+    <form id="messageForm">
+        <label for="messageInput">Message to send:</label>
+        <input type="text" id="messageInput" size="50" disabled>
+        <button type="button" id="sendButton" disabled>Send</button>
+    </form>
+
+    <div id="output"></div>
+
+    <script>
+        let websocket;
+
+        const output = document.getElementById('output');
+        const connectButton = document.getElementById('connectButton');
+        const sendButton = document.getElementById('sendButton');
+        const connectionForm = document.getElementById('connectionForm');
+        const messageForm = document.getElementById('messageForm');
+        const serverUrlInput = document.getElementById('serverUrl');
+        const messageInput = document.getElementById('messageInput');
+
+        function logMessage(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            output.textContent += `[${timestamp}] ${message}\n`;
+            output.scrollTop = output.scrollHeight; // Scroll to the bottom
+        }
+
+        // Handle connection to the WebSocket server
+        connectionForm.addEventListener('submit', (event) => {
+            event.preventDefault(); // Prevent form reload
+            const url = serverUrlInput.value.trim();
+            if (!url) {
+                logMessage('Please provide a valid WebSocket URL.');
+                return;
+            }
+
+            logMessage(`Connecting to ${url}...`);
+            websocket = new WebSocket(url);
+
+            websocket.addEventListener('open', () => {
+                logMessage('Connected to WebSocket server.');
+                messageInput.disabled = false;
+                sendButton.disabled = false;
+                serverUrlInput.disabled = true;
+                connectButton.disabled = true;
+            });
+
+            websocket.addEventListener('message', (event) => {
+                logMessage(`Server: ${event.data}`);
+            });
+
+            websocket.addEventListener('close', (event) => {
+                logMessage(`Connection closed (Code: ${event.code}, Reason: ${event.reason}).`);
+                messageInput.disabled = true;
+                sendButton.disabled = true;
+                serverUrlInput.disabled = false;
+                connectButton.disabled = false;
+            });
+
+            websocket.addEventListener('error', (event) => {
+                logMessage('WebSocket error occurred.');
+            });
+        });
+
+        // Handle sending a message to the WebSocket server
+        messageForm.addEventListener('submit', (event) => {
+            event.preventDefault(); // Prevent form reload
+            const message = messageInput.value.trim();
+            if (!message) {
+                logMessage('Cannot send an empty message.');
+                return;
+            }
+            logMessage(`You: ${message}`);
+            websocket.send(message);
+            messageInput.value = '';
+        });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,4 @@
+github.com/goccy/go-json v0.10.4 h1:JSwxQzIqKfmFX1swYPpUThQZp/Ka4wzJdK0LWVytLPM=
+github.com/goccy/go-json v0.10.4/go.mod h1:oq7eo15ShAhp70Anwd5lgX2pLfOS3QCiwU/PULtXL6M=
+github.com/mccutchen/websocket v0.0.0-20241210041637-21761d5ff7cf h1:3c977gZKlfdrYergt0u6xiqXoAYaY2YOVjIbjb/5ATU=
+github.com/mccutchen/websocket v0.0.0-20241210041637-21761d5ff7cf/go.mod h1:a1u/ffSEY8LdQjxJtARp2pxTKdt1vjPxXNmWMr0gE4s=
