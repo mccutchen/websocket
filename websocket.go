@@ -4,6 +4,7 @@ package websocket
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -190,7 +191,7 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 		frame, err := ReadFrame(c.buf)
 		if err != nil {
 			code := StatusServerError
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				code = StatusNormalClosure
 			}
 			return nil, c.closeOnReadError(code, err)
@@ -222,6 +223,7 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 			return nil, io.EOF
 		case OpcodePing:
 			frame.Opcode = OpcodePong
+			c.hooks.OnWriteFrame(c.clientKey, frame)
 			if err := WriteFrame(c.buf, frame); err != nil {
 				return nil, err
 			}
@@ -300,9 +302,16 @@ func (c *Conn) Close() error {
 func (c *Conn) closeWithError(code StatusCode, err error) error {
 	c.hooks.OnClose(c.clientKey, code, err)
 	close(c.closedCh)
-	_ = writeCloseFrame(c.buf, code, err)
-	_ = c.buf.Flush()
-	return c.conn.Close()
+	if err := writeCloseFrame(c.buf, code, err); err != nil {
+		return fmt.Errorf("websocket: failed to write close frame: %w", err)
+	}
+	if err := c.buf.Flush(); err != nil {
+		return fmt.Errorf("websocket: failed to flush buffer: %s", err)
+	}
+	if err := c.conn.Close(); err != nil {
+		return fmt.Errorf("websocket: failed to close connection: %s", err)
+	}
+	return nil
 }
 
 func (c *Conn) closeOnReadError(code StatusCode, err error) error {

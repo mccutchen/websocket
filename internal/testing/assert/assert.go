@@ -2,6 +2,7 @@
 package assert
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -47,13 +48,22 @@ func NilError(t *testing.T, err error) {
 // Error asserts that an error is not nil.
 func Error(t *testing.T, got, expected error) {
 	t.Helper()
-	if got != expected {
-		if got != nil && expected != nil {
-			if got.Error() == expected.Error() {
-				return
-			}
-		}
-		t.Fatalf("expected error %q, got %v", expected, got)
+	if !errorsMatch(t, got, expected) {
+		t.Fatalf("expected error %q, got %v (%T vs %T)", expected, got, expected, got)
+	}
+}
+
+func errorsMatch(t *testing.T, got, expected error) bool {
+	t.Helper()
+	switch {
+	case got == expected:
+		return true
+	case errors.Is(got, expected):
+		return true
+	case got != nil && expected != nil:
+		return got.Error() == expected.Error()
+	default:
+		return false
 	}
 }
 
