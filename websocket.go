@@ -24,6 +24,12 @@ var EchoHandler Handler = func(_ context.Context, msg *Message) (*Message, error
 	return msg, nil
 }
 
+// Default options.
+const (
+	DefaultMaxFragmentSize int = 1024 * 16  // 16KiB
+	DefaultMaxMessageSize  int = 1024 * 256 // 256KiB
+)
+
 // Options define the limits imposed on a websocket connection.
 type Options struct {
 	Hooks           Hooks
@@ -88,21 +94,39 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Conn, error)
 		panic(fmt.Errorf("websocket: accept: hijack failed: %s", err))
 	}
 
+	return newConn(conn, buf, clientKey, opts), nil
+}
+
+// newConn creates a new websocket connection.
+func newConn(conn net.Conn, buf *bufio.ReadWriter, clientKey ClientKey, opts Options) *Conn {
+	setDefaults(&opts)
 	return &Conn{
 		conn:            conn,
 		buf:             buf,
 		closedCh:        make(chan struct{}),
 		server:          true,
 		clientKey:       clientKey,
-		hooks:           setupHooks(opts.Hooks),
+		hooks:           opts.Hooks,
 		readTimeout:     opts.ReadTimeout,
 		writeTimeout:    opts.WriteTimeout,
 		maxFragmentSize: opts.MaxFragmentSize,
 		maxMessageSize:  opts.MaxMessageSize,
-	}, nil
+	}
 }
 
-func setupHooks(hooks Hooks) Hooks {
+// setDefaults sets the default values for any unset options.
+func setDefaults(opts *Options) {
+	if opts.MaxFragmentSize <= 0 {
+		opts.MaxFragmentSize = DefaultMaxFragmentSize
+	}
+	if opts.MaxMessageSize <= 0 {
+		opts.MaxMessageSize = DefaultMaxMessageSize
+	}
+	setupHooks(&opts.Hooks)
+}
+
+// setupHooks ensures that all hooks have a default no-op function if unset.
+func setupHooks(hooks *Hooks) {
 	if hooks.OnClose == nil {
 		hooks.OnClose = func(ClientKey, StatusCode, error) {}
 	}
@@ -124,7 +148,6 @@ func setupHooks(hooks Hooks) Hooks {
 	if hooks.OnWriteMessage == nil {
 		hooks.OnWriteMessage = func(ClientKey, *Message) {}
 	}
-	return hooks
 }
 
 // handshake validates the request and performs the WebSocket handshake, after
