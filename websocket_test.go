@@ -191,7 +191,7 @@ func TestConnectionLimits(t *testing.T) {
 	t.Run("server enforces read deadline", func(t *testing.T) {
 		t.Parallel()
 
-		maxDuration := 500 * time.Millisecond
+		maxDuration := 250 * time.Millisecond
 
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ws, err := websocket.Accept(w, r, websocket.Options{
@@ -261,7 +261,8 @@ func TestConnectionLimits(t *testing.T) {
 			assert.Equal(t, statusCode, websocket.StatusServerError, "expected server error status code")
 			assert.Contains(t, closeMsg, "timeout", "expected timeout close message")
 
-			// confirm connection is closed
+			// connection should be closed, so we should get EOF when trying to
+			// read from it again
 			_, err = conn.Read(make([]byte, 1))
 			assert.Error(t, err, io.EOF)
 		}
@@ -279,6 +280,10 @@ func TestConnectionLimits(t *testing.T) {
 			elapsedClientTime time.Duration
 			elapsedServerTime time.Duration
 			wg                sync.WaitGroup
+
+			// record the error the server sees when the client closes the
+			// connection
+			gotServerReadError error
 		)
 
 		wg.Add(1)
@@ -289,6 +294,11 @@ func TestConnectionLimits(t *testing.T) {
 				ReadTimeout:     serverTimeout,
 				MaxFragmentSize: 128,
 				MaxMessageSize:  256,
+				Hooks: websocket.Hooks{
+					OnReadError: func(key websocket.ClientKey, err error) {
+						gotServerReadError = err
+					},
+				},
 			})
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -307,20 +317,20 @@ func TestConnectionLimits(t *testing.T) {
 		// the max request time configured above
 		assert.NilError(t, conn.SetDeadline(time.Now().Add(clientTimeout)))
 
-		reqParts := []string{
-			"GET /websocket/echo HTTP/1.1",
-			"Host: test",
-			"Connection: upgrade",
-			"Upgrade: websocket",
-			"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
-			"Sec-WebSocket-Version: 13",
-		}
-		reqBytes := []byte(strings.Join(reqParts, "\r\n") + "\r\n\r\n")
-		t.Logf("raw request:\n%q", reqBytes)
-
 		// first, we write the request line and headers, which should cause the
 		// server to respond with a 101 Switching Protocols response.
 		{
+			reqParts := []string{
+				"GET /websocket/echo HTTP/1.1",
+				"Host: test",
+				"Connection: upgrade",
+				"Upgrade: websocket",
+				"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+				"Sec-WebSocket-Version: 13",
+			}
+			reqBytes := []byte(strings.Join(reqParts, "\r\n") + "\r\n\r\n")
+			t.Logf("raw request:\n%q", reqBytes)
+
 			n, err := conn.Write(reqBytes)
 			assert.NilError(t, err)
 			assert.Equal(t, n, len(reqBytes), "incorrect number of bytes written")
@@ -349,9 +359,12 @@ func TestConnectionLimits(t *testing.T) {
 			assert.Equal(t, os.IsTimeout(err), true, "expected timeout error")
 			assert.RoughlyEqual(t, elapsedClientTime, clientTimeout, 10*time.Millisecond)
 
-			// wait for the server to finish
+			// wait for the server to finish handling the one request, then
+			// make sure it took the expected amount of time to get a read
+			// timeout and an appropriate error
 			wg.Wait()
 			assert.RoughlyEqual(t, elapsedServerTime, clientTimeout, 10*time.Millisecond)
+			assert.Error(t, gotServerReadError, io.EOF)
 		}
 	})
 }
