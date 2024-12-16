@@ -308,7 +308,7 @@ func (c *Conn) Write(ctx context.Context, msg *Message) error {
 		c.hooks.OnWriteFrame(c.clientKey, frame)
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return c.Close()
 		case <-c.closedCh:
 			return io.EOF
 		default:
