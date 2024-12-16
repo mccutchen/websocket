@@ -17,7 +17,7 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, websocket.Options{
-			ReadTimeout:     60 * time.Second,
+			ReadTimeout:     10 * time.Second,
 			WriteTimeout:    1 * time.Second,
 			MaxFragmentSize: 1024 * 1024,
 			MaxMessageSize:  1024 * 1024,

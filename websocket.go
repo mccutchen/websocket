@@ -65,7 +65,6 @@ type Hooks struct {
 type ConnState string
 
 const (
-	ConnStateUnknown ConnState = "unknown"
 	ConnStateOpen    ConnState = "open"
 	ConnStateClosing ConnState = "closing"
 	ConnStateClosed  ConnState = "closed"
@@ -76,7 +75,6 @@ type Conn struct {
 	// connection state
 	conn     net.Conn
 	buf      *bufio.ReadWriter
-	closedCh chan struct{}
 	isServer bool
 
 	state ConnState
@@ -119,7 +117,6 @@ func newConn(conn net.Conn, buf *bufio.ReadWriter, clientKey ClientKey, opts Opt
 	return &Conn{
 		conn:            conn,
 		buf:             buf,
-		closedCh:        make(chan struct{}),
 		isServer:        true,
 		state:           ConnStateOpen,
 		clientKey:       clientKey,
@@ -198,8 +195,6 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 	var msg *Message
 	for {
 		select {
-		case <-c.closedCh:
-			return nil, io.EOF
 		case <-ctx.Done():
 			// TODO: hook for context cancellation/timeout/early closure?
 			return nil, c.Close()
@@ -211,10 +206,16 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 		if err != nil {
 			code := StatusServerError
 			if errors.Is(err, io.EOF) {
+				// FIXME: see recursive read below, if we've sent our close frame an EOF
+				// from the client indicates that they closed their end.
+				if c.getState() == ConnStateClosing {
+					return nil, c.Close()
+				}
 				code = StatusNormalClosure
 			}
 			return nil, c.closeOnReadError(code, err)
 		}
+
 		if err := validateFrame(frame, c.maxFragmentSize, c.isServer); err != nil {
 			return nil, c.closeOnReadError(StatusProtocolError, err)
 		}
@@ -225,13 +226,10 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 		//
 		// FIXME: making a recursive call here is a hack, there's probably a
 		// better way to structure this.
-		c.mu.Lock()
-		state := c.state
+		state := c.getState()
 		if state == ConnStateClosing && frame.Opcode != OpcodeClose {
-			c.mu.Unlock()
 			return c.Read(ctx)
 		}
-		c.mu.Unlock()
 
 		switch frame.Opcode {
 		case OpcodeBinary, OpcodeText:
@@ -253,10 +251,8 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 		case OpcodeClose:
 			switch state {
 			case ConnStateOpen:
-				c.mu.Lock()
-				c.state = ConnStateClosing
-				c.mu.Unlock()
-				c.hooks.OnCloseHandshakeStart(c.clientKey, "self", StatusNormalClosure, nil)
+				c.setState(ConnStateClosing)
+				c.hooks.OnCloseHandshakeStart(c.clientKey, "client", StatusNormalClosure, nil)
 				// TODO: this responds with the same closing code that we
 				// received. Should we either a) parse the incoming close frame
 				// so that the hook gets the correct status code or b) always
@@ -270,7 +266,7 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 				}
 				continue
 			case ConnStateClosing:
-				c.hooks.OnCloseHandshakeDone(c.clientKey, "self", StatusNormalClosure, nil)
+				c.hooks.OnCloseHandshakeDone(c.clientKey, "client", StatusNormalClosure, nil)
 				return nil, c.Close()
 			default:
 				return nil, c.closeOnReadError(StatusProtocolError, fmt.Errorf("websocket: read: unexpected close frame in state %q", state))
@@ -309,8 +305,6 @@ func (c *Conn) Write(ctx context.Context, msg *Message) error {
 		select {
 		case <-ctx.Done():
 			return c.Close()
-		case <-c.closedCh:
-			return io.EOF
 		default:
 			c.resetWriteDeadline()
 		}
@@ -350,16 +344,15 @@ func (c *Conn) Serve(ctx context.Context, handler Handler) {
 
 // Close closes a websocket connection.
 func (c *Conn) Close() error {
-	c.mu.Lock()
-	c.state = ConnStateClosed
-	c.mu.Unlock()
-	close(c.closedCh)
+	c.setState(ConnStateClosed)
 	return c.conn.Close()
 }
 
 func (c *Conn) closeWithError(code StatusCode, err error) error {
+	c.mu.Lock()
+	c.state = ConnStateClosing
+	c.mu.Unlock()
 	c.hooks.OnCloseHandshakeStart(c.clientKey, "server", code, err)
-	close(c.closedCh)
 	if err := writeCloseFrame(c.buf, code, err); err != nil {
 		return fmt.Errorf("websocket: failed to write close frame: %w", err)
 	}
@@ -400,4 +393,32 @@ func (c *Conn) resetWriteDeadline() {
 	if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
 		panic(fmt.Sprintf("websocket: failed to set write deadline: %s", err))
 	}
+}
+
+var validTransitions = map[ConnState][]ConnState{
+	ConnStateOpen:    {ConnStateClosing},
+	ConnStateClosing: {ConnStateClosed},
+}
+
+func (c *Conn) setState(newState ConnState) {
+	isValid := false
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, s := range validTransitions[c.state] {
+		if newState == s {
+			isValid = true
+			break
+		}
+	}
+	if !isValid {
+		panic(fmt.Errorf("websocket: setState: invalid transition from %q to %q", c.state, newState))
+	}
+	c.state = newState
+	return
+}
+
+func (c *Conn) getState() ConnState {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.state
 }
