@@ -196,7 +196,16 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 	for {
 		select {
 		case <-ctx.Done():
+			// If context is canceled due to deadline, treat it as a read error and
+			// initiate server closure.
+			//
+			// Otherwise, assume the client closed the connection and there's nothing
+			// for us to do besides close our end.
+			//
 			// TODO: hook for context cancellation/timeout/early closure?
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return nil, c.closeOnReadError(StatusAbnormalClose, ctx.Err())
+			}
 			return nil, c.Close()
 		default:
 			c.resetReadDeadline()
@@ -401,9 +410,9 @@ var validTransitions = map[ConnState][]ConnState{
 }
 
 func (c *Conn) setState(newState ConnState) {
-	isValid := false
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	isValid := false
 	for _, s := range validTransitions[c.state] {
 		if newState == s {
 			isValid = true

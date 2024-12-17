@@ -17,7 +17,7 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, websocket.Options{
-			ReadTimeout:     10 * time.Second,
+			ReadTimeout:     60 * time.Second,
 			WriteTimeout:    1 * time.Second,
 			MaxFragmentSize: 1024 * 1024,
 			MaxMessageSize:  1024 * 1024,
@@ -27,7 +27,9 @@ func main() {
 			http.Error(w, fmt.Sprintf("websocket handshake failed: %s", err), http.StatusBadRequest)
 			return
 		}
-		conn.Serve(r.Context(), websocket.EchoHandler)
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		conn.Serve(ctx, websocket.EchoHandler)
 	})
 	addr := getListenAddr()
 	logger.Info("starting echoserver", "addr", "http://"+addr)
