@@ -2,8 +2,10 @@ package websocket
 
 import (
 	"bufio"
+	"context"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/mccutchen/websocket/internal/testing/assert"
 )
@@ -32,4 +34,40 @@ func TestDefaults(t *testing.T) {
 	assert.Equal(t, conn.hooks.OnWriteError != nil, true, "OnWriteError hook is nil")
 	assert.Equal(t, conn.hooks.OnWriteFrame != nil, true, "OnWriteFrame hook is nil")
 	assert.Equal(t, conn.hooks.OnWriteMessage != nil, true, "OnWriteMessage hook is nil")
+}
+
+func TestChooseDeadline(t *testing.T) {
+	now := time.Now()
+	nowSource := func() time.Time {
+		return now
+	}
+
+	testCases := map[string]struct {
+		baseTimeout  time.Duration
+		ctxDeadline  time.Time
+		ctxTimeout   time.Duration
+		wantDeadline time.Time
+	}{
+		"no timeout, no deadline": {
+			baseTimeout:  0,
+			ctxTimeout:   0,
+			wantDeadline: now,
+		},
+		"ctx timeout works if deadline unset": {
+			baseTimeout:  0,
+			ctxTimeout:   10 * time.Second,
+			wantDeadline: now.Add(10 * time.Second),
+		},
+	}
+
+	for name, tc := range testCases {
+		tc := tc
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), tc.ctxTimeout)
+			defer cancel()
+			got := chooseDeadline(ctx, tc.baseTimeout, nowSource)
+			assert.RoughlyEqual(t, got.UnixNano(), tc.wantDeadline.UnixNano(), (10 * time.Millisecond).Nanoseconds())
+			assert.Equal(t, got, tc.wantDeadline, "expected a different deadline")
+		})
+	}
 }

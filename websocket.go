@@ -208,7 +208,7 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 			}
 			return nil, c.Close()
 		default:
-			c.resetReadDeadline()
+			c.resetReadDeadline(ctx)
 		}
 
 		frame, err := ReadFrame(c.buf)
@@ -315,7 +315,7 @@ func (c *Conn) Write(ctx context.Context, msg *Message) error {
 		case <-ctx.Done():
 			return c.Close()
 		default:
-			c.resetWriteDeadline()
+			c.resetWriteDeadline(ctx)
 		}
 		if err := WriteFrame(c.buf, frame); err != nil {
 			return c.closeOnWriteError(StatusServerError, err)
@@ -386,20 +386,33 @@ func (c *Conn) closeOnWriteError(code StatusCode, err error) error {
 	return err
 }
 
-func (c *Conn) resetReadDeadline() {
-	if c.readTimeout <= 0 {
+// chooseDeadline returns an appropriate deadline by choosing the sooner of
+// the context's deadline (if it has one) and the timeout.
+func chooseDeadline(ctx context.Context, timeout time.Duration, nowSource func() time.Time) time.Time {
+	timeoutDeadline := nowSource().Add(timeout)
+	ctxDeadline, ok := ctx.Deadline()
+	if ok && timeoutDeadline.After(ctxDeadline) {
+		return ctxDeadline
+	}
+	return timeoutDeadline
+}
+
+func (c *Conn) resetReadDeadline(ctx context.Context) {
+	deadline := chooseDeadline(ctx, c.readTimeout, time.Now)
+	if deadline.IsZero() {
 		return
 	}
-	if err := c.conn.SetReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
+	if err := c.conn.SetReadDeadline(deadline); err != nil {
 		panic(fmt.Sprintf("websocket: failed to set read deadline: %s", err))
 	}
 }
 
-func (c *Conn) resetWriteDeadline() {
-	if c.writeTimeout <= 0 {
+func (c *Conn) resetWriteDeadline(ctx context.Context) {
+	deadline := chooseDeadline(ctx, c.writeTimeout, time.Now)
+	if deadline.IsZero() {
 		return
 	}
-	if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
+	if err := c.conn.SetWriteDeadline(deadline); err != nil {
 		panic(fmt.Sprintf("websocket: failed to set write deadline: %s", err))
 	}
 }
