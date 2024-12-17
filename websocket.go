@@ -349,11 +349,11 @@ func (c *Conn) Close() error {
 }
 
 func (c *Conn) closeWithError(code StatusCode, err error) error {
-	c.mu.Lock()
-	c.state = ConnStateClosing
-	c.mu.Unlock()
+	c.setState(ConnStateClosing)
+	frame := makeCloseFrame(code, err)
 	c.hooks.OnCloseHandshakeStart(c.clientKey, "server", code, err)
-	if err := writeCloseFrame(c.buf, code, err); err != nil {
+	c.hooks.OnWriteFrame(c.clientKey, frame)
+	if err := WriteFrame(c.buf, frame); err != nil {
 		return fmt.Errorf("websocket: failed to write close frame: %w", err)
 	}
 	if err := c.buf.Flush(); err != nil {
