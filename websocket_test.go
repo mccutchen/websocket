@@ -247,28 +247,14 @@ func TestConnectionLimits(t *testing.T) {
 			ws.Serve(r.Context(), websocket.EchoHandler)
 		}))
 
-		// try to read from the connection, expecting the connection
-		// to be closed after roughly maxDuration seconds
+		// client read should succeed, because we expect the server to send
+		// a close frame when its read deadline is reached
 		start := time.Now()
 		resp, err := io.ReadAll(conn)
 		elapsed := time.Since(start)
-
-		// client read should succeed, because we expect the server to send
-		// a close frame when its read deadline is reached
 		assert.NilError(t, err)
 		assert.RoughlyEqual(t, elapsed, maxDuration, 25*time.Millisecond)
-
-		frame, err := websocket.ReadFrame(bytes.NewBuffer(resp))
-		assert.NilError(t, err)
-		assert.Equal(t, frame.Opcode, websocket.OpcodeClose, "expected close frame")
-
-		// extract close status code and message from payload
-		assert.Equal(t, len(frame.Payload) >= 2, true, "expected close frame payload to be at least 2 bytes, got %v", frame.Payload)
-		statusCode := websocket.StatusCode(binary.BigEndian.Uint16(frame.Payload[:2]))
-		closeMsg := string(frame.Payload[2:])
-		t.Logf("got close frame: code=%v msg=%q", statusCode, closeMsg)
-		assert.Equal(t, statusCode, websocket.StatusServerError, "expected server error status code")
-		assert.Contains(t, closeMsg, "timeout", "expected timeout close message")
+		validateCloseFrame(t, bytes.NewBuffer(resp), websocket.StatusServerError, "timeout")
 
 		// connection should be closed, so we should get EOF when trying to
 		// read from it again
@@ -344,6 +330,29 @@ func TestConnectionLimits(t *testing.T) {
 		assert.RoughlyEqual(t, elapsedServerTime, clientTimeout, 10*time.Millisecond)
 		assert.Error(t, gotServerReadError, io.EOF)
 	})
+}
+
+// validateCloseFrame ensures that we can read a close frame from the given
+// reader and optionally ensures that the close frame includes a specific
+// status code and message.
+func validateCloseFrame(t *testing.T, r io.Reader, wantStatus websocket.StatusCode, wantMsg string) {
+	t.Helper()
+
+	frame, err := websocket.ReadFrame(r)
+	assert.NilError(t, err)
+	assert.Equal(t, frame.Opcode, websocket.OpcodeClose, "expected close frame")
+
+	if wantStatus == 0 {
+		// nothing else to validate
+		return
+	}
+
+	assert.Equal(t, len(frame.Payload) >= 2, true, "expected close frame payload to be at least 2 bytes, got %v", frame.Payload)
+	statusCode := websocket.StatusCode(binary.BigEndian.Uint16(frame.Payload[:2]))
+	closeMsg := string(frame.Payload[2:])
+	t.Logf("got close frame: code=%v msg=%q", statusCode, closeMsg)
+	assert.Equal(t, statusCode, websocket.StatusServerError, "got incorrect close status code")
+	assert.Contains(t, closeMsg, wantMsg, "got incorrect close message")
 }
 
 // brokenHijackResponseWriter implements just enough to satisfy the
