@@ -155,6 +155,8 @@ func TestAccept(t *testing.T) {
 		}
 
 		t.Run("http.Hijack not implemented", func(t *testing.T) {
+			t.Parallel()
+
 			// confirm that httptest.ResponseRecorder does not implmeent
 			// http.Hjijacker
 			var w http.ResponseWriter = httptest.NewRecorder()
@@ -172,6 +174,8 @@ func TestAccept(t *testing.T) {
 		})
 
 		t.Run("hijack failed", func(t *testing.T) {
+			t.Parallel()
+
 			defer func() {
 				r := recover()
 				if r == nil {
@@ -184,43 +188,7 @@ func TestAccept(t *testing.T) {
 	}
 }
 
-// setupRawConn is a test helpers that runs a test server and does the
-// initial websocket handshake. The returned connection is ready for use to
-// sent/receive websocket messages.
-func setupRawConn(t *testing.T, handler http.Handler) (*httptest.Server, net.Conn) {
-	t.Helper()
-
-	srv := httptest.NewServer(handler)
-	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
-	assert.NilError(t, err)
-
-	t.Cleanup(func() {
-		conn.Close()
-		srv.Close()
-	})
-
-	handshakeReq := httptest.NewRequest(http.MethodGet, "/", nil)
-	for k, v := range map[string]string{
-		"Connection":            "upgrade",
-		"Upgrade":               "websocket",
-		"Sec-WebSocket-Key":     "dGhlIHNhbXBsZSBub25jZQ==",
-		"Sec-WebSocket-Version": "13",
-	} {
-		handshakeReq.Header.Set(k, v)
-	}
-	// write the request line and headers, which should cause the
-	// server to respond with a 101 Switching Protocols response.
-	assert.NilError(t, handshakeReq.Write(conn))
-	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
-	assert.NilError(t, err)
-	assert.StatusCode(t, resp, http.StatusSwitchingProtocols)
-
-	return srv, conn
-}
-
 func TestConnectionLimits(t *testing.T) {
-	// TODO: need to rework these tests in terms of read/write deadlines rather
-	// than total request time.
 	t.Run("server enforces read deadline", func(t *testing.T) {
 		t.Parallel()
 
@@ -229,10 +197,7 @@ func TestConnectionLimits(t *testing.T) {
 			ws, err := websocket.Accept(w, r, websocket.Options{
 				ReadTimeout:  maxDuration,
 				WriteTimeout: maxDuration,
-				// TODO: test these limits as well
-				MaxFragmentSize: 128,
-				MaxMessageSize:  256,
-				Hooks:           newTestHooks(t),
+				Hooks:        newTestHooks(t),
 			})
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -324,6 +289,40 @@ func TestConnectionLimits(t *testing.T) {
 		assert.RoughlyEqual(t, elapsedServerTime, clientTimeout, 10*time.Millisecond)
 		assert.Error(t, gotServerReadError, io.EOF)
 	})
+}
+
+// setupRawConn is a test helpers that runs a test server and does the
+// initial websocket handshake. The returned connection is ready for use to
+// sent/receive websocket messages.
+func setupRawConn(t *testing.T, handler http.Handler) (*httptest.Server, net.Conn) {
+	t.Helper()
+
+	srv := httptest.NewServer(handler)
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	assert.NilError(t, err)
+
+	t.Cleanup(func() {
+		conn.Close()
+		srv.Close()
+	})
+
+	handshakeReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	for k, v := range map[string]string{
+		"Connection":            "upgrade",
+		"Upgrade":               "websocket",
+		"Sec-WebSocket-Key":     "dGhlIHNhbXBsZSBub25jZQ==",
+		"Sec-WebSocket-Version": "13",
+	} {
+		handshakeReq.Header.Set(k, v)
+	}
+	// write the request line and headers, which should cause the
+	// server to respond with a 101 Switching Protocols response.
+	assert.NilError(t, handshakeReq.Write(conn))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	assert.NilError(t, err)
+	assert.StatusCode(t, resp, http.StatusSwitchingProtocols)
+
+	return srv, conn
 }
 
 // validateCloseFrame ensures that we can read a close frame from the given
