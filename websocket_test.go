@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -200,23 +199,18 @@ func setupRawConn(t *testing.T, handler http.Handler) (*httptest.Server, net.Con
 		srv.Close()
 	})
 
+	handshakeReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	for k, v := range map[string]string{
+		"Connection":            "upgrade",
+		"Upgrade":               "websocket",
+		"Sec-WebSocket-Key":     "dGhlIHNhbXBsZSBub25jZQ==",
+		"Sec-WebSocket-Version": "13",
+	} {
+		handshakeReq.Header.Set(k, v)
+	}
 	// write the request line and headers, which should cause the
 	// server to respond with a 101 Switching Protocols response.
-	reqParts := []string{
-		"GET /websocket/echo HTTP/1.1",
-		"Host: test",
-		"Connection: upgrade",
-		"Upgrade: websocket",
-		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
-		"Sec-WebSocket-Version: 13",
-	}
-	reqBytes := []byte(strings.Join(reqParts, "\r\n") + "\r\n\r\n")
-	t.Logf("setupRawConn: raw request:\n%q", reqBytes)
-
-	n, err := conn.Write(reqBytes)
-	assert.NilError(t, err)
-	assert.Equal(t, n, len(reqBytes), "incorrect number of bytes written")
-
+	assert.NilError(t, handshakeReq.Write(conn))
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	assert.NilError(t, err)
 	assert.StatusCode(t, resp, http.StatusSwitchingProtocols)
