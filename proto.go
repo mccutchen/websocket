@@ -105,16 +105,24 @@ func (m Message) String() string {
 	return fmt.Sprintf("Message{Binary: %v, Payload: %q}", m.Binary, m.Payload)
 }
 
-// ReadFrame reads a websocket frame from the wire.
-func ReadFrame(buf io.Reader) (*Frame, error) {
-	bb := make([]byte, 2)
-	if _, err := io.ReadFull(buf, bb); err != nil {
+const (
+	frameHeaderSize     = 2
+	frameMaskingKeySize = 4
+)
+
+// ReadFrame reads a websocket frame.
+func ReadFrame(src io.Reader, buf []byte) (*Frame, error) {
+	bufLen := len(buf)
+	if bufLen < frameHeaderSize {
+		return nil, fmt.Errorf("buffer too small for frame header")
+	}
+	if _, err := io.ReadFull(src, buf[:frameHeaderSize]); err != nil {
 		return nil, fmt.Errorf("error reading frame header: %w", err)
 	}
 
 	// parse first header byte
 	var (
-		b0     = bb[0]
+		b0     = buf[0]
 		fin    = b0&0b10000000 != 0
 		rsv1   = b0&0b01000000 != 0
 		rsv2   = b0&0b00100000 != 0
@@ -124,7 +132,7 @@ func ReadFrame(buf io.Reader) (*Frame, error) {
 
 	// parse second header byte
 	var (
-		b1            = bb[1]
+		b1            = buf[1]
 		masked        = b1&0b10000000 != 0
 		payloadLength = uint64(b1 & 0b01111111)
 	)
@@ -133,35 +141,43 @@ func ReadFrame(buf io.Reader) (*Frame, error) {
 	switch payloadLength {
 	case 126:
 		// Payload length is represented in the next 2 bytes (16-bit unsigned integer)
-		var l uint16
-		if err := binary.Read(buf, binary.BigEndian, &l); err != nil {
+		// Note: no length check here because we already know bufLen >= 2
+		if _, err := io.ReadFull(src, buf[:2]); err != nil {
 			return nil, fmt.Errorf("error reading 2-byte extended payload length: %w", err)
 		}
-		payloadLength = uint64(l)
+		payloadLength = uint64(binary.BigEndian.Uint16(buf[:2]))
 	case 127:
 		// Payload length is represented in the next 8 bytes (64-bit unsigned integer)
-		if err := binary.Read(buf, binary.BigEndian, &payloadLength); err != nil {
+		if bufLen < 8 {
+			return nil, fmt.Errorf("buffer too small for 8-byte extended payload length")
+		}
+		if _, err := io.ReadFull(src, buf[:8]); err != nil {
 			return nil, fmt.Errorf("error reading 8-byte extended payload length: %w", err)
 		}
+		payloadLength = binary.BigEndian.Uint64(buf[:8])
 	}
 
+	payloadOffset := 0
+
 	// read mask key (if present)
-	var mask []byte
 	if masked {
-		mask = make([]byte, 4)
-		if _, err := io.ReadFull(buf, mask); err != nil {
-			return nil, fmt.Errorf("error reading mask key: %w", err)
+		if (frameMaskingKeySize + payloadLength) > uint64(bufLen) {
+			return nil, fmt.Errorf("buffer too small to read masking key and payload")
 		}
+		if _, err := io.ReadFull(src, buf[:frameMaskingKeySize]); err != nil {
+			return nil, fmt.Errorf("error reading masking key: %w", err)
+		}
+		payloadOffset += frameMaskingKeySize
 	}
 
 	// read & optionally unmask payload
-	payload := make([]byte, payloadLength)
-	if _, err := io.ReadFull(buf, payload); err != nil {
+	payload := buf[payloadOffset:]
+	if _, err := io.ReadFull(src, payload); err != nil {
 		return nil, fmt.Errorf("error reading payload: %w", err)
 	}
 	if masked {
 		for i, b := range payload {
-			payload[i] = b ^ mask[i%4]
+			payload[i] = b ^ buf[:frameMaskingKeySize][i%4]
 		}
 	}
 
