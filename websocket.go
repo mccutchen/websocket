@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -63,9 +64,11 @@ type Hooks struct {
 type Conn struct {
 	// connection state
 	conn     net.Conn
-	buf      *bufio.ReadWriter
+	connBuf  *bufio.ReadWriter
 	closedCh chan struct{}
 	server   bool
+
+	bufPool *sync.Pool
 
 	// observability
 	clientKey ClientKey
@@ -99,11 +102,11 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Conn, error)
 }
 
 // newConn creates a new websocket connection.
-func newConn(conn net.Conn, buf *bufio.ReadWriter, clientKey ClientKey, opts Options) *Conn {
+func newConn(conn net.Conn, connBuf *bufio.ReadWriter, clientKey ClientKey, opts Options) *Conn {
 	setDefaults(&opts)
 	return &Conn{
 		conn:            conn,
-		buf:             buf,
+		connBuf:         connBuf,
 		closedCh:        make(chan struct{}),
 		server:          true,
 		clientKey:       clientKey,
@@ -112,6 +115,12 @@ func newConn(conn net.Conn, buf *bufio.ReadWriter, clientKey ClientKey, opts Opt
 		writeTimeout:    opts.WriteTimeout,
 		maxFragmentSize: opts.MaxFragmentSize,
 		maxMessageSize:  opts.MaxMessageSize,
+		bufPool: &sync.Pool{
+			New: func() any {
+				b := make([]byte, 4096)
+				return &b
+			},
+		},
 	}
 }
 
@@ -176,7 +185,13 @@ func handshake(w http.ResponseWriter, r *http.Request) (ClientKey, error) {
 // Read reads a single websocket message from the connection. Ping/pong frames
 // are handled automatically. The connection will be closed on any error.
 func (c *Conn) Read(ctx context.Context) (*Message, error) {
-	var msg *Message
+	var (
+		msg    *Message
+		bufPtr = c.bufPool.Get().(*[]byte) // staticcheck says this should be pointer-like to avoid allocations
+		buf    = *bufPtr
+	)
+	defer c.bufPool.Put(bufPtr)
+
 	for {
 		select {
 		case <-c.closedCh:
@@ -188,7 +203,7 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 			c.resetReadDeadline()
 		}
 
-		frame, err := ReadFrame(c.buf)
+		frame, err := ReadFrame(c.connBuf, buf)
 		if err != nil {
 			code := StatusServerError
 			if errors.Is(err, io.EOF) {
@@ -224,10 +239,10 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 		case OpcodePing:
 			frame.Opcode = OpcodePong
 			c.hooks.OnWriteFrame(c.clientKey, frame)
-			if err := WriteFrame(c.buf, frame); err != nil {
+			if err := WriteFrame(c.connBuf, frame); err != nil {
 				return nil, err
 			}
-			_ = c.buf.Flush()
+			_ = c.connBuf.Flush()
 			continue
 		case OpcodePong:
 			continue // no-op
@@ -260,11 +275,11 @@ func (c *Conn) Write(ctx context.Context, msg *Message) error {
 		default:
 			c.resetWriteDeadline()
 		}
-		if err := WriteFrame(c.buf, frame); err != nil {
+		if err := WriteFrame(c.connBuf, frame); err != nil {
 			return c.closeOnWriteError(StatusServerError, err)
 		}
 	}
-	_ = c.buf.Flush()
+	_ = c.connBuf.Flush()
 	return nil
 }
 
@@ -302,10 +317,10 @@ func (c *Conn) Close() error {
 func (c *Conn) closeWithError(code StatusCode, err error) error {
 	c.hooks.OnClose(c.clientKey, code, err)
 	close(c.closedCh)
-	if err := writeCloseFrame(c.buf, code, err); err != nil {
+	if err := writeCloseFrame(c.connBuf, code, err); err != nil {
 		return fmt.Errorf("websocket: failed to write close frame: %w", err)
 	}
-	if err := c.buf.Flush(); err != nil {
+	if err := c.connBuf.Flush(); err != nil {
 		return fmt.Errorf("websocket: failed to flush buffer: %s", err)
 	}
 	if err := c.conn.Close(); err != nil {

@@ -171,7 +171,7 @@ func ReadFrame(src io.Reader, buf []byte) (*Frame, error) {
 	}
 
 	// read & optionally unmask payload
-	payload := buf[payloadOffset:]
+	payload := buf[payloadOffset : payloadOffset+int(payloadLength)]
 	if _, err := io.ReadFull(src, payload); err != nil {
 		return nil, fmt.Errorf("error reading payload: %w", err)
 	}

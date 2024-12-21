@@ -249,7 +249,8 @@ func TestConnectionLimits(t *testing.T) {
 			assert.NilError(t, err)
 			assert.RoughlyEqual(t, elapsed, maxDuration, 25*time.Millisecond)
 
-			frame, err := websocket.ReadFrame(bytes.NewBuffer(resp))
+			buf := make([]byte, 4096)
+			frame, err := websocket.ReadFrame(bytes.NewBuffer(resp), buf)
 			assert.NilError(t, err)
 			assert.Equal(t, frame.Opcode, websocket.OpcodeClose, "expected close frame")
 
