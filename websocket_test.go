@@ -398,25 +398,25 @@ func newTestHooks(t *testing.T) websocket.Hooks {
 	t.Helper()
 	return websocket.Hooks{
 		OnClose: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
-			t.Logf("client=%s OnClose code=%v err=%q", key, code, err)
+			t.Logf("client=%s OnClose code=%v err=%v", key, code, err)
 		},
 		OnReadError: func(key websocket.ClientKey, err error) {
-			t.Logf("client=%s OnReadError err=%q", key, err)
+			t.Logf("client=%s OnReadError err=%v", key, err)
 		},
 		OnReadFrame: func(key websocket.ClientKey, frame *websocket.Frame) {
-			t.Logf("client=%s OnReadFrame frame=%#v", key, frame)
+			t.Logf("client=%s OnReadFrame frame=%v", key, frame)
 		},
 		OnReadMessage: func(key websocket.ClientKey, msg *websocket.Message) {
-			t.Logf("client=%s OnReadMessage msg=%#v", key, msg)
+			t.Logf("client=%s OnReadMessage msg=%v", key, msg)
 		},
 		OnWriteError: func(key websocket.ClientKey, err error) {
-			t.Logf("client=%s OnWriteError err=%q", key, err)
+			t.Logf("client=%s OnWriteError err=%v", key, err)
 		},
 		OnWriteFrame: func(key websocket.ClientKey, frame *websocket.Frame) {
-			t.Logf("client=%s OnWriteFrame frame=%#v", key, frame)
+			t.Logf("client=%s OnWriteFrame frame=%v", key, frame)
 		},
 		OnWriteMessage: func(key websocket.ClientKey, msg *websocket.Message) {
-			t.Logf("client=%s OnWriteMessage msg=%#v", key, msg)
+			t.Logf("client=%s OnWriteMessage msg=%v", key, msg)
 		},
 	}
 }
