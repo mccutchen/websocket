@@ -38,6 +38,25 @@ const (
 	OpcodePong         Opcode = 0xA
 )
 
+func (c Opcode) String() string {
+	switch c {
+	case OpcodeContinuation:
+		return "Cont"
+	case OpcodeText:
+		return "Text"
+	case OpcodeBinary:
+		return "Binary"
+	case OpcodeClose:
+		return "Close"
+	case OpcodePing:
+		return "Ping"
+	case OpcodePong:
+		return "Pong"
+	default:
+		panic(fmt.Sprintf("unknown opcode: %#v", c))
+	}
+}
+
 // StatusCode is a websocket status code.
 type StatusCode uint16
 
@@ -66,6 +85,10 @@ type Frame struct {
 	Opcode  Opcode
 	Payload []byte
 	Masked  bool
+}
+
+func (f Frame) String() string {
+	return fmt.Sprintf("Frame{Fin: %v, Opcode: %v, Payload: %q}", f.Fin, f.Opcode, f.Payload)
 }
 
 // Message is an application-level message from the client, which may be
