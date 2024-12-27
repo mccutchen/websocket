@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -186,11 +187,18 @@ func handshake(w http.ResponseWriter, r *http.Request) (ClientKey, error) {
 // are handled automatically. The connection will be closed on any error.
 func (c *Conn) Read(ctx context.Context) (*Message, error) {
 	var (
-		msg    *Message
-		bufPtr = c.bufPool.Get().(*[]byte) // staticcheck says this should be pointer-like to avoid allocations
-		buf    = *bufPtr
+		msg         *Message
+		msgBufPtr   = c.bufPool.Get().(*[]byte)
+		msgBuf      = *msgBufPtr
+		frameBufPtr = c.bufPool.Get().(*[]byte) // staticcheck says this should be pointer-like to avoid allocations
+		frameBuf    = *frameBufPtr
 	)
-	defer c.bufPool.Put(bufPtr)
+	defer c.bufPool.Put(frameBufPtr)
+	defer c.bufPool.Put(msgBufPtr)
+	_ = msgBuf
+
+	clear(frameBuf)
+	clear(msgBuf)
 
 	for {
 		select {
@@ -203,7 +211,7 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 			c.resetReadDeadline()
 		}
 
-		frame, err := ReadFrame(c.connBuf, buf)
+		frame, err := ReadFrame(c.connBuf, frameBuf)
 		if err != nil {
 			code := StatusServerError
 			if errors.Is(err, io.EOF) {
@@ -222,15 +230,18 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 				return nil, c.closeOnReadError(StatusProtocolError, ErrContinuationExpected)
 			}
 			msg = &Message{
-				Binary:  frame.Opcode == OpcodeBinary,
-				Payload: frame.Payload,
+				Binary: frame.Opcode == OpcodeBinary,
 			}
+			msgBuf = append(msgBuf, frame.Payload...)
+			log.Printf("XXX Read: starting new message: %v", msg)
 		case OpcodeContinuation:
 			if msg == nil {
 				return nil, c.closeOnReadError(StatusProtocolError, ErrInvalidContinuation)
 			}
-			msg.Payload = append(msg.Payload, frame.Payload...)
-			if len(msg.Payload) > c.maxMessageSize {
+			log.Printf("XXX Read: msg payload BEFORE append: %q %v", msg.Payload, msg.Payload)
+			msgBuf = append(msgBuf, frame.Payload...)
+			log.Printf("XXX Read: msg payload AFTER append:  %q %v", msg.Payload, msg.Payload)
+			if len(msgBuf) > c.maxMessageSize {
 				return nil, c.closeOnReadError(StatusTooLarge, fmt.Errorf("message size %d exceeds maximum of %d bytes", len(msg.Payload), c.maxMessageSize))
 			}
 		case OpcodeClose:
@@ -251,6 +262,7 @@ func (c *Conn) Read(ctx context.Context) (*Message, error) {
 		}
 
 		if frame.Fin {
+			msg.Payload = msgBuf[:]
 			c.hooks.OnReadMessage(c.clientKey, msg)
 			if !msg.Binary && !utf8.Valid(msg.Payload) {
 				return nil, c.closeOnReadError(StatusUnsupportedPayload, ErrInvalidUT8)
