@@ -21,6 +21,8 @@ var (
 	ErrUnsupportedRSVBits   = errors.New("frame has unsupported RSV bits set")
 )
 
+var zeroMask [4]byte
+
 // ClientKey is a websocket client key.
 type ClientKey string
 
@@ -176,8 +178,14 @@ func ReadFrame(buf io.Reader) (*Frame, error) {
 	}, nil
 }
 
-// WriteFrame writes a websocket frame to the wire.
+// WriteFrame writes an unmasked (i.e. server-side) websocket frame to the
+// wire.
 func WriteFrame(dst io.Writer, frame *Frame) error {
+	return WriteFrameMasked(dst, frame, zeroMask)
+}
+
+// WriteFrameMasked writes a masked websocket frame to the wire.
+func WriteFrameMasked(dst io.Writer, frame *Frame, mask [4]byte) error {
 	// worst case payload size is 13 header bytes + payload size, where 13 is
 	// (1 byte header) + (1-8 byte length) + (0-4 byte mask key)
 	buf := make([]byte, 0, 13+len(frame.Payload))
@@ -213,7 +221,13 @@ func WriteFrame(dst io.Writer, frame *Frame) error {
 	}
 
 	// payload
-	buf = append(buf, frame.Payload...)
+	if mask != zeroMask {
+		for i, b := range frame.Payload {
+			buf = append(buf, b^mask[i%4])
+		}
+	} else {
+		buf = append(buf, frame.Payload...)
+	}
 
 	n, err := dst.Write(buf)
 	if err != nil {
