@@ -50,12 +50,21 @@ testautobahn:
 	AUTOBAHN_TESTS=1 AUTOBAHN_OPEN_REPORT=1 go test -run ^TestWebSocketServer$$ $(TEST_ARGS) ./...
 .PHONY: autobahntests
 
+
+bench:
+	go test -bench=. -benchmem
+.PHONY: bench
+	
 lint:
-	test -z "$$($(CMD_GOFUMPT) -d -e .)" || (echo "Error: gofmt failed"; gofmt -d -e . ; exit 1)
+	test -z "$$($(CMD_GOFUMPT) -d -e .)" || (echo "Error: gofmt failed"; $(CMD_GOFUMPT) -d -e . ; exit 1)
 	go vet ./...
 	$(CMD_REVIVE) -set_exit_status ./...
 	$(CMD_STATICCHECK) ./...
 .PHONY: lint
+
+fmt:
+	$(CMD_GOFUMPT) -d -e -w .
+.PHONY: fmt
 
 clean:
 	rm -rf $(OUT_DIR) $(COVERAGE_PATH)
