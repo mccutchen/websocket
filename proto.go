@@ -159,7 +159,7 @@ func ReadFrame(buf io.Reader) (*Frame, error) {
 	// read & optionally unmask payload
 	payload := make([]byte, payloadLength)
 	if _, err := io.ReadFull(buf, payload); err != nil {
-		return nil, fmt.Errorf("error reading %d byte payload: %w (%#v)", payloadLength, err, payload)
+		return nil, fmt.Errorf("error reading %d byte payload: %w", payloadLength, err)
 	}
 	if masked {
 		for i, b := range payload {

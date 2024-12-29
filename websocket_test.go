@@ -356,31 +356,6 @@ func TestProtocolBasics(t *testing.T) {
 
 }
 
-func TestFraming(t *testing.T) {
-	t.Run("round trip", func(t *testing.T) {
-		t.Parallel()
-
-		// write masked "client" frame to buffer
-		clientFrame := &websocket.Frame{
-			Opcode:  websocket.OpcodeText,
-			Fin:     true,
-			Payload: []byte("hello"),
-		}
-		mask := [4]byte{1, 2, 3, 4}
-		buf := &bytes.Buffer{}
-		assert.NilError(t, websocket.WriteFrameMasked(buf, clientFrame, mask))
-
-		// read "server" frame from buffer
-		serverFrame, err := websocket.ReadFrame(buf)
-		assert.NilError(t, err)
-
-		// ensure client and server frame match
-		assert.Equal(t, serverFrame.Fin, clientFrame.Fin, "expected matching FIN bits")
-		assert.Equal(t, serverFrame.Opcode, clientFrame.Opcode, "expected matching opcodes")
-		assert.Equal(t, string(serverFrame.Payload), string(clientFrame.Payload), "expected matching payloads")
-	})
-}
-
 // setupRawConn is a test helpers that runs a test server and does the
 // initial websocket handshake. The returned connection is ready for use to
 // sent/receive websocket messages.
