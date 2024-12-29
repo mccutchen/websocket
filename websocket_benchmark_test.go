@@ -2,7 +2,12 @@ package websocket_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mccutchen/websocket"
@@ -53,39 +58,22 @@ func BenchmarkReadFrame(b *testing.B) {
 	}
 }
 
-/*
-
-TODO: benchmark reading entire message after refactoring
-
 func BenchmarkReadMessage(b *testing.B) {
 	frameSizes := []int{
 		64,
-		// 256,
-		// 1024,
+		256,
+		1024,
 		// 64 * 1024,
 		// 1024 * 1024,
 	}
 
 	messageSizes := []int{
 		512,
-		// 1024,
-		// 256 * 1024,
+		1024,
+		256 * 1024,
 		// 1024 * 1024,
 		// 2 * 1024 * 1024,
 	}
-
-	echoHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ws, err := websocket.Accept(w, r, websocket.Options{
-			MaxFragmentSize: 1024 * 1024,
-			MaxMessageSize:  2 * 1024 * 1024,
-			// Hooks:           newTestHooks(b),
-		})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		ws.Serve(r.Context(), websocket.EchoHandler)
-	})
 
 	for _, msgSize := range messageSizes {
 		for _, frameSize := range frameSizes {
@@ -102,24 +90,55 @@ func BenchmarkReadMessage(b *testing.B) {
 				fin := i == frameCount-1
 				b.Logf("frame=%d frameCount=%d fin=%v", i, frameCount, fin)
 				frame := makeFrame(opcode, fin, frameSize)
-				websocket.WriteFrameMasked(buf, frame, makeMaskingKey())
+				assert.NilError(b, websocket.WriteFrameMasked(buf, frame, makeMaskingKey()))
 			}
+
+			payload := buf.Bytes()
+			reader := bytes.NewReader(payload)
+			conn := &dummyConn{
+				in:  reader,
+				out: io.Discard,
+			}
+			ws := websocket.NewConn(conn, websocket.ClientKey(makeClientKey()), websocket.Options{
+				MaxFragmentSize: 1024 * 1024,
+				MaxMessageSize:  2 * 1024 * 1024,
+				// Hooks:           newTestHooks(b),
+			})
 
 			name := fmt.Sprintf("MessageSize=%db/FrameSize=%db/FrameCount=%d", msgSize, frameSize, frameCount)
 			b.Run(name, func(b *testing.B) {
-				_, conn := setupRawConn(b, echoHandler)
-				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					n, err := conn.Write(buf.Bytes())
+					_, _ = reader.Seek(0, 0)
+					msg, err := ws.Read(context.Background())
 					assert.NilError(b, err)
-					assert.Equal(b, n, len(buf.Bytes()), "incorrect number of bytes written")
-					resp, err := io.ReadAll(conn)
-					assert.NilError(b, err)
-					assert.Equal(b, len(resp) >= msgSize, true, "expected to read full message back")
+					assert.Equal(b, len(msg.Payload), msgSize, "expected message payload")
 				}
 			})
 		}
 	}
 }
 
-*/
+type dummyConn struct {
+	in     io.Reader
+	out    io.Writer
+	closed atomic.Bool
+}
+
+func (c *dummyConn) Read(p []byte) (int, error) {
+	if c.closed.Load() {
+		return 0, errors.New("reader closed")
+	}
+	return c.in.Read(p)
+}
+
+func (c *dummyConn) Write(p []byte) (int, error) {
+	if c.closed.Load() {
+		return 0, errors.New("writer closed")
+	}
+	return c.out.Write(p)
+}
+
+func (c *dummyConn) Close() error {
+	c.closed.Swap(true)
+	return nil
+}
