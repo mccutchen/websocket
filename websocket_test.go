@@ -332,8 +332,7 @@ func TestProtocolBasics(t *testing.T) {
 			Payload: []byte("hello"),
 		}
 		mask := [4]byte{1, 2, 3, 4}
-		buf := &bytes.Buffer{}
-		assert.NilError(t, websocket.WriteFrameMasked(buf, clientFrame, mask))
+		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, mask))
 		// read server frame
 		serverFrame, err := websocket.ReadFrame(conn)
 		assert.NilError(t, err)
