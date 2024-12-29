@@ -61,16 +61,16 @@ func BenchmarkReadFrame(b *testing.B) {
 func BenchmarkReadMessage(b *testing.B) {
 	frameSizes := []int{
 		64,
-		// 256,
-		// 1024,
+		256,
+		1024,
 		// 64 * 1024,
 		// 1024 * 1024,
 	}
 
 	messageSizes := []int{
 		512,
-		// 1024,
-		// 256 * 1024,
+		1024,
+		256 * 1024,
 		// 1024 * 1024,
 		// 2 * 1024 * 1024,
 	}
@@ -109,7 +109,6 @@ func BenchmarkReadMessage(b *testing.B) {
 			b.Run(name, func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					_, _ = reader.Seek(0, 0)
-					b.ResetTimer()
 					msg, err := ws.Read(context.Background())
 					assert.NilError(b, err)
 					assert.Equal(b, len(msg.Payload), msgSize, "expected message payload")
