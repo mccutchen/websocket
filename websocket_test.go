@@ -331,8 +331,7 @@ func TestProtocolBasics(t *testing.T) {
 			Fin:     true,
 			Payload: []byte("hello"),
 		}
-		mask := [4]byte{1, 2, 3, 4}
-		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, mask))
+		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, makeMaskingKey()))
 		// read server frame
 		serverFrame, err := websocket.ReadFrame(conn)
 		assert.NilError(t, err)
@@ -353,13 +352,12 @@ func TestProtocolBasics(t *testing.T) {
 		assert.NilError(t, websocket.WriteFrame(conn, frame))
 		validateCloseFrame(t, conn, websocket.StatusProtocolError, "received unmasked client frame")
 	})
-
 }
 
 // setupRawConn is a test helpers that runs a test server and does the
 // initial websocket handshake. The returned connection is ready for use to
 // sent/receive websocket messages.
-func setupRawConn(t *testing.T, handler http.Handler) (*httptest.Server, net.Conn) {
+func setupRawConn(t testing.TB, handler http.Handler) (*httptest.Server, net.Conn) {
 	t.Helper()
 
 	srv := httptest.NewServer(handler)
@@ -397,6 +395,15 @@ func makeClientKey() string {
 		panic(fmt.Sprintf("failed to read random bytes: %s", err))
 	}
 	return base64.StdEncoding.EncodeToString(b)
+}
+
+func makeMaskingKey() [4]byte {
+	var key [4]byte
+	_, err := rand.Read(key[:]) // Fill the key with 4 random bytes
+	if err != nil {
+		panic(fmt.Sprintf("failed to read random bytes for masking key: %s", err))
+	}
+	return key
 }
 
 // validateCloseFrame ensures that we can read a close frame from the given
@@ -447,7 +454,7 @@ var (
 	_ http.Hijacker       = &brokenHijackResponseWriter{}
 )
 
-func newTestHooks(t *testing.T) websocket.Hooks {
+func newTestHooks(t testing.TB) websocket.Hooks {
 	t.Helper()
 	return websocket.Hooks{
 		OnClose: func(key websocket.ClientKey, code websocket.StatusCode, err error) {

@@ -11,7 +11,7 @@ import (
 )
 
 // DoReq makes an HTTP request and fails the test if there is an error.
-func DoReq(t *testing.T, client *http.Client, req *http.Request) *http.Response {
+func DoReq(t testing.TB, client *http.Client, req *http.Request) *http.Response {
 	t.Helper()
 	start := time.Now()
 	resp, err := client.Do(req)
@@ -24,7 +24,7 @@ func DoReq(t *testing.T, client *http.Client, req *http.Request) *http.Response 
 
 // ReadAll reads all bytes from an io.Reader and fails the test if there is an
 // error.
-func ReadAll(t *testing.T, r io.Reader) string {
+func ReadAll(t testing.TB, r io.Reader) string {
 	t.Helper()
 	body, err := io.ReadAll(r)
 	if err != nil {
@@ -38,7 +38,7 @@ func ReadAll(t *testing.T, r io.Reader) string {
 
 // Unmarshal unmarshals JSON from an io.Reader into a value and fails the test
 // if there is an error.
-func Unmarshal[T any](t *testing.T, r io.Reader) T {
+func Unmarshal[T any](t testing.TB, r io.Reader) T {
 	t.Helper()
 	var v T
 	if err := json.NewDecoder(r).Decode(&v); err != nil {
