@@ -90,22 +90,26 @@ func BenchmarkReadMessage(b *testing.B) {
 				fin := i == frameCount-1
 				b.Logf("frame=%d frameCount=%d fin=%v", i, frameCount, fin)
 				frame := makeFrame(opcode, fin, frameSize)
-				websocket.WriteFrameMasked(buf, frame, makeMaskingKey())
+				assert.NilError(b, websocket.WriteFrameMasked(buf, frame, makeMaskingKey()))
 			}
+
 			payload := buf.Bytes()
+			reader := bytes.NewReader(payload)
+			conn := &dummyConn{
+				in:  reader,
+				out: io.Discard,
+			}
+			ws := websocket.NewConn(conn, websocket.ClientKey(makeClientKey()), websocket.Options{
+				MaxFragmentSize: 1024 * 1024,
+				MaxMessageSize:  2 * 1024 * 1024,
+				// Hooks:           newTestHooks(b),
+			})
 
 			name := fmt.Sprintf("MessageSize=%db/FrameSize=%db/FrameCount=%d", msgSize, frameSize, frameCount)
 			b.Run(name, func(b *testing.B) {
-				conn := &dummyConn{
-					in:  bytes.NewReader(payload),
-					out: &bytes.Buffer{},
-				}
-				ws := websocket.NewConn(conn, websocket.ClientKey(makeClientKey()), websocket.Options{
-					MaxFragmentSize: 1024 * 1024,
-					MaxMessageSize:  2 * 1024 * 1024,
-				})
-				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
+					_, _ = reader.Seek(0, 0)
+					b.ResetTimer()
 					msg, err := ws.Read(context.Background())
 					assert.NilError(b, err)
 					assert.Equal(b, len(msg.Payload), msgSize, "expected message payload")
