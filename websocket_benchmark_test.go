@@ -99,7 +99,7 @@ func BenchmarkReadMessage(b *testing.B) {
 				in:  reader,
 				out: io.Discard,
 			}
-			ws := websocket.NewConn(conn, websocket.ClientKey(makeClientKey()), websocket.Options{
+			ws := websocket.New(conn, websocket.ClientKey(makeClientKey()), websocket.Options{
 				MaxFragmentSize: 1024 * 1024,
 				MaxMessageSize:  2 * 1024 * 1024,
 				// Hooks:           newTestHooks(b),
@@ -109,7 +109,7 @@ func BenchmarkReadMessage(b *testing.B) {
 			b.Run(name, func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					_, _ = reader.Seek(0, 0)
-					msg, err := ws.Read(context.Background())
+					msg, err := ws.ReadMessage(context.Background())
 					assert.NilError(b, err)
 					assert.Equal(b, len(msg.Payload), msgSize, "expected message payload")
 				}
