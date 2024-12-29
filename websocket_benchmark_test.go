@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/mccutchen/websocket"
+	"github.com/mccutchen/websocket/internal/testing/assert"
 )
 
 func makeFrame(opcode websocket.Opcode, fin bool, payloadLen int) *websocket.Frame {
@@ -35,14 +36,14 @@ func BenchmarkReadFrame(b *testing.B) {
 		mask := [4]byte{1, 2, 3, 4}
 
 		buf := &bytes.Buffer{}
-		websocket.WriteFrameMasked(buf, frame, mask)
+		assert.NilError(b, websocket.WriteFrameMasked(buf, frame, mask))
 
 		// Run sub-benchmarks for each payload size
 		b.Run(strconv.Itoa(size)+"b", func(b *testing.B) {
 			src := bytes.NewReader(buf.Bytes())
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				src.Seek(0, 0)
+				_, _ = src.Seek(0, 0)
 				_, err := websocket.ReadFrame(src)
 				if err != nil {
 					b.Fatalf("unexpected error: %v", err)
