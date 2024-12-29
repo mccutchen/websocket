@@ -1,7 +1,6 @@
 package websocket
 
 import (
-	"bufio"
 	"net"
 	"testing"
 
@@ -13,10 +12,9 @@ func TestDefaults(t *testing.T) {
 
 	var (
 		wrapedConn net.Conn
-		wrappedBuf *bufio.ReadWriter
 		key        = ClientKey("test-client-key")
 		opts       = Options{}
-		conn       = newConn(wrapedConn, wrappedBuf, key, opts)
+		conn       = NewConn(wrapedConn, key, opts)
 	)
 
 	assert.Equal(t, conn.maxFragmentSize, DefaultMaxFragmentSize, "incorrect max fragment size")
