@@ -3,6 +3,8 @@ package websocket_test
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -304,7 +306,8 @@ func TestProtocolBasics(t *testing.T) {
 		maxFragmentSize = 16
 		maxMessageSize  = 32
 	)
-	_, conn := setupRawConn(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+	echoHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := websocket.Accept(w, r, websocket.Options{
 			ReadTimeout:     maxDuration,
 			WriteTimeout:    maxDuration,
@@ -317,11 +320,11 @@ func TestProtocolBasics(t *testing.T) {
 			return
 		}
 		ws.Serve(r.Context(), websocket.EchoHandler)
-	}))
+	})
 
 	t.Run("basic echo functionality", func(t *testing.T) {
 		t.Parallel()
-
+		_, conn := setupRawConn(t, echoHandler)
 		// write client frame
 		clientFrame := &websocket.Frame{
 			Opcode:  websocket.OpcodeText,
@@ -331,11 +334,9 @@ func TestProtocolBasics(t *testing.T) {
 		mask := [4]byte{1, 2, 3, 4}
 		buf := &bytes.Buffer{}
 		assert.NilError(t, websocket.WriteFrameMasked(buf, clientFrame, mask))
-
 		// read server frame
 		serverFrame, err := websocket.ReadFrame(conn)
 		assert.NilError(t, err)
-
 		// ensure we get back the same frame
 		assert.Equal(t, serverFrame.Fin, clientFrame.Fin, "expected matching FIN bits")
 		assert.Equal(t, serverFrame.Opcode, clientFrame.Opcode, "expected matching opcodes")
@@ -344,6 +345,7 @@ func TestProtocolBasics(t *testing.T) {
 
 	t.Run("server requires masked frames", func(t *testing.T) {
 		t.Parallel()
+		_, conn := setupRawConn(t, echoHandler)
 		frame := &websocket.Frame{
 			Opcode:  websocket.OpcodeText,
 			Fin:     true,
@@ -399,7 +401,7 @@ func setupRawConn(t *testing.T, handler http.Handler) (*httptest.Server, net.Con
 	for k, v := range map[string]string{
 		"Connection":            "upgrade",
 		"Upgrade":               "websocket",
-		"Sec-WebSocket-Key":     "dGhlIHNhbXBsZSBub25jZQ==",
+		"Sec-WebSocket-Key":     makeClientKey(),
 		"Sec-WebSocket-Version": "13",
 	} {
 		handshakeReq.Header.Set(k, v)
@@ -412,6 +414,15 @@ func setupRawConn(t *testing.T, handler http.Handler) (*httptest.Server, net.Con
 	assert.StatusCode(t, resp, http.StatusSwitchingProtocols)
 
 	return srv, conn
+}
+
+func makeClientKey() string {
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		panic(fmt.Sprintf("failed to read random bytes: %s", err))
+	}
+	return base64.StdEncoding.EncodeToString(b)
 }
 
 // validateCloseFrame ensures that we can read a close frame from the given
