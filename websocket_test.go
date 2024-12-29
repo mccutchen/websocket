@@ -291,6 +291,95 @@ func TestConnectionLimits(t *testing.T) {
 	})
 }
 
+// TODO: flesh out basic protocol test cases
+// - successful echo
+// - successful echo across multiple frames
+// - frame size limits
+// - message size limits
+// - utf8 validation
+// - unexpected continuation frames
+func TestProtocolBasics(t *testing.T) {
+	var (
+		maxDuration     = 250 * time.Millisecond
+		maxFragmentSize = 16
+		maxMessageSize  = 32
+	)
+	_, conn := setupRawConn(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, websocket.Options{
+			ReadTimeout:     maxDuration,
+			WriteTimeout:    maxDuration,
+			MaxFragmentSize: maxFragmentSize,
+			MaxMessageSize:  maxMessageSize,
+			Hooks:           newTestHooks(t),
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ws.Serve(r.Context(), websocket.EchoHandler)
+	}))
+
+	t.Run("basic echo functionality", func(t *testing.T) {
+		t.Parallel()
+
+		// write client frame
+		clientFrame := &websocket.Frame{
+			Opcode:  websocket.OpcodeText,
+			Fin:     true,
+			Payload: []byte("hello"),
+		}
+		mask := [4]byte{1, 2, 3, 4}
+		buf := &bytes.Buffer{}
+		assert.NilError(t, websocket.WriteFrameMasked(buf, clientFrame, mask))
+
+		// read server frame
+		serverFrame, err := websocket.ReadFrame(conn)
+		assert.NilError(t, err)
+
+		// ensure we get back the same frame
+		assert.Equal(t, serverFrame.Fin, clientFrame.Fin, "expected matching FIN bits")
+		assert.Equal(t, serverFrame.Opcode, clientFrame.Opcode, "expected matching opcodes")
+		assert.Equal(t, string(serverFrame.Payload), string(clientFrame.Payload), "expected matching payloads")
+	})
+
+	t.Run("server requires masked frames", func(t *testing.T) {
+		t.Parallel()
+		frame := &websocket.Frame{
+			Opcode:  websocket.OpcodeText,
+			Fin:     true,
+			Payload: []byte("hello"),
+		}
+		assert.NilError(t, websocket.WriteFrame(conn, frame))
+		validateCloseFrame(t, conn, websocket.StatusProtocolError, "received unmasked client frame")
+	})
+
+}
+
+func TestFraming(t *testing.T) {
+	t.Run("round trip", func(t *testing.T) {
+		t.Parallel()
+
+		// write masked "client" frame to buffer
+		clientFrame := &websocket.Frame{
+			Opcode:  websocket.OpcodeText,
+			Fin:     true,
+			Payload: []byte("hello"),
+		}
+		mask := [4]byte{1, 2, 3, 4}
+		buf := &bytes.Buffer{}
+		assert.NilError(t, websocket.WriteFrameMasked(buf, clientFrame, mask))
+
+		// read "server" frame from buffer
+		serverFrame, err := websocket.ReadFrame(buf)
+		assert.NilError(t, err)
+
+		// ensure client and server frame match
+		assert.Equal(t, serverFrame.Fin, clientFrame.Fin, "expected matching FIN bits")
+		assert.Equal(t, serverFrame.Opcode, clientFrame.Opcode, "expected matching opcodes")
+		assert.Equal(t, string(serverFrame.Payload), string(clientFrame.Payload), "expected matching payloads")
+	})
+}
+
 // setupRawConn is a test helpers that runs a test server and does the
 // initial websocket handshake. The returned connection is ready for use to
 // sent/receive websocket messages.
@@ -344,7 +433,7 @@ func validateCloseFrame(t *testing.T, r io.Reader, wantStatus websocket.StatusCo
 	statusCode := websocket.StatusCode(binary.BigEndian.Uint16(frame.Payload[:2]))
 	closeMsg := string(frame.Payload[2:])
 	t.Logf("got close frame: code=%v msg=%q", statusCode, closeMsg)
-	assert.Equal(t, statusCode, websocket.StatusServerError, "got incorrect close status code")
+	assert.Equal(t, int(statusCode), int(wantStatus), "got incorrect close status code")
 	assert.Contains(t, closeMsg, wantMsg, "got incorrect close message")
 }
 
