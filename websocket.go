@@ -105,7 +105,7 @@ func NewConn(src io.ReadWriteCloser, clientKey ClientKey, opts Options) *Conn {
 	setDefaults(&opts)
 	if opts.ReadTimeout != 0 || opts.WriteTimeout != 0 {
 		if _, ok := src.(deadliner); !ok {
-			panic(fmt.Sprintf("ReadTimeout and WriteTimeout may only be used when input source supports setting read/write deadlines"))
+			panic("ReadTimeout and WriteTimeout may only be used when input source supports setting read/write deadlines")
 		}
 	}
 	return &Conn{
