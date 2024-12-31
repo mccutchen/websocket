@@ -34,6 +34,9 @@ func BenchmarkReadFrame(b *testing.B) {
 		1024,
 		64 * 1024,
 		1024 * 1024,
+		// largest cases from the autobahn test suite
+		8 * 1024 * 1024,
+		16 * 1024 * 1024,
 	}
 
 	for _, size := range frameSizes {
@@ -59,63 +62,58 @@ func BenchmarkReadFrame(b *testing.B) {
 }
 
 func BenchmarkReadMessage(b *testing.B) {
-	frameSizes := []int{
-		64,
-		256,
-		1024,
-		// 64 * 1024,
-		// 1024 * 1024,
+	testCases := []struct {
+		frameSize int
+		msgSize   int
+	}{
+		{64, 64},
+		{64, 256},
+		{256, 1024},
+		{1024, 8 * 1024},
+		// worst case sizes from autobahn test suite
+		{8 * 1024 * 1024, 8 * 1024 * 1024},
+		{16 * 1024 * 1024, 16 * 1024 * 1024},
 	}
 
-	messageSizes := []int{
-		512,
-		1024,
-		256 * 1024,
-		// 1024 * 1024,
-		// 2 * 1024 * 1024,
-	}
-
-	for _, msgSize := range messageSizes {
-		for _, frameSize := range frameSizes {
-			if msgSize%frameSize != 0 {
-				continue
+	for _, tc := range testCases {
+		frameSize := tc.frameSize
+		msgSize := tc.msgSize
+		buf := &bytes.Buffer{}
+		frameCount := msgSize / frameSize
+		for i := 0; i < frameCount; i++ {
+			opcode := websocket.OpcodeText
+			if i > 0 {
+				opcode = websocket.OpcodeContinuation
 			}
-			buf := &bytes.Buffer{}
-			frameCount := msgSize / frameSize
-			for i := 0; i < frameCount; i++ {
-				opcode := websocket.OpcodeText
-				if i > 0 {
-					opcode = websocket.OpcodeContinuation
-				}
-				fin := i == frameCount-1
-				b.Logf("frame=%d frameCount=%d fin=%v", i, frameCount, fin)
-				frame := makeFrame(opcode, fin, frameSize)
-				assert.NilError(b, websocket.WriteFrameMasked(buf, frame, makeMaskingKey()))
-			}
-
-			payload := buf.Bytes()
-			reader := bytes.NewReader(payload)
-			conn := &dummyConn{
-				in:  reader,
-				out: io.Discard,
-			}
-			ws := websocket.New(conn, websocket.ClientKey(makeClientKey()), websocket.Options{
-				MaxFragmentSize: 1024 * 1024,
-				MaxMessageSize:  2 * 1024 * 1024,
-				// Hooks:           newTestHooks(b),
-			})
-
-			name := fmt.Sprintf("MessageSize=%db/FrameSize=%db/FrameCount=%d", msgSize, frameSize, frameCount)
-			b.Run(name, func(b *testing.B) {
-				for i := 0; i < b.N; i++ {
-					_, _ = reader.Seek(0, 0)
-					msg, err := ws.ReadMessage(context.Background())
-					assert.NilError(b, err)
-					assert.Equal(b, len(msg.Payload), msgSize, "expected message payload")
-				}
-			})
+			fin := i == frameCount-1
+			b.Logf("frame=%d frameCount=%d fin=%v", i, frameCount, fin)
+			frame := makeFrame(opcode, fin, frameSize)
+			assert.NilError(b, websocket.WriteFrameMasked(buf, frame, makeMaskingKey()))
 		}
+
+		payload := buf.Bytes()
+		reader := bytes.NewReader(payload)
+		conn := &dummyConn{
+			in:  reader,
+			out: io.Discard,
+		}
+		ws := websocket.New(conn, websocket.ClientKey(makeClientKey()), websocket.Options{
+			MaxFragmentSize: frameSize,
+			MaxMessageSize:  msgSize,
+			// Hooks:           newTestHooks(b),
+		})
+
+		name := fmt.Sprintf("MessageSize=%db/FrameSize=%db/FrameCount=%d", msgSize, frameSize, frameCount)
+		b.Run(name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_, _ = reader.Seek(0, 0)
+				msg, err := ws.ReadMessage(context.Background())
+				assert.NilError(b, err)
+				assert.Equal(b, len(msg.Payload), msgSize, "expected message payload")
+			}
+		})
 	}
+
 }
 
 type dummyConn struct {
