@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"sync/atomic"
 	"testing"
 
@@ -29,10 +28,9 @@ func makeFrame(opcode websocket.Opcode, fin bool, payloadLen int) *websocket.Fra
 
 func BenchmarkReadFrame(b *testing.B) {
 	frameSizes := []int{
-		64,
 		256,
 		1024,
-		64 * 1024,
+		256 * 1024,
 		1024 * 1024,
 		// largest cases from the autobahn test suite
 		8 * 1024 * 1024,
@@ -47,7 +45,7 @@ func BenchmarkReadFrame(b *testing.B) {
 		assert.NilError(b, websocket.WriteFrameMasked(buf, frame, mask))
 
 		// Run sub-benchmarks for each payload size
-		b.Run(strconv.Itoa(size)+"b", func(b *testing.B) {
+		b.Run(formatSize(size), func(b *testing.B) {
 			src := bytes.NewReader(buf.Bytes())
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -63,23 +61,26 @@ func BenchmarkReadFrame(b *testing.B) {
 
 func BenchmarkReadMessage(b *testing.B) {
 	testCases := []struct {
-		frameSize int
-		msgSize   int
+		msgSize    int
+		frameCount int
 	}{
-		{64, 64},
-		{64, 256},
-		{256, 1024},
-		{1024, 8 * 1024},
+		{16 * 1024, 4},
+		{16 * 1024, 16},
+		{1024 * 1024, 4},
 		// worst case sizes from autobahn test suite
-		{8 * 1024 * 1024, 8 * 1024 * 1024},
-		{16 * 1024 * 1024, 16 * 1024 * 1024},
+		{8 * 1024 * 1024, 1},
+		{8 * 1024 * 1024, 8},
+		{16 * 1024 * 1024, 1},
+		{16 * 1024 * 1024, 16},
 	}
 
 	for _, tc := range testCases {
-		frameSize := tc.frameSize
-		msgSize := tc.msgSize
 		buf := &bytes.Buffer{}
-		frameCount := msgSize / frameSize
+		var (
+			msgSize    = tc.msgSize
+			frameCount = tc.frameCount
+			frameSize  = msgSize / frameCount
+		)
 		for i := 0; i < frameCount; i++ {
 			opcode := websocket.OpcodeText
 			if i > 0 {
@@ -103,7 +104,7 @@ func BenchmarkReadMessage(b *testing.B) {
 			// Hooks:           newTestHooks(b),
 		})
 
-		name := fmt.Sprintf("MessageSize=%db/FrameSize=%db/FrameCount=%d", msgSize, frameSize, frameCount)
+		name := fmt.Sprintf("%s/%d", formatSize(msgSize), frameCount)
 		b.Run(name, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				_, _ = reader.Seek(0, 0)
@@ -139,4 +140,18 @@ func (c *dummyConn) Write(p []byte) (int, error) {
 func (c *dummyConn) Close() error {
 	c.closed.Swap(true)
 	return nil
+}
+
+func formatSize(b int) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%dB", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.0f%ciB",
+		float64(b)/float64(div), "KMGTPE"[exp])
 }
