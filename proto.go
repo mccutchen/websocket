@@ -90,7 +90,7 @@ type Frame struct {
 }
 
 func (f Frame) String() string {
-	return fmt.Sprintf("Frame{Fin: %v, Opcode: %v, Payload: %q}", f.Fin, f.Opcode, f.Payload)
+	return fmt.Sprintf("Frame{Fin: %v, Opcode: %v, Payload: %q}", f.Fin, f.Opcode, truncatedPayload(f.Payload, 512))
 }
 
 // Message is an application-level message from the client, which may be
@@ -102,9 +102,17 @@ type Message struct {
 
 func (m Message) String() string {
 	if m.Binary {
-		return fmt.Sprintf("Message{Binary: %v, Payload: %v}", m.Binary, m.Payload)
+		return fmt.Sprintf("Message{Binary: %v, Payload: %v}", m.Binary, truncatedPayload(m.Payload, 512))
 	}
-	return fmt.Sprintf("Message{Binary: %v, Payload: %q}", m.Binary, m.Payload)
+	return fmt.Sprintf("Message{Binary: %v, Payload: %q}", m.Binary, truncatedPayload(m.Payload, 512))
+}
+
+func truncatedPayload(p []byte, limit int) string {
+	if len(p) < limit {
+		return string(p)
+	}
+	suffix := fmt.Sprintf(" ... [%d bytes truncated]", len(p)-limit)
+	return string(p[:limit]) + suffix
 }
 
 // ReadFrame reads a websocket frame from the wire.

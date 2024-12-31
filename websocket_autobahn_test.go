@@ -51,8 +51,8 @@ func TestWebSocketServer(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := websocket.Accept(w, r, websocket.Options{
 			Hooks: hooks,
-			// long ReadTimeout because some autobahn test cases (e.g. 5.19
-			// sleep up to 1 second between frames)
+			// long ReadTimeout because some autobahn test cases (e.g. 5.19)
+			// sleep up to 1 second between frames
 			ReadTimeout:  5000 * time.Millisecond,
 			WriteTimeout: 500 * time.Millisecond,
 			// some autobahn test cases send large frames, so we need to
