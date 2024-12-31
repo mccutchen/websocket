@@ -1,7 +1,9 @@
 # Default flags used by the test, testci, testcover targets
 COVERAGE_PATH ?= coverage.out
 COVERAGE_ARGS ?= -covermode=atomic -coverprofile=$(COVERAGE_PATH)
-TEST_ARGS     ?= -race -timeout 60s
+TEST_ARGS     ?= -race -timeout 60s -count=1
+BENCH_COUNT   ?= 5
+BENCH_ARGS    ?= -bench=. -benchmem -count=$(BENCH_COUNT)
 
 # 3rd party tools
 CMD_GOFUMPT     := go run mvdan.cc/gofumpt@v0.5.0
@@ -52,7 +54,7 @@ testautobahn:
 
 
 bench:
-	go test -bench=. -benchmem
+	go test $(BENCH_ARGS)
 .PHONY: bench
 	
 lint:
