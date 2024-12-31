@@ -14,7 +14,7 @@ func TestDefaults(t *testing.T) {
 		wrapedConn net.Conn
 		key        = ClientKey("test-client-key")
 		opts       = Options{}
-		conn       = NewConn(wrapedConn, key, opts)
+		conn       = New(wrapedConn, key, opts)
 	)
 
 	assert.Equal(t, conn.maxFragmentSize, DefaultMaxFragmentSize, "incorrect max fragment size")
