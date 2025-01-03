@@ -1,0 +1,99 @@
+# Adapted from:
+# https://github.com/swaggest/rest/blob/b19db8242abe420b23ea8ece43dd2fb79056a943/.github/workflows/bench.yml
+name: bench
+
+on:
+  push:
+    branches: [main] # on pushes TO main
+  pull_request:
+    branches: [main] # on pull requests AGAINST main
+
+# cancel CI runs when a new commit is pushed to any branch except main
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  BENCH_RUNS: 10
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    if: ${{ github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - uses: actions/checkout@v4
+
+      - name: restore previous baseline results
+        id: baseline-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            bench-*.txt
+          key: ${{ runner.os }}-bench-main
+
+      - name: run current benchmarks
+        # We have to juggle file names here because the cache action saves and
+        # restores the same file path and we need to keep it around for
+        # benchstat comparison before saving new results with the same name.
+        run: |
+          make bench | tee bench-main-curr.txt
+          mv -f            bench-main.txt      bench-main-prev.txt
+          cp               bench-main-curr.txt bench-main.txt
+
+          CURR_VERSION="${GITHUB_SHA::7}"
+          CURR_URL="https://github.com/mccutchen/websocket/commit/$CURR_VERSION"
+          CURR_LINK="[$CURR_VERSION]($CURR_URL)"
+
+          # record commit for which the benchmarks were run
+          echo -n "$CURR_VERSION" > bench-version.txt
+
+          echo "### benchmarks: $CURR_LINK" >>$GITHUB_STEP_SUMMARY
+          echo '```'                        >>$GITHUB_STEP_SUMMARY
+          cat  bench-main-curr.txt          >>$GITHUB_STEP_SUMMARY
+          echo '```'                        >>$GITHUB_STEP_SUMMARY
+
+      - name: run prev benchmarks if necessary
+        if: ${{ baseline_restore.cache-hit != '' }}
+        run: |
+          # Determine the base SHA depending on the event type
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA=${{ github.event.pull_request.base.sha }}
+          else
+            BASE_SHA=$(git rev-parse HEAD~1)
+          fi
+
+          git fetch origin main $BASE_SHA
+          git reset --hard $BASE_SHA
+          make bench | tee bench-main-prev.txt
+          git reset --hard $GITHUB_SHA
+
+      # TODO: cache benchstat
+      - name: compare results with benchstat
+        id: benchstat
+        run: |
+          go run golang.org/x/perf/cmd/benchstat@latest bench-main-prev.txt bench-main-curr.txt | tee -a $GITHUB_OUTPUT bench-stats.txt
+
+          CURR_VERSION="${GITHUB_SHA::7}"
+          CURR_URL="https://github.com/mccutchen/websocket/commit/$CURR_VERSION"
+          CURR_LINK="[$CURR_VERSION]($CURR_URL)"
+
+          PREV_VERSION="$(cat bench-version.txt 2>/dev/null)"
+          PREV_URL="https://github.com/mccutchen/websocket/commit/$PREV_VERSION"
+          PREV_LINK="[$PREV_VERSION]($PREV_URL)"
+
+          echo "### benchstats: $PREV_LINK (old) vs $CURR_LINK (new)" >>$GITHUB_STEP_SUMMARY
+          echo '```'                                                  >>$GITHUB_STEP_SUMMARY
+          cat  bench-stats.txt                                        >>$GITHUB_STEP_SUMMARY
+          echo '```'                                                  >>$GITHUB_STEP_SUMMARY
+
+      - name: save new baseline results
+        id: baseline-save
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            bench-*.txt
+          key: ${{ runner.os }}-bench-main
