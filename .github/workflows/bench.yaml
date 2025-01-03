@@ -19,7 +19,7 @@ env:
 jobs:
   baseline:
     runs-on: ubuntu-latest
-    if: ${{ github.ref == 'refs/heads/main' }}
+    # if: ${{ github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/setup-go@v5
         with:
