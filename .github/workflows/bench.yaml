@@ -17,7 +17,7 @@ env:
   BENCH_RUNS: 10
 
 jobs:
-  bench-baseline:
+  baseline:
     runs-on: ubuntu-latest
     if: ${{ github.ref == 'refs/heads/main' }}
     steps:
@@ -32,7 +32,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            bench-main.txt
+            bench-*.txt
           key: ${{ runner.os }}-bench-main
 
       - name: run current benchmarks
@@ -44,12 +44,20 @@ jobs:
           mv -f            bench-main.txt      bench-main-prev.txt
           cp               bench-main-curr.txt bench-main.txt
 
-          printf '### benchmarks at %s\n' ${GITHUB_SHA::7} >>$GITHUB_STEP_SUMMARY
-          printf '```'                                     >>$GITHUB_STEP_SUMMARY
-          cat    bench-main-curr.txt                       >>$GITHUB_STEP_SUMMARY
-          printf '```'                                     >>$GITHUB_STEP_SUMMARY
+          CURR_VERSION="${GITHUB_SHA::7}"
+          CURR_URL="https://github.com/mccutchen/websocket/commit/$CURR_VERSION"
+          CURR_LINK="[$CURR_VERSION]($CURR_URL)"
+
+          # record commit for which the benchmarks were run
+          echo -n "$CURR_VERSION" > bench-version.txt
+
+          echo "### benchmarks: $CURR_LINK" >>$GITHUB_STEP_SUMMARY
+          echo '```'                        >>$GITHUB_STEP_SUMMARY
+          cat  bench-main-curr.txt          >>$GITHUB_STEP_SUMMARY
+          echo '```'                        >>$GITHUB_STEP_SUMMARY
 
       - name: run prev benchmarks if necessary
+        if: ${{ baseline_restore.cache-hit != '' }}
         run: |
           # Determine the base SHA depending on the event type
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -69,15 +77,23 @@ jobs:
         run: |
           go run golang.org/x/perf/cmd/benchstat@latest bench-main-prev.txt bench-main-curr.txt | tee -a $GITHUB_OUTPUT bench-stats.txt
 
-          printf '### benchstats at %s\n' ${GITHUB_SHA::7} >>$GITHUB_STEP_SUMMARY
-          printf '```'                                     >>$GITHUB_STEP_SUMMARY
-          cat    bench-stats.txt                           >>$GITHUB_STEP_SUMMARY
-          printf '```'                                     >>$GITHUB_STEP_SUMMARY
+          CURR_VERSION="${GITHUB_SHA::7}"
+          CURR_URL="https://github.com/mccutchen/websocket/commit/$CURR_VERSION"
+          CURR_LINK="[$CURR_VERSION]($CURR_URL)"
+
+          PREV_VERSION="$(cat bench-version.txt 2>/dev/null)"
+          PREV_URL="https://github.com/mccutchen/websocket/commit/$PREV_VERSION"
+          PREV_LINK="[$PREV_VERSION]($PREV_URL)"
+
+          echo "### benchstats: $PREV_LINK (old) vs $CURR_LINK (new)" >>$GITHUB_STEP_SUMMARY
+          echo '```'                                                  >>$GITHUB_STEP_SUMMARY
+          cat  bench-stats.txt                                        >>$GITHUB_STEP_SUMMARY
+          echo '```'                                                  >>$GITHUB_STEP_SUMMARY
 
       - name: save new baseline results
         id: baseline-save
         uses: actions/cache/save@v4
         with:
           path: |
-            bench-main.txt
+            bench-*.txt
           key: ${{ runner.os }}-bench-main
