@@ -40,9 +40,11 @@ jobs:
         # restores the same file path and we need to keep it around for
         # benchstat comparison before saving new results with the same name.
         run: |
+          if [ -f bench-main.txt ]; then
+            mv -f bench-main-curr.txt bench-main-prev.txt
+          fi
+
           make bench | tee bench-main-curr.txt
-          mv -f            bench-main.txt      bench-main-prev.txt
-          cp               bench-main-curr.txt bench-main.txt
 
           CURR_VERSION="${GITHUB_SHA::7}"
           CURR_URL="https://github.com/mccutchen/websocket/commit/$CURR_VERSION"
@@ -51,6 +53,7 @@ jobs:
           # record commit for which the benchmarks were run
           echo -n "$CURR_VERSION" > bench-version.txt
 
+          # report results
           echo "### benchmarks: $CURR_LINK" >>$GITHUB_STEP_SUMMARY
           echo '```'                        >>$GITHUB_STEP_SUMMARY
           cat  bench-main-curr.txt          >>$GITHUB_STEP_SUMMARY
