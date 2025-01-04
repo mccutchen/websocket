@@ -104,3 +104,62 @@ jobs:
           path: |
             bench-*.txt
           key: ${{ runner.os }}-bench-results
+
+  pr:
+    runs-on: ubuntu-latest
+    if: ${{ github.ref != 'refs/heads/main' }}
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - uses: actions/checkout@v4
+
+      - name: restore previous baseline results
+        id: baseline-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            bench-*.txt
+          key: ${{ runner.os }}-bench-results
+
+      - name: run current benchmarks
+        id: current-benchmarks
+        # We have to juggle file names here because the cache action saves and
+        # restores the same file path and we need to keep it around for
+        # benchstat comparison before saving new results with the same name.
+        run: |
+          CURR_VERSION="${GITHUB_SHA::7}"
+          OUT_PATH="bench-commit-${CURR_VERSION}.txt"
+
+          make bench | tee $OUT_PATH
+
+          CURR_URL="https://github.com/mccutchen/websocket/commit/$CURR_VERSION"
+          CURR_LINK="[$CURR_VERSION]($CURR_URL)"
+
+          # report results
+          echo "### benchmarks @ $CURR_LINK" >>pr_comment
+          echo '```'                         >>pr_comment
+          cat  $OUT_PATH                     >>pr_comment
+          echo '```'                         >>pr_comment
+
+      # TODO: cache benchstat
+      - name: compare results with benchstat
+        if: ${{ steps.baseline-restore.outputs.cache-hit != '' }}
+        run: |
+          go run golang.org/x/perf/cmd/benchstat@latest bench-main-curr.txt bench-commit-*.txt | tee -a bench-stats.txt
+
+          CURR_VERSION="${GITHUB_SHA::7}"
+          PREV_VERSION="$(cat bench-version-prev.txt 2>/dev/null)"
+          COMPARE_URL="https://github.com/mccutchen/websocket/compare/$PREV_VERSION...$CURR_VERSION"
+          COMPARE_LINK="[$PREV_VERSION...$CURR_VERSION]($COMPARE_URL)"
+
+          echo "### benchstats: $COMPARE_LINK" >>pr_comment
+          echo '```'                           >>pr_comment
+          cat  bench-stats.txt                 >>pr_comment
+          echo '```'                           >>pr_comment
+
+      - name: post benchmark results
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: pr_comment
