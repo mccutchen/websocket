@@ -65,6 +65,8 @@ jobs:
   pr:
     runs-on: ubuntu-latest
     if: ${{ github.ref != 'refs/heads/main' }}
+    permissions:
+      pull-requests: write
     steps:
       - uses: actions/setup-go@v5
         with:
