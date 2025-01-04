@@ -33,7 +33,7 @@ jobs:
         with:
           path: |
             bench-*.txt
-          key: ${{ runner.os }}-bench-main
+          key: ${{ runner.os }}-bench-results
 
       - name: run current benchmarks
         id: current-benchmarks
@@ -99,4 +99,4 @@ jobs:
         with:
           path: |
             bench-*.txt
-          key: ${{ runner.os }}-bench-main
+          key: ${{ runner.os }}-bench-results
