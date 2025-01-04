@@ -85,12 +85,13 @@ jobs:
       # TODO: cache benchstat
       - name: compare results with benchstat
         run: |
-          go run golang.org/x/perf/cmd/benchstat@latest bench-main-prev.txt bench-main-curr.txt | tee -a bench-stats.txt
-
           CURR_VERSION="${GITHUB_SHA::7}"
           PREV_VERSION="$(cat bench-version-prev.txt 2>/dev/null)"
           COMPARE_URL="https://github.com/mccutchen/websocket/compare/$PREV_VERSION...$CURR_VERSION"
           COMPARE_LINK="[$PREV_VERSION...$CURR_VERSION]($COMPARE_URL)"
+
+          echo "Comparing $PREV_VERSION -> $CURR_VERSION ..."
+          go run golang.org/x/perf/cmd/benchstat@latest bench-main-prev.txt bench-main-curr.txt | tee -a bench-stats.txt
 
           echo "### benchstats: $COMPARE_LINK" >>$GITHUB_STEP_SUMMARY
           echo '```'                           >>$GITHUB_STEP_SUMMARY
@@ -107,7 +108,7 @@ jobs:
 
   pr:
     runs-on: ubuntu-latest
-    if: ${{ github.ref != 'refs/heads/main' }}
+    if: ${{ github.ref != 'refs/heads/main XXX FIXME' }}
     steps:
       - uses: actions/setup-go@v5
         with:
