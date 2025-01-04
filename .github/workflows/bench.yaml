@@ -36,9 +36,6 @@ jobs:
           key: ${{ runner.os }}-bench-results-${{ hashFiles('websocket_benchmark_test.go') }}
 
       - name: run benchmarks
-        # We have to juggle file names here because the cache action saves and
-        # restores the same file path and we need to keep it around for
-        # benchstat comparison before saving new results with the same name.
         run: |
           CURR_VERSION="${GITHUB_SHA::7}"
           CURR_URL="https://github.com/mccutchen/websocket/commit/$CURR_VERSION"
