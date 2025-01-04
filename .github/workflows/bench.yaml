@@ -65,8 +65,12 @@ jobs:
   pr:
     runs-on: ubuntu-latest
     if: ${{ github.ref != 'refs/heads/main' }}
+
+    # allow commenting on PR:
+    # https://github.com/marocchino/sticky-pull-request-comment/blob/main/README.md#error-resource-not-accessible-by-integration
     permissions:
       pull-requests: write
+
     steps:
       - uses: actions/setup-go@v5
         with:
