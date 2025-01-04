@@ -64,14 +64,17 @@ func BenchmarkReadMessage(b *testing.B) {
 		msgSize    int
 		frameCount int
 	}{
+		// 1 frame per message
 		{1024 * 1024, 1},
 		{8 * 1024 * 1024, 1},
 		{16 * 1024 * 1024, 1},
 
+		// 4 frames per message
 		{1024 * 1024, 4},
 		{8 * 1024 * 1024, 4},
 		{16 * 1024 * 1024, 4},
 
+		// 16 frames per message
 		{1024 * 1024, 16},
 		{8 * 1024 * 1024, 16},
 		{16 * 1024 * 1024, 16},
