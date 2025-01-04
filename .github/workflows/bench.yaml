@@ -84,17 +84,14 @@ jobs:
           go run golang.org/x/perf/cmd/benchstat@latest bench-main-prev.txt bench-main-curr.txt | tee -a bench-stats.txt
 
           CURR_VERSION="${GITHUB_SHA::7}"
-          CURR_URL="https://github.com/mccutchen/websocket/commit/$CURR_VERSION"
-          CURR_LINK="[$CURR_VERSION]($CURR_URL)"
-
           PREV_VERSION="$(cat bench-version.txt 2>/dev/null)"
-          PREV_URL="https://github.com/mccutchen/websocket/commit/$PREV_VERSION"
-          PREV_LINK="[$PREV_VERSION]($PREV_URL)"
+          COMPARE_URL="https://github.com/mccutchen/websocket/compare/$PREV_VERSION...$CURR_VERSION"
+          COMPARE_LINK="[$PREV_VERSION...$CURR_VERSION]($COMPARE_URL)"
 
-          echo "### benchstats: $PREV_LINK (old) vs $CURR_LINK (new)" >>$GITHUB_STEP_SUMMARY
-          echo '```'                                                  >>$GITHUB_STEP_SUMMARY
-          cat  bench-stats.txt                                        >>$GITHUB_STEP_SUMMARY
-          echo '```'                                                  >>$GITHUB_STEP_SUMMARY
+          echo "### benchstats: $COMPARE_LINK" >>$GITHUB_STEP_SUMMARY
+          echo '```'                           >>$GITHUB_STEP_SUMMARY
+          cat  bench-stats.txt                 >>$GITHUB_STEP_SUMMARY
+          echo '```'                           >>$GITHUB_STEP_SUMMARY
 
       - name: save new baseline results
         if: ${{ steps.current-benchmarks.outcome == 'success' }}
