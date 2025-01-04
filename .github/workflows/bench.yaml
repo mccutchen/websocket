@@ -40,7 +40,7 @@ jobs:
         # restores the same file path and we need to keep it around for
         # benchstat comparison before saving new results with the same name.
         run: |
-          if [ -f bench-main.txt ]; then
+          if [ -f bench-main-curr.txt ]; then
             mv -f bench-main-curr.txt bench-main-prev.txt
           fi
 
