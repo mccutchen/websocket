@@ -36,6 +36,7 @@ jobs:
           key: ${{ runner.os }}-bench-main
 
       - name: run current benchmarks
+        id: crrent-benchmarks
         # We have to juggle file names here because the cache action saves and
         # restores the same file path and we need to keep it around for
         # benchstat comparison before saving new results with the same name.
@@ -58,6 +59,9 @@ jobs:
           echo '```'                        >>$GITHUB_STEP_SUMMARY
           cat  bench-main-curr.txt          >>$GITHUB_STEP_SUMMARY
           echo '```'                        >>$GITHUB_STEP_SUMMARY
+
+          echo "XXX summary:"
+          cat $GITHUB_STEP_SUMMARY
 
       - name: run prev benchmarks if necessary
         if: ${{ steps.baseline-restore.outputs.cache-hit == '' }}
@@ -94,7 +98,7 @@ jobs:
           echo '```'                                                  >>$GITHUB_STEP_SUMMARY
 
       - name: save new baseline results
-        id: baseline-save
+        if: steps.current-benchmarks.outcome == 'success'
         uses: actions/cache/save@v4
         with:
           path: |
