@@ -33,7 +33,7 @@ jobs:
         with:
           path: |
             bench-*.txt
-          key: ${{ runner.os }}-bench-results-${{ hashFiles('websocket_benchmark_test.go', '.github/workflows/bench.yaml'}}
+          key: ${{ runner.os }}-bench-results-${{ hashFiles('websocket_benchmark_test.go', '.github/workflows/bench.yaml') }}
 
       - name: run current benchmarks
         id: current-benchmarks
@@ -104,7 +104,7 @@ jobs:
         with:
           path: |
             bench-*.txt
-          key: ${{ runner.os }}-bench-results-${{ hashFiles('websocket_benchmark_test.go', '.github/workflows/bench.yaml'}}
+          key: ${{ runner.os }}-bench-results-${{ hashFiles('websocket_benchmark_test.go', '.github/workflows/bench.yaml') }}
 
   pr:
     runs-on: ubuntu-latest
@@ -123,7 +123,7 @@ jobs:
         with:
           path: |
             bench-*.txt
-          key: ${{ runner.os }}-bench-results-${{ hashFiles('websocket_benchmark_test.go', '.github/workflows/bench.yaml'}}
+          key: ${{ runner.os }}-bench-results-${{ hashFiles('websocket_benchmark_test.go', '.github/workflows/bench.yaml') }}
 
       - name: run current benchmarks
         id: current-benchmarks
