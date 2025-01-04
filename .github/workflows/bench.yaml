@@ -36,7 +36,7 @@ jobs:
           key: ${{ runner.os }}-bench-main
 
       - name: run current benchmarks
-        id: crrent-benchmarks
+        id: current-benchmarks
         # We have to juggle file names here because the cache action saves and
         # restores the same file path and we need to keep it around for
         # benchstat comparison before saving new results with the same name.
