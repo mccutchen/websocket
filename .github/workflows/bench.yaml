@@ -140,6 +140,11 @@ jobs:
           cat  bench-stats.txt                 >>pr_comment
           echo '```'                           >>pr_comment
 
+          echo "XXX FINAL PR COMMENT:"
+          echo "================================================================================"
+          cat pr_comment
+          echo "================================================================================"
+
       - name: post benchmark results
         uses: marocchino/sticky-pull-request-comment@v2
         with:
