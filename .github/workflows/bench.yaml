@@ -105,13 +105,11 @@ jobs:
           echo -n "$CURR_VERSION" > bench-version-curr.txt
 
           # report results
-          echo "### benchmarks: $CURR_LINK" >>$GITHUB_STEP_SUMMARY
-          echo '```'                        >>$GITHUB_STEP_SUMMARY
-          cat  bench-main-curr.txt          >>$GITHUB_STEP_SUMMARY
-          echo '```'                        >>$GITHUB_STEP_SUMMARY
-
-          echo "XXX summary:"
-          cat $GITHUB_STEP_SUMMARY
+          echo "### benchmarks: $CURR_LINK" >>pr_comment
+          echo '```'                        >>pr_comment
+          cat  bench-main-curr.txt          >>pr_comment
+          echo '```'                        >>pr_comment
+          cat pr_comment >> $GITHUB_STEP_SUMMARY
 
       - name: benchmark prev commit if necessary
         if: ${{ steps.baseline-restore.outputs.cache-hit == '' }}
