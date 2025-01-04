@@ -19,7 +19,7 @@ env:
 jobs:
   baseline:
     runs-on: ubuntu-latest
-    if: ${{ github.ref == 'refs/heads/main' }}
+    # if: ${{ github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/setup-go@v5
         with:
@@ -36,13 +36,16 @@ jobs:
           key: ${{ runner.os }}-bench-main
 
       - name: run current benchmarks
+        id: crrent-benchmarks
         # We have to juggle file names here because the cache action saves and
         # restores the same file path and we need to keep it around for
         # benchstat comparison before saving new results with the same name.
         run: |
+          if [ -f bench-main-curr.txt ]; then
+            mv -f bench-main-curr.txt bench-main-prev.txt
+          fi
+
           make bench | tee bench-main-curr.txt
-          mv -f            bench-main.txt      bench-main-prev.txt
-          cp               bench-main-curr.txt bench-main.txt
 
           CURR_VERSION="${GITHUB_SHA::7}"
           CURR_URL="https://github.com/mccutchen/websocket/commit/$CURR_VERSION"
@@ -51,13 +54,17 @@ jobs:
           # record commit for which the benchmarks were run
           echo -n "$CURR_VERSION" > bench-version.txt
 
+          # report results
           echo "### benchmarks: $CURR_LINK" >>$GITHUB_STEP_SUMMARY
           echo '```'                        >>$GITHUB_STEP_SUMMARY
           cat  bench-main-curr.txt          >>$GITHUB_STEP_SUMMARY
           echo '```'                        >>$GITHUB_STEP_SUMMARY
 
+          echo "XXX summary:"
+          cat $GITHUB_STEP_SUMMARY
+
       - name: run prev benchmarks if necessary
-        if: ${{ steps.baseline-restore.outputs.cache-hit != '' }}
+        if: ${{ steps.baseline-restore.outputs.cache-hit == '' }}
         run: |
           # Determine the base SHA depending on the event type
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -73,9 +80,8 @@ jobs:
 
       # TODO: cache benchstat
       - name: compare results with benchstat
-        id: benchstat
         run: |
-          go run golang.org/x/perf/cmd/benchstat@latest bench-main-prev.txt bench-main-curr.txt | tee -a $GITHUB_OUTPUT bench-stats.txt
+          go run golang.org/x/perf/cmd/benchstat@latest bench-main-prev.txt bench-main-curr.txt | tee -a bench-stats.txt
 
           CURR_VERSION="${GITHUB_SHA::7}"
           CURR_URL="https://github.com/mccutchen/websocket/commit/$CURR_VERSION"
@@ -91,7 +97,7 @@ jobs:
           echo '```'                                                  >>$GITHUB_STEP_SUMMARY
 
       - name: save new baseline results
-        id: baseline-save
+        if: ${{ steps.current-benchmarks.outcome == 'success' }}
         uses: actions/cache/save@v4
         with:
           path: |
