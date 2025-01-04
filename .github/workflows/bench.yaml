@@ -42,7 +42,10 @@ jobs:
         # benchstat comparison before saving new results with the same name.
         run: |
           if [ -f bench-main-curr.txt ]; then
-            mv -f bench-main-curr.txt bench-main-prev.txt
+            mv bench-main-curr.txt bench-main-prev.txt
+          fi
+          if [ -f bench-version-curr.txt ]; then
+            mv bench-version-curr.txt bench-version-prev.txt
           fi
 
           make bench | tee bench-main-curr.txt
@@ -52,7 +55,7 @@ jobs:
           CURR_LINK="[$CURR_VERSION]($CURR_URL)"
 
           # record commit for which the benchmarks were run
-          echo -n "$CURR_VERSION" > bench-version.txt
+          echo -n "$CURR_VERSION" > bench-version-curr.txt
 
           # report results
           echo "### benchmarks: $CURR_LINK" >>$GITHUB_STEP_SUMMARY
@@ -72,6 +75,7 @@ jobs:
           else
             BASE_SHA=$(git rev-parse HEAD~1)
           fi
+          echo $BASE_SHA > bench-version-prev.txt
 
           git fetch origin main $BASE_SHA
           git reset --hard $BASE_SHA
@@ -84,7 +88,7 @@ jobs:
           go run golang.org/x/perf/cmd/benchstat@latest bench-main-prev.txt bench-main-curr.txt | tee -a bench-stats.txt
 
           CURR_VERSION="${GITHUB_SHA::7}"
-          PREV_VERSION="$(cat bench-version.txt 2>/dev/null)"
+          PREV_VERSION="$(cat bench-version-prev.txt 2>/dev/null)"
           COMPARE_URL="https://github.com/mccutchen/websocket/compare/$PREV_VERSION...$CURR_VERSION"
           COMPARE_LINK="[$PREV_VERSION...$CURR_VERSION]($COMPARE_URL)"
 
