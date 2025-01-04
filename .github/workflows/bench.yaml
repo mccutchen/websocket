@@ -80,9 +80,8 @@ jobs:
 
       # TODO: cache benchstat
       - name: compare results with benchstat
-        id: benchstat
         run: |
-          go run golang.org/x/perf/cmd/benchstat@latest bench-main-prev.txt bench-main-curr.txt | tee -a $GITHUB_OUTPUT bench-stats.txt
+          go run golang.org/x/perf/cmd/benchstat@latest bench-main-prev.txt bench-main-curr.txt | tee -a bench-stats.txt
 
           CURR_VERSION="${GITHUB_SHA::7}"
           CURR_URL="https://github.com/mccutchen/websocket/commit/$CURR_VERSION"
@@ -98,7 +97,7 @@ jobs:
           echo '```'                                                  >>$GITHUB_STEP_SUMMARY
 
       - name: save new baseline results
-        if: steps.current-benchmarks.outcome == 'success'
+        if: ${{ steps.current-benchmarks.outcome == 'success' }}
         uses: actions/cache/save@v4
         with:
           path: |
