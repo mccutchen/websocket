@@ -13,6 +13,10 @@ concurrency:
   group: "${{ github.workflow }}-${{ github.ref }}"
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+env:
+  BASELINE_RESULTS_FILE: bench-results-main.txt
+  BASELINE_COMMIT_FILE: bench-commit-main.txt
+
 jobs:
   baseline:
     runs-on: ubuntu-latest
@@ -39,13 +43,13 @@ jobs:
           COMMIT_URL="https://github.com/mccutchen/websocket/commit/$COMMIT"
           COMMIT_LINK="[$COMMIT]($COMMIT_URL)"
 
-          echo -n "$COMMIT" > bench-commit-main.txt
-          make bench | tee bench-results-main.txt
+          echo -n "$COMMIT" > $BASELINE_COMMIT_FILE
+          make bench | tee $BASELINE_RESULTS_FILE
 
           cat <<EOF >>$GITHUB_STEP_SUMMARY
           ### benchmark results @ $COMMIT_LINK
           \`\`\`
-          $(cat bench-results-main.txt)
+          $(cat $BASELINE_RESULTS_FILE)
           \`\`\`
           EOF
 
@@ -82,12 +86,12 @@ jobs:
           COMMIT_URL="https://github.com/mccutchen/websocket/commit/$COMMIT"
           COMMIT_LINK="[$COMMIT]($COMMIT_URL)"
 
-          make bench | tee bench-results-commit-$COMMIT.txt
+          make bench | tee bench-commit-$COMMIT.txt
 
           cat <<EOF >>$GITHUB_STEP_SUMMARY
           ### benchmark results @ $COMMIT_LINK
           \`\`\`
-          $(cat bench-results-commit-$COMMIT.txt)
+          $(cat bench-commit-$COMMIT.txt)
           \`\`\`
           EOF
 
@@ -97,11 +101,11 @@ jobs:
           set -e
 
           BASE_SHA=${{ github.event.pull_request.base.sha }}
-          echo $BASE_SHA > bench-commit-main.txt
+          echo $BASE_SHA > $BASELINE_COMMIT_FILE
 
           git fetch origin main $BASE_SHA
           git reset --hard $BASE_SHA
-          make bench | tee bench-results-main.txt
+          make bench | tee $BASELINE_RESULTS_FILE
           git reset --hard $GITHUB_SHA
 
       # TODO: cache benchstat binary
@@ -109,7 +113,7 @@ jobs:
         run: |
           set -e
 
-          go run golang.org/x/perf/cmd/benchstat@latest bench-results-main.txt bench-results-commit-*.txt | tee -a bench-stats.txt
+          go run golang.org/x/perf/cmd/benchstat@latest $BASELINE_RESULTS_FILE bench-commit-$COMMIT.txt | tee -a bench-stats.txt
 
           COMMIT="${GITHUB_SHA::7}"
           PREV_COMMIT="$(cat bench-version-prev.txt 2>/dev/null)"
