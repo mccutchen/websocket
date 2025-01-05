@@ -121,18 +121,19 @@ jobs:
           PREV_COMMIT="$(cat $BASELINE_COMMIT_FILE 2>/dev/null)"
           COMPARE_URL="https://github.com/mccutchen/websocket/compare/$PREV_COMMIT...$COMMIT"
           COMPARE_LINK="[$PREV_COMMIT...$COMMIT]($COMPARE_URL)"
+          SUMMARY_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           go run golang.org/x/perf/cmd/benchstat@latest $BASELINE_RESULTS_FILE bench-commit-$COMMIT.txt | tee -a bench-stats.txt
 
-          echo "### benchstats: $COMPARE_LINK" >>pr_comment
-          echo '```'                           >>pr_comment
-          cat  bench-stats.txt                 >>pr_comment
-          echo '```'                           >>pr_comment
+          cat <<EOF >pr_comment
+          ### benchstats: $COMPARE_LINK
 
-          echo "XXX FINAL PR COMMENT:"
-          echo "================================================================================"
-          cat pr_comment
-          echo "================================================================================"
+          View full benchmark output for $COMMIT on the [workflow summary]($SUMMARY_URL).
+
+          \`\`\`
+          $(cat bench-stats.txt)
+          \`\`\`
+          EOF
 
       - name: post benchmark results
         uses: marocchino/sticky-pull-request-comment@v2
