@@ -114,12 +114,12 @@ jobs:
         run: |
           set -eo pipefail
 
-          go run golang.org/x/perf/cmd/benchstat@latest $BASELINE_RESULTS_FILE bench-commit-$COMMIT.txt | tee -a bench-stats.txt
-
           COMMIT="${GITHUB_SHA::7}"
           PREV_COMMIT="$(cat bench-version-prev.txt 2>/dev/null)"
           COMPARE_URL="https://github.com/mccutchen/websocket/compare/$PREV_COMMIT...$COMMIT"
           COMPARE_LINK="[$PREV_COMMIT...$COMMIT]($COMPARE_URL)"
+
+          go run golang.org/x/perf/cmd/benchstat@latest $BASELINE_RESULTS_FILE bench-commit-$COMMIT.txt | tee -a bench-stats.txt
 
           echo "### benchstats: $COMPARE_LINK" >>pr_comment
           echo '```'                           >>pr_comment
