@@ -28,9 +28,7 @@ func makeFrame(opcode websocket.Opcode, fin bool, payloadLen int) *websocket.Fra
 
 func BenchmarkReadFrame(b *testing.B) {
 	frameSizes := []int{
-		256,
 		1024,
-		256 * 1024,
 		1024 * 1024,
 		// largest cases from the autobahn test suite
 		8 * 1024 * 1024,
@@ -64,13 +62,19 @@ func BenchmarkReadMessage(b *testing.B) {
 		msgSize    int
 		frameCount int
 	}{
-		{16 * 1024, 4},
-		{16 * 1024, 16},
-		{1024 * 1024, 4},
-		// worst case sizes from autobahn test suite
+		// 1 frame per message
+		{1024 * 1024, 1},
 		{8 * 1024 * 1024, 1},
-		{8 * 1024 * 1024, 8},
 		{16 * 1024 * 1024, 1},
+
+		// 4 frames per message
+		{1024 * 1024, 4},
+		{8 * 1024 * 1024, 4},
+		{16 * 1024 * 1024, 4},
+
+		// 16 frames per message
+		{1024 * 1024, 16},
+		{8 * 1024 * 1024, 16},
 		{16 * 1024 * 1024, 16},
 	}
 

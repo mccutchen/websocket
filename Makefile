@@ -2,7 +2,7 @@
 COVERAGE_PATH ?= coverage.out
 COVERAGE_ARGS ?= -covermode=atomic -coverprofile=$(COVERAGE_PATH)
 TEST_ARGS     ?= -race -timeout 60s -count=1
-BENCH_COUNT   ?= 5
+BENCH_COUNT   ?= 10
 BENCH_ARGS    ?= -bench=. -benchmem -count=$(BENCH_COUNT)
 
 # 3rd party tools
@@ -56,7 +56,7 @@ testautobahn:
 bench:
 	go test $(BENCH_ARGS)
 .PHONY: bench
-	
+
 lint:
 	test -z "$$($(CMD_GOFUMPT) -d -e .)" || (echo "Error: gofmt failed"; $(CMD_GOFUMPT) -d -e . ; exit 1)
 	go vet ./...
