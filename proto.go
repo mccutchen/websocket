@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"unicode/utf8"
 )
 
@@ -119,7 +120,8 @@ func truncatedPayload(p []byte, limit int) string {
 func ReadFrame(buf io.Reader) (*Frame, error) {
 	// XXX add dummy allocations to see diff in benchmark results
 	xxx := make([]byte, 32)
-	_ = xxx
+	xxx[0] = 11
+	log.Println("XXX: ", xxx)
 	bb := make([]byte, 2)
 	if _, err := io.ReadFull(buf, bb); err != nil {
 		return nil, fmt.Errorf("error reading frame header: %w", err)
