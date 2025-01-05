@@ -39,6 +39,8 @@ jobs:
 
       - name: run benchmarks
         run: |
+          set -euo pipefail
+
           COMMIT="${GITHUB_SHA::7}"
           COMMIT_URL="https://github.com/mccutchen/websocket/commit/$COMMIT"
           COMMIT_LINK="[$COMMIT]($COMMIT_URL)"
@@ -81,7 +83,7 @@ jobs:
 
       - name: benchmark current commit
         run: |
-          set -eo pipefail
+          set -euo pipefail
 
           COMMIT="${GITHUB_SHA::7}"
           COMMIT_URL="https://github.com/mccutchen/websocket/commit/$COMMIT"
@@ -99,9 +101,10 @@ jobs:
       - name: benchmark prev commit if necessary
         if: ${{ steps.baseline-restore.outputs.cache-hit == '' }}
         run: |
-          set -eo pipefail
+          set -euo pipefail
 
           BASE_SHA=${{ github.event.pull_request.base.sha }}
+          BASE_SHA="${BASE_SHA::7}"
           echo $BASE_SHA > $BASELINE_COMMIT_FILE
 
           git fetch origin main $BASE_SHA
@@ -112,10 +115,10 @@ jobs:
       # TODO: cache benchstat binary
       - name: compare results with benchstat
         run: |
-          set -eo pipefail
+          set -euo pipefail
 
           COMMIT="${GITHUB_SHA::7}"
-          PREV_COMMIT="$(cat bench-version-prev.txt 2>/dev/null)"
+          PREV_COMMIT="$(cat $BASELINE_COMMIT_FILE 2>/dev/null)"
           COMPARE_URL="https://github.com/mccutchen/websocket/compare/$PREV_COMMIT...$COMMIT"
           COMPARE_LINK="[$PREV_COMMIT...$COMMIT]($COMPARE_URL)"
 
