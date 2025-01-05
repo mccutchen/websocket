@@ -76,6 +76,8 @@ jobs:
 
       - name: benchmark current commit
         run: |
+          set -e
+
           COMMIT="${GITHUB_SHA::7}"
           COMMIT_URL="https://github.com/mccutchen/websocket/commit/$COMMIT"
           COMMIT_LINK="[$COMMIT]($COMMIT_URL)"
@@ -92,6 +94,8 @@ jobs:
       - name: benchmark prev commit if necessary
         if: ${{ steps.baseline-restore.outputs.cache-hit == '' }}
         run: |
+          set -e
+
           BASE_SHA=${{ github.event.pull_request.base.sha }}
           echo $BASE_SHA > bench-commit-main.txt
 
@@ -103,6 +107,8 @@ jobs:
       # TODO: cache benchstat binary
       - name: compare results with benchstat
         run: |
+          set -e
+
           go run golang.org/x/perf/cmd/benchstat@latest bench-results-main.txt bench-results-commit-*.txt | tee -a bench-stats.txt
 
           COMMIT="${GITHUB_SHA::7}"
