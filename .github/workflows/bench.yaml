@@ -48,3 +48,79 @@ jobs:
           $(cat bench-results-main.txt)
           \`\`\`
           EOF
+
+  pr:
+    runs-on: ubuntu-latest
+    if: ${{ github.ref != 'refs/heads/main' }}
+
+    # allow commenting on PR:
+    # https://github.com/marocchino/sticky-pull-request-comment/blob/main/README.md#error-resource-not-accessible-by-integration
+    permissions:
+      pull-requests: write
+
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - uses: actions/checkout@v4
+
+      - name: restore previous baseline results
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            bench-*.txt
+          key: ${{ runner.os }}-bench-results-${{ hashFiles('websocket_benchmark_test.go') }}
+          restore-keys: |
+            ${{ runner.os }}-bench-results-
+
+      - name: benchmark current commit
+        run: |
+          COMMIT="${GITHUB_SHA::7}"
+          COMMIT_URL="https://github.com/mccutchen/websocket/commit/$COMMIT"
+          COMMIT_LINK="[$COMMIT]($COMMIT_URL)"
+
+          make bench | tee bench-results-commit-$COMMIT.txt
+
+          cat <<EOF >>$GITHUB_STEP_SUMMARY
+          ### benchmark results @ $COMMIT_LINK
+          \`\`\`
+          $(cat bench-results-commit-$COMMIT.txt)
+          \`\`\`
+          EOF
+
+      - name: benchmark prev commit if necessary
+        if: ${{ steps.baseline-restore.outputs.cache-hit == '' }}
+        run: |
+          BASE_SHA=${{ github.event.pull_request.base.sha }}
+          echo $BASE_SHA > bench-commit-main.txt
+
+          git fetch origin main $BASE_SHA
+          git reset --hard $BASE_SHA
+          make bench | tee bench-results-main.txt
+          git reset --hard $GITHUB_SHA
+
+      # TODO: cache benchstat binary
+      - name: compare results with benchstat
+        run: |
+          go run golang.org/x/perf/cmd/benchstat@latest bench-results-main.txt bench-results-commit-*.txt | tee -a bench-stats.txt
+
+          COMMIT="${GITHUB_SHA::7}"
+          PREV_COMMIT="$(cat bench-version-prev.txt 2>/dev/null)"
+          COMPARE_URL="https://github.com/mccutchen/websocket/compare/$PREV_COMMIT...$COMMIT"
+          COMPARE_LINK="[$PREV_COMMIT...$COMMIT]($COMPARE_URL)"
+
+          echo "### benchstats: $COMPARE_LINK" >>pr_comment
+          echo '```'                           >>pr_comment
+          cat  bench-stats.txt                 >>pr_comment
+          echo '```'                           >>pr_comment
+
+          echo "XXX FINAL PR COMMENT:"
+          echo "================================================================================"
+          cat pr_comment
+          echo "================================================================================"
+
+      - name: post benchmark results
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: pr_comment
