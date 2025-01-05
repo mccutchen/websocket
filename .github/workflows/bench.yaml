@@ -19,7 +19,7 @@ env:
 jobs:
   baseline:
     runs-on: ubuntu-latest
-    # if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/setup-go@v5
         with:
@@ -27,126 +27,27 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: restore previous baseline results
-        id: baseline-restore
-        uses: actions/cache/restore@v4
+      - name: cache previous baseline results
+        uses: actions/cache@v4
         with:
           path: |
             bench-*.txt
           key: ${{ runner.os }}-bench-results-${{ hashFiles('websocket_benchmark_test.go') }}
+          restore-keys: |
+            ${{ runner.os }}-bench-results-
 
       - name: run benchmarks
         run: |
-          CURR_VERSION="${GITHUB_SHA::7}"
-          CURR_URL="https://github.com/mccutchen/websocket/commit/$CURR_VERSION"
-          CURR_LINK="[$CURR_VERSION]($CURR_URL)"
+          COMMIT="${GITHUB_SHA::7}"
+          COMMIT_URL="https://github.com/mccutchen/websocket/commit/$COMMIT"
+          COMMIT_LINK="[$COMMIT]($COMMIT_URL)"
 
-          # record commit for which the benchmarks were run
-          echo -n "$CURR_VERSION" > bench-version-curr.txt
+          echo -n "$COMMIT" > bench-commit-main.txt
+          make bench | tee bench-results-main.txt
 
-          make bench | tee bench-main-curr.txt
-
-          # report results
-          echo "### benchmarks: $CURR_LINK" >>$GITHUB_STEP_SUMMARY
-          echo '```'                        >>$GITHUB_STEP_SUMMARY
-          cat  bench-main-curr.txt          >>$GITHUB_STEP_SUMMARY
-          echo '```'                        >>$GITHUB_STEP_SUMMARY
-
-          echo "XXX summary:"
-          cat $GITHUB_STEP_SUMMARY
-
-      - name: save new baseline results
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            bench-*.txt
-          key: ${{ runner.os }}-bench-results-${{ hashFiles('websocket_benchmark_test.go') }}
-
-  pr:
-    runs-on: ubuntu-latest
-    if: ${{ github.ref != 'refs/heads/main' }}
-
-    # allow commenting on PR:
-    # https://github.com/marocchino/sticky-pull-request-comment/blob/main/README.md#error-resource-not-accessible-by-integration
-    permissions:
-      pull-requests: write
-
-    steps:
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "stable"
-
-      - uses: actions/checkout@v4
-
-      - name: restore previous baseline results
-        id: baseline-restore
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            bench-*.txt
-          key: ${{ runner.os }}-bench-results-${{ hashFiles('websocket_benchmark_test.go') }}
-
-      - name: benchmark current commit
-        # We have to juggle file names here because the cache action saves and
-        # restores the same file path and we need to keep it around for
-        # benchstat comparison before saving new results with the same name.
-        run: |
-          if [ -f bench-main-curr.txt ]; then
-            mv bench-main-curr.txt bench-main-prev.txt
-          fi
-          if [ -f bench-version-curr.txt ]; then
-            mv bench-version-curr.txt bench-version-prev.txt
-          fi
-
-          make bench | tee bench-main-curr.txt
-
-          CURR_VERSION="${GITHUB_SHA::7}"
-          CURR_URL="https://github.com/mccutchen/websocket/commit/$CURR_VERSION"
-          CURR_LINK="[$CURR_VERSION]($CURR_URL)"
-
-          # record commit for which the benchmarks were run
-          echo -n "$CURR_VERSION" > bench-version-curr.txt
-
-          # report results
-          echo "### benchmarks: $CURR_LINK" >>pr_comment
-          echo '```'                        >>pr_comment
-          cat  bench-main-curr.txt          >>pr_comment
-          echo '```'                        >>pr_comment
-          cat pr_comment >> $GITHUB_STEP_SUMMARY
-
-      - name: benchmark prev commit if necessary
-        if: ${{ steps.baseline-restore.outputs.cache-hit == '' }}
-        run: |
-          BASE_SHA=${{ github.event.pull_request.base.sha }}
-          echo $BASE_SHA > bench-version-prev.txt
-
-          git fetch origin main $BASE_SHA
-          git reset --hard $BASE_SHA
-          make bench | tee bench-main-prev.txt
-          git reset --hard $GITHUB_SHA
-
-      # TODO: cache benchstat
-      - name: compare results with benchstat
-        if: ${{ steps.baseline-restore.outputs.cache-hit != '' }}
-        run: |
-          go run golang.org/x/perf/cmd/benchstat@latest bench-main-curr.txt bench-commit-*.txt | tee -a bench-stats.txt
-
-          CURR_VERSION="${GITHUB_SHA::7}"
-          PREV_VERSION="$(cat bench-version-prev.txt 2>/dev/null)"
-          COMPARE_URL="https://github.com/mccutchen/websocket/compare/$PREV_VERSION...$CURR_VERSION"
-          COMPARE_LINK="[$PREV_VERSION...$CURR_VERSION]($COMPARE_URL)"
-
-          echo "### benchstats: $COMPARE_LINK" >>pr_comment
-          echo '```'                           >>pr_comment
-          cat  bench-stats.txt                 >>pr_comment
-          echo '```'                           >>pr_comment
-
-          echo "XXX FINAL PR COMMENT:"
-          echo "================================================================================"
-          cat pr_comment
-          echo "================================================================================"
-
-      - name: post benchmark results
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          path: pr_comment
+          cat <<EOF >>$GITHUB_STEP_SUMMARY
+          ### benchmark results @ $COMMIT_LINK
+          \`\`\`
+          $(cat bench-results-main.txt)
+          \`\`\`
+          EOF
