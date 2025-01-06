@@ -3,7 +3,7 @@ COVERAGE_PATH ?= coverage.out
 COVERAGE_ARGS ?= -covermode=atomic -coverprofile=$(COVERAGE_PATH)
 TEST_ARGS     ?= -race -timeout 60s -count=1
 BENCH_COUNT   ?= 10
-BENCH_ARGS    ?= -bench=^Benchmark -benchmem -count=$(BENCH_COUNT)
+BENCH_ARGS    ?= -bench=. -benchmem -count=$(BENCH_COUNT) -run=^$$
 
 # 3rd party tools
 CMD_GOFUMPT     := go run mvdan.cc/gofumpt@v0.5.0
