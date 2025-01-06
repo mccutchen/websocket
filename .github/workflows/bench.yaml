@@ -118,7 +118,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          COMMIT="${GITHUB_SHA::7}"
+          COMMIT="${{ github.event.pull_request.head.sha }}"
+          COMMIT="${COMMIT::7}"
           PREV_COMMIT="$(cat $BASELINE_COMMIT_FILE 2>/dev/null)"
           COMPARE_URL="https://github.com/mccutchen/websocket/compare/$PREV_COMMIT...$COMMIT"
           COMPARE_LINK="[$PREV_COMMIT...$COMMIT]($COMPARE_URL)"
