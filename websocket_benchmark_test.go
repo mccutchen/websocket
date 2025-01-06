@@ -37,18 +37,19 @@ func BenchmarkReadFrame(b *testing.B) {
 
 	for _, size := range frameSizes {
 		frame := makeFrame(websocket.OpcodeText, true, size)
-		mask := [4]byte{1, 2, 3, 4}
+		mask := makeMaskingKey()
 
-		buf := &bytes.Buffer{}
-		assert.NilError(b, websocket.WriteFrameMasked(buf, frame, mask))
+		payloadBuf := &bytes.Buffer{}
+		assert.NilError(b, websocket.WriteFrameMasked(payloadBuf, frame, mask))
 
 		// Run sub-benchmarks for each payload size
 		b.Run(formatSize(size), func(b *testing.B) {
-			src := bytes.NewReader(buf.Bytes())
+			src := bytes.NewReader(payloadBuf.Bytes())
+			readBuf := make([]byte, size+len(mask))
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_, _ = src.Seek(0, 0)
-				_, err := websocket.ReadFrame(src, size)
+				_, err := websocket.ReadFrame(src, readBuf, size)
 				if err != nil {
 					b.Fatalf("unexpected error: %v", err)
 				}
