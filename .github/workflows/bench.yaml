@@ -13,6 +13,10 @@ concurrency:
   group: "${{ github.workflow }}-${{ github.ref }}"
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+env:
+  BASELINE_RESULTS_FILE: bench-results-main.txt
+  BASELINE_COMMIT_FILE: bench-commit-main.txt
+
 jobs:
   baseline:
     runs-on: ubuntu-latest
@@ -35,16 +39,105 @@ jobs:
 
       - name: run benchmarks
         run: |
+          set -euo pipefail
+
           COMMIT="${GITHUB_SHA::7}"
           COMMIT_URL="https://github.com/mccutchen/websocket/commit/$COMMIT"
           COMMIT_LINK="[$COMMIT]($COMMIT_URL)"
 
-          echo -n "$COMMIT" > bench-commit-main.txt
-          make bench | tee bench-results-main.txt
+          echo -n "$COMMIT" > $BASELINE_COMMIT_FILE
+          make bench | tee $BASELINE_RESULTS_FILE
 
           cat <<EOF >>$GITHUB_STEP_SUMMARY
           ### benchmark results @ $COMMIT_LINK
           \`\`\`
-          $(cat bench-results-main.txt)
+          $(cat $BASELINE_RESULTS_FILE)
           \`\`\`
           EOF
+
+  pr:
+    runs-on: ubuntu-latest
+    if: ${{ github.ref != 'refs/heads/main' }}
+
+    # allow commenting on PR:
+    # https://github.com/marocchino/sticky-pull-request-comment/blob/main/README.md#error-resource-not-accessible-by-integration
+    permissions:
+      pull-requests: write
+
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - uses: actions/checkout@v4
+
+      - name: restore previous baseline results
+        id: baseline-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            bench-*.txt
+          key: ${{ runner.os }}-bench-results-${{ hashFiles('websocket_benchmark_test.go') }}
+          restore-keys: |
+            ${{ runner.os }}-bench-results-
+
+      - name: benchmark current commit
+        run: |
+          set -euo pipefail
+
+          COMMIT="${{ github.event.pull_request.head.sha }}"
+          COMMIT="${COMMIT::7}"
+          COMMIT_URL="https://github.com/mccutchen/websocket/commit/$COMMIT"
+          COMMIT_LINK="[$COMMIT]($COMMIT_URL)"
+
+          make bench | tee bench-commit-$COMMIT.txt
+
+          cat <<EOF >>$GITHUB_STEP_SUMMARY
+          ### benchmark results @ $COMMIT_LINK
+          \`\`\`
+          $(cat bench-commit-$COMMIT.txt)
+          \`\`\`
+          EOF
+
+      - name: benchmark prev commit if necessary
+        if: ${{ steps.baseline-restore.outputs.cache-hit == '' }}
+        run: |
+          set -euo pipefail
+
+          BASE_SHA=${{ github.event.pull_request.base.sha }}
+          BASE_SHA="${BASE_SHA::7}"
+          echo $BASE_SHA > $BASELINE_COMMIT_FILE
+
+          git fetch origin main $BASE_SHA
+          git reset --hard $BASE_SHA
+          make bench | tee $BASELINE_RESULTS_FILE
+          git reset --hard $GITHUB_SHA
+
+      # TODO: cache benchstat binary
+      - name: compare results with benchstat
+        run: |
+          set -euo pipefail
+
+          COMMIT="${{ github.event.pull_request.head.sha }}"
+          COMMIT="${COMMIT::7}"
+          PREV_COMMIT="$(cat $BASELINE_COMMIT_FILE 2>/dev/null)"
+          COMPARE_URL="https://github.com/mccutchen/websocket/compare/$PREV_COMMIT...$COMMIT"
+          COMPARE_LINK="[$PREV_COMMIT...$COMMIT]($COMPARE_URL)"
+          SUMMARY_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          go run golang.org/x/perf/cmd/benchstat@latest $BASELINE_RESULTS_FILE bench-commit-$COMMIT.txt | tee -a bench-stats.txt
+
+          cat <<EOF >pr_comment
+          ### benchstats: $COMPARE_LINK
+
+          View full benchmark output for $COMMIT on the [workflow summary]($SUMMARY_URL).
+
+          \`\`\`
+          $(cat bench-stats.txt)
+          \`\`\`
+          EOF
+
+      - name: post benchmark results
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: pr_comment
