@@ -32,3 +32,24 @@ func TestFrameRoundTrip(t *testing.T) {
 	assert.Equal(t, serverFrame.Opcode, clientFrame.Opcode, "expected matching opcodes")
 	assert.Equal(t, string(serverFrame.Payload), string(clientFrame.Payload), "expected matching payloads")
 }
+
+func TestMaxFrameSize(t *testing.T) {
+	// Basic test to ensure that we can read back the same frame that we
+	// write.
+	t.Parallel()
+
+	// write masked "client" frame to buffer
+	clientFrame := &websocket.Frame{
+		Opcode:  websocket.OpcodeText,
+		Fin:     true,
+		Payload: []byte("hello"),
+	}
+	mask := [4]byte{1, 2, 3, 4}
+	buf := &bytes.Buffer{}
+	assert.NilError(t, websocket.WriteFrameMasked(buf, clientFrame, mask))
+
+	// read "server" frame from buffer.
+	serverFrame, err := websocket.ReadFrame(buf, len(clientFrame.Payload)-1)
+	assert.Error(t, err, websocket.ErrFrameTooLarge)
+	assert.Equal(t, serverFrame, nil, "expected nil frame on error")
+}
