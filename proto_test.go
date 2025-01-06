@@ -23,8 +23,8 @@ func TestFrameRoundTrip(t *testing.T) {
 	buf := &bytes.Buffer{}
 	assert.NilError(t, websocket.WriteFrameMasked(buf, clientFrame, mask))
 
-	// read "server" frame from buffer
-	serverFrame, err := websocket.ReadFrame(buf)
+	// read "server" frame from buffer.
+	serverFrame, err := websocket.ReadFrame(buf, len(clientFrame.Payload))
 	assert.NilError(t, err)
 
 	// ensure client and server frame match

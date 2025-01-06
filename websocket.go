@@ -155,7 +155,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			ws.resetReadDeadline()
 		}
 
-		frame, err := ReadFrame(ws.conn)
+		frame, err := ReadFrame(ws.conn, ws.maxFragmentSize)
 		if err != nil {
 			code := StatusServerError
 			if errors.Is(err, io.EOF) {

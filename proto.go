@@ -19,6 +19,7 @@ var (
 	ErrInvalidUT8           = errors.New("invalid UTF-8")
 	ErrUnmaskedClientFrame  = errors.New("received unmasked client frame")
 	ErrUnsupportedRSVBits   = errors.New("frame has unsupported RSV bits set")
+	ErrFrameTooLarge        = errors.New("frame payload too large")
 )
 
 var zeroMask [4]byte
@@ -116,7 +117,7 @@ func truncatedPayload(p []byte, limit int) string {
 }
 
 // ReadFrame reads a websocket frame from the wire.
-func ReadFrame(buf io.Reader) (*Frame, error) {
+func ReadFrame(buf io.Reader, maxPayloadLen int) (*Frame, error) {
 	bb := make([]byte, 2)
 	if _, err := io.ReadFull(buf, bb); err != nil {
 		return nil, fmt.Errorf("error reading frame header: %w", err)
@@ -134,25 +135,29 @@ func ReadFrame(buf io.Reader) (*Frame, error) {
 
 	// parse second header byte
 	var (
-		b1            = bb[1]
-		masked        = b1&0b10000000 != 0
-		payloadLength = uint64(b1 & 0b01111111)
+		b1         = bb[1]
+		masked     = b1&0b10000000 != 0
+		payloadLen = uint64(b1 & 0b01111111)
 	)
 
 	// figure out if we need to read an "extended" payload length
-	switch payloadLength {
+	switch payloadLen {
 	case 126:
 		// Payload length is represented in the next 2 bytes (16-bit unsigned integer)
 		var l uint16
 		if err := binary.Read(buf, binary.BigEndian, &l); err != nil {
 			return nil, fmt.Errorf("error reading 2-byte extended payload length: %w", err)
 		}
-		payloadLength = uint64(l)
+		payloadLen = uint64(l)
 	case 127:
 		// Payload length is represented in the next 8 bytes (64-bit unsigned integer)
-		if err := binary.Read(buf, binary.BigEndian, &payloadLength); err != nil {
+		if err := binary.Read(buf, binary.BigEndian, &payloadLen); err != nil {
 			return nil, fmt.Errorf("error reading 8-byte extended payload length: %w", err)
 		}
+	}
+
+	if payloadLen > uint64(maxPayloadLen) {
+		return nil, ErrFrameTooLarge
 	}
 
 	// read mask key (if present)
@@ -165,9 +170,9 @@ func ReadFrame(buf io.Reader) (*Frame, error) {
 	}
 
 	// read & optionally unmask payload
-	payload := make([]byte, payloadLength)
+	payload := make([]byte, payloadLen)
 	if _, err := io.ReadFull(buf, payload); err != nil {
-		return nil, fmt.Errorf("error reading %d byte payload: %w", payloadLength, err)
+		return nil, fmt.Errorf("error reading %d byte payload: %w", payloadLen, err)
 	}
 	if masked {
 		for i, b := range payload {
