@@ -19,9 +19,8 @@ func TestFrameRoundTrip(t *testing.T) {
 		Fin:     true,
 		Payload: []byte("hello"),
 	}
-	mask := [4]byte{1, 2, 3, 4}
 	buf := &bytes.Buffer{}
-	assert.NilError(t, websocket.WriteFrameMasked(buf, clientFrame, mask))
+	assert.NilError(t, websocket.WriteFrameMasked(buf, clientFrame, makeMaskingKey()))
 
 	// read "server" frame from buffer.
 	serverFrame, err := websocket.ReadFrame(buf, len(clientFrame.Payload))
@@ -44,9 +43,8 @@ func TestMaxFrameSize(t *testing.T) {
 		Fin:     true,
 		Payload: []byte("hello"),
 	}
-	mask := [4]byte{1, 2, 3, 4}
 	buf := &bytes.Buffer{}
-	assert.NilError(t, websocket.WriteFrameMasked(buf, clientFrame, mask))
+	assert.NilError(t, websocket.WriteFrameMasked(buf, clientFrame, makeMaskingKey()))
 
 	// read "server" frame from buffer.
 	serverFrame, err := websocket.ReadFrame(buf, len(clientFrame.Payload)-1)
