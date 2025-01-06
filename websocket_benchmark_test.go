@@ -48,7 +48,7 @@ func BenchmarkReadFrame(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_, _ = src.Seek(0, 0)
-				_, err := websocket.ReadFrame(src)
+				_, err := websocket.ReadFrame(src, size)
 				if err != nil {
 					b.Fatalf("unexpected error: %v", err)
 				}

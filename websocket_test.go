@@ -333,7 +333,7 @@ func TestProtocolBasics(t *testing.T) {
 		}
 		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, makeMaskingKey()))
 		// read server frame
-		serverFrame, err := websocket.ReadFrame(conn)
+		serverFrame, err := websocket.ReadFrame(conn, maxFragmentSize)
 		assert.NilError(t, err)
 		// ensure we get back the same frame
 		assert.Equal(t, serverFrame.Fin, clientFrame.Fin, "expected matching FIN bits")
@@ -412,7 +412,13 @@ func makeMaskingKey() [4]byte {
 func validateCloseFrame(t *testing.T, r io.Reader, wantStatus websocket.StatusCode, wantMsg string) {
 	t.Helper()
 
-	frame, err := websocket.ReadFrame(r)
+	// All control frames MUST have a payload length of 125 bytes or less
+	// and MUST NOT be fragmented.
+	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.5
+	//
+	// This is already enforced in validateFrame, called by ReadFrame, but we
+	// must pass in a max payload size here.
+	frame, err := websocket.ReadFrame(r, 125)
 	assert.NilError(t, err)
 	assert.Equal(t, frame.Opcode, websocket.OpcodeClose, "expected close frame")
 
