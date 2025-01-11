@@ -1,6 +1,7 @@
 package websocket_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -103,7 +104,7 @@ func BenchmarkReadMessage(b *testing.B) {
 			in:  reader,
 			out: io.Discard,
 		}
-		ws := websocket.New(conn, websocket.ClientKey(makeClientKey()), websocket.Options{
+		ws := websocket.New(conn, conn.buf(), websocket.ClientKey(makeClientKey()), websocket.Options{
 			MaxFrameSize:   frameSize,
 			MaxMessageSize: msgSize,
 			// Hooks:           newTestHooks(b),
@@ -125,6 +126,10 @@ type dummyConn struct {
 	in     io.Reader
 	out    io.Writer
 	closed atomic.Bool
+}
+
+func (c *dummyConn) buf() *bufio.ReadWriter {
+	return bufio.NewReadWriter(bufio.NewReader(c.in), bufio.NewWriter(c.out))
 }
 
 func (c *dummyConn) Read(p []byte) (int, error) {
