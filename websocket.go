@@ -150,6 +150,7 @@ func handshake(w http.ResponseWriter, r *http.Request) (ClientKey, error) {
 // automatically. The connection will be closed on any error.
 func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 	var msg *Message
+	frameBuf := make([]byte, ws.maxFrameSize+frameMaskingKeySize)
 	for {
 		select {
 		case <-ws.closedCh:
@@ -161,7 +162,6 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			ws.resetReadDeadline()
 		}
 
-		frameBuf := make([]byte, ws.maxFrameSize+frameMaskingKeySize)
 		frame, err := ReadFrame(ws.connBuf, frameBuf, ws.maxFrameSize)
 		if err != nil {
 			code := StatusServerError
@@ -182,7 +182,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 			msg = &Message{
 				Binary:  frame.Opcode == OpcodeBinary,
-				Payload: frame.Payload,
+				Payload: frame.Payload[:],
 			}
 		case OpcodeContinuation:
 			if msg == nil {
