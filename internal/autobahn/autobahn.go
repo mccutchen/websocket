@@ -3,8 +3,6 @@ package autobahn
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -15,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mccutchen/websocket"
 	"github.com/mccutchen/websocket/internal/testing/assert"
 )
 
@@ -45,53 +42,23 @@ var allowNonStrict = map[string]bool{
 	"6.4.4": true,
 }
 
-func Run(targetURL string) (Results, error) {
-	return Results{}, nil
-}
+type Results struct{}
 
-func TestWebSocketServer(t *testing.T) {
-	t.Parallel()
-
-	if os.Getenv("AUTOBAHN_TESTS") == "" {
-		t.Skipf("set AUTOBAHN_TESTS=1 to run autobahn integration tests")
-	}
+// Run runs the autobahn fuzzing client test suite against the given target
+// URL, optionally limiting to only the specified cases. Autobahn's test
+// results will be written to outDir.
+func Run(targetURL string, cases []string, outDir string) (Results, error) {
 
 	includedTestCases := defaultIncludedTestCases
 	excludedTestCases := defaultExcludedTestCases
-	var hooks websocket.Hooks
-	if userTestCases := os.Getenv("AUTOBAHN_CASES"); userTestCases != "" {
-		t.Logf("using AUTOBAHN_CASES=%q", userTestCases)
-		includedTestCases = strings.Split(userTestCases, ",")
+	// var hooks websocket.Hooks
+	if len(cases) > 0 {
+		includedTestCases = cases
 		excludedTestCases = []string{}
-		hooks = newTestHooks(t)
+		// hooks = newTestHooks(t)
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ws, err := websocket.Accept(w, r, websocket.Options{
-			Hooks: hooks,
-			// long ReadTimeout because some autobahn test cases (e.g. 5.19)
-			// sleep up to 1 second between frames
-			ReadTimeout:  5000 * time.Millisecond,
-			WriteTimeout: 500 * time.Millisecond,
-			// some autobahn test cases send large frames, so we need to
-			// support large fragments and messages
-			MaxFragmentSize: 1024 * 1024 * 16,
-			MaxMessageSize:  1024 * 1024 * 16,
-		})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		ws.Serve(r.Context(), websocket.EchoHandler)
-	}))
-	defer srv.Close()
-
-	testDir := newTestDir(t)
-	t.Logf("test dir: %s", testDir)
-
-	targetURL := newAutobahnTargetURL(t, srv)
-	t.Logf("target url: %s", targetURL)
-
+	targetURL = newAutobahnTargetURL(targetURL)
 	autobahnCfg := map[string]any{
 		"servers": []map[string]string{
 			{
@@ -104,14 +71,17 @@ func TestWebSocketServer(t *testing.T) {
 		"exclude-cases": excludedTestCases,
 	}
 
-	autobahnCfgFile, err := os.Create(path.Join(testDir, "autobahn.json"))
-	assert.NilError(t, err)
-	assert.NilError(t, json.NewEncoder(autobahnCfgFile).Encode(autobahnCfg))
+	autobahnCfgFile, err := os.Create(path.Join(outDir, "autobahn.json"))
+	if err != nil {
+		return Results{}, fmt.Errorf("failed to open autobahn config: %w", err)
+	}
+	if err := json.NewEncoder(autobahnCfgFile).Encode(autobahnCfg); err != nil {
+		return Results{}, fmt.Errorf("failed to write autobahn config: %w", err)
+	}
 	autobahnCfgFile.Close()
 
 	pullCmd := exec.Command("docker", "pull", autobahnImage)
-	runCmd(t, pullCmd)
-
+	runCmd(pullCmd)
 	testCmd := exec.Command(
 		"docker",
 		"run",
@@ -176,12 +146,10 @@ func newAutobahnTargetURL(srvURL string) string {
 	return fmt.Sprintf("ws://%s:%s%s", host, u.Port(), u.Path)
 }
 
-func runCmd(t *testing.T, cmd *exec.Cmd) {
-	t.Helper()
-	t.Logf("running command: %s", cmd.String())
+func runCmd(cmd *exec.Cmd) error {
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
-	assert.NilError(t, cmd.Run())
+	return cmd.Run()
 }
 
 func newTestDir(t *testing.T) string {
