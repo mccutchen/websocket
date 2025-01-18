@@ -81,19 +81,24 @@ func Run(targetURL string, cases []string, outDir string) (Results, error) {
 	autobahnCfgFile.Close()
 
 	pullCmd := exec.Command("docker", "pull", autobahnImage)
-	runCmd(pullCmd)
+	if err := runCmd(pullCmd); err != nil {
+		return Results{}, fmt.Errorf("failed to pull docker image: %w", err)
+	}
+
 	testCmd := exec.Command(
 		"docker",
 		"run",
 		"--net=host",
 		"--rm",
-		"-v", testDir+":/testdir:rw",
+		"-v", outDir+":/testdir:rw",
 		autobahnImage,
 		"wstest", "-m", "fuzzingclient", "--spec", "/testdir/autobahn.json",
 	)
-	runCmd(t, testCmd)
+	if err := runCmd(testCmd); err != nil {
+		return Results{}, fmt.Errorf("error running autobahn container: %w", err)
+	}
 
-	summary := loadSummary(t, testDir)
+	summary := loadSummary(outDir)
 	if len(summary) == 0 {
 		t.Fatalf("empty autobahn test summary; check autobahn logs for problems connecting to test server at %q", targetURL)
 	}
