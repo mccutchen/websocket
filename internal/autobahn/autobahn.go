@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"runtime"
 )
 
@@ -125,46 +126,25 @@ func runCmd(cmd *exec.Cmd) error {
 	return cmd.Run()
 }
 
-func loadRunSummary(outDir string) (runSummary, error) {
-	f, err := os.Open(path.Join(outDir, "report", "index.json"))
-	if err != nil {
-		return nil, fmt.Errorf("error opening report summary: %w", err)
-	}
-	defer f.Close()
-	var summary runSummary
-	if err := json.NewDecoder(f).Decode(&summary); err != nil {
-		return nil, fmt.Errorf("error decoding report summary: %w", err)
-	}
-	return summary, nil
-}
-
 func loadReport(outDir string) (Report, error) {
-	summary, err := loadRunSummary(outDir)
-	if err != nil {
-		return Report{}, fmt.Errorf("error loading summary: %w", err)
-	}
-	if len(summary) > 1 {
-		return Report{}, fmt.Errorf("found too many servers in summary")
-	}
-
 	report := Report{
-		Dir: outDir,
+		Path: path.Join(outDir, "report", "index.html"),
 	}
-	for _, testCases := range summary {
-		for _, testSummary := range testCases {
-			result, err := loadTestResult(outDir, testSummary.ReportFile)
-			if err != nil {
-				return Report{}, fmt.Errorf("failed to load test result: %w", err)
-			}
-			report.Results = append(report.Results, result)
+	// skip parsing index.json by just loading each test report file we find
+	// in the test directory, each named like {name}_case_{n}_{n}_{n}.json
+	testResultPaths, _ := filepath.Glob(path.Join(outDir, "report", "*[0-9].json"))
+	for _, resultPath := range testResultPaths {
+		result, err := loadTestResult(resultPath)
+		if err != nil {
+			return Report{}, fmt.Errorf("failed to load test result: %w", err)
 		}
-
+		report.Results = append(report.Results, result)
 	}
+
 	return report, nil
 }
 
-func loadTestResult(outDir, fileName string) (TestResult, error) {
-	resultPath := path.Join(outDir, "report", fileName)
+func loadTestResult(resultPath string) (TestResult, error) {
 	f, err := os.Open(resultPath)
 	if err != nil {
 		return TestResult{}, fmt.Errorf("failed to open result file: %w", err)
@@ -179,7 +159,7 @@ func loadTestResult(outDir, fileName string) (TestResult, error) {
 }
 
 type Report struct {
-	Dir     string
+	Path    string
 	Results []TestResult
 }
 
@@ -190,17 +170,6 @@ func (r Report) Failed() bool {
 		}
 	}
 	return false
-}
-
-type runSummary map[string]map[string]TestSummary // server name -> test case -> result
-
-type TestSummary struct {
-	ID              string `json:"id"`
-	Behavior        string `json:"behavior"`
-	BehaviorClose   string `json:"behaviorClose"`
-	Duration        int64  `json:"duration"`
-	RemoteCloseCode int64  `json:"remoteCloseCode"`
-	ReportFile      string `json:"reportfile"`
 }
 
 type TestResult struct {
