@@ -7,13 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
-	"path/filepath"
 	"runtime"
-	"strings"
-	"testing"
-	"time"
-
-	"github.com/mccutchen/websocket/internal/testing/assert"
 )
 
 const autobahnImage = "crossbario/autobahn-testsuite:0.8.2"
@@ -42,13 +36,10 @@ var allowNonStrict = map[string]bool{
 	"6.4.4": true,
 }
 
-type Results struct{}
-
 // Run runs the autobahn fuzzing client test suite against the given target
 // URL, optionally limiting to only the specified cases. Autobahn's test
 // results will be written to outDir.
-func Run(targetURL string, cases []string, outDir string) (Results, error) {
-
+func Run(targetURL string, cases []string, outDir string) (Report, error) {
 	includedTestCases := defaultIncludedTestCases
 	excludedTestCases := defaultExcludedTestCases
 	// var hooks websocket.Hooks
@@ -73,16 +64,16 @@ func Run(targetURL string, cases []string, outDir string) (Results, error) {
 
 	autobahnCfgFile, err := os.Create(path.Join(outDir, "autobahn.json"))
 	if err != nil {
-		return Results{}, fmt.Errorf("failed to open autobahn config: %w", err)
+		return Report{}, fmt.Errorf("failed to open autobahn config: %w", err)
 	}
 	if err := json.NewEncoder(autobahnCfgFile).Encode(autobahnCfg); err != nil {
-		return Results{}, fmt.Errorf("failed to write autobahn config: %w", err)
+		return Report{}, fmt.Errorf("failed to write autobahn config: %w", err)
 	}
 	autobahnCfgFile.Close()
 
 	pullCmd := exec.Command("docker", "pull", autobahnImage)
 	if err := runCmd(pullCmd); err != nil {
-		return Results{}, fmt.Errorf("failed to pull docker image: %w", err)
+		return Report{}, fmt.Errorf("failed to pull docker image: %w", err)
 	}
 
 	testCmd := exec.Command(
@@ -95,33 +86,10 @@ func Run(targetURL string, cases []string, outDir string) (Results, error) {
 		"wstest", "-m", "fuzzingclient", "--spec", "/testdir/autobahn.json",
 	)
 	if err := runCmd(testCmd); err != nil {
-		return Results{}, fmt.Errorf("error running autobahn container: %w", err)
+		return Report{}, fmt.Errorf("error running autobahn container: %w", err)
 	}
 
-	summary := loadSummary(outDir)
-	if len(summary) == 0 {
-		t.Fatalf("empty autobahn test summary; check autobahn logs for problems connecting to test server at %q", targetURL)
-	}
-
-	for _, result := range summary {
-		result := result
-		t.Run("autobahn/"+result.ID, func(t *testing.T) {
-			if result.Failed() {
-				report := loadReport(t, testDir, result.ReportFile)
-				t.Errorf("description: %s", report.Description)
-				t.Errorf("expectation: %s", report.Expectation)
-				t.Errorf("want result: %s", report.Result)
-				t.Errorf("got result:  %s", report.Behavior)
-				t.Errorf("want close:  %s", report.ResultClose)
-				t.Errorf("got close:   %s", report.BehaviorClose)
-			}
-		})
-	}
-
-	t.Logf("autobahn test report: file://%s", path.Join(testDir, "report/index.html"))
-	if os.Getenv("AUTOBAHN_OPEN_REPORT") != "" {
-		runCmd(t, exec.Command("open", path.Join(testDir, "report/index.html")))
-	}
+	return loadReport(outDir)
 }
 
 // newAutobahnTargetURL returns the URL that the autobahn test suite should use
@@ -157,52 +125,85 @@ func runCmd(cmd *exec.Cmd) error {
 	return cmd.Run()
 }
 
-func newTestDir(t *testing.T) string {
-	t.Helper()
-
-	// package tests are run with the package as the working directory, but we
-	// want to store our integration test output in the repo root
-	testDir, err := filepath.Abs(path.Join(
-		"..", "..", ".integrationtests", fmt.Sprintf("autobahn-test-%d", time.Now().Unix()),
-	))
-
-	assert.NilError(t, err)
-	assert.NilError(t, os.MkdirAll(testDir, 0o755))
-	return testDir
+func loadRunSummary(outDir string) (runSummary, error) {
+	f, err := os.Open(path.Join(outDir, "report", "index.json"))
+	if err != nil {
+		return nil, fmt.Errorf("error opening report summary: %w", err)
+	}
+	defer f.Close()
+	var summary runSummary
+	if err := json.NewDecoder(f).Decode(&summary); err != nil {
+		return nil, fmt.Errorf("error decoding report summary: %w", err)
+	}
+	return summary, nil
 }
 
-func loadSummary(t *testing.T, testDir string) []autobahnReportResult {
-	t.Helper()
-	f, err := os.Open(path.Join(testDir, "report", "index.json"))
-	assert.NilError(t, err)
+func loadReport(outDir string) (Report, error) {
+	summary, err := loadRunSummary(outDir)
+	if err != nil {
+		return Report{}, fmt.Errorf("error loading summary: %w", err)
+	}
+	if len(summary) > 1 {
+		return Report{}, fmt.Errorf("found too many servers in summary")
+	}
+
+	report := Report{
+		Dir: outDir,
+	}
+	for _, testCases := range summary {
+		for _, testSummary := range testCases {
+			result, err := loadTestResult(outDir, testSummary.ReportFile)
+			if err != nil {
+				return Report{}, fmt.Errorf("failed to load test result: %w", err)
+			}
+			report.Results = append(report.Results, result)
+		}
+
+	}
+	return report, nil
+}
+
+func loadTestResult(outDir, fileName string) (TestResult, error) {
+	resultPath := path.Join(outDir, "report", fileName)
+	f, err := os.Open(resultPath)
+	if err != nil {
+		return TestResult{}, fmt.Errorf("failed to open result file: %w", err)
+	}
 	defer f.Close()
-	var summary autobahnReportSummary
-	assert.NilError(t, json.NewDecoder(f).Decode(&summary))
-	var results []autobahnReportResult
-	for _, serverResults := range summary {
-		for id, result := range serverResults {
-			result.ID = id
-			results = append(results, result)
+	var result TestResult
+	if err := json.NewDecoder(f).Decode(&result); err != nil {
+		return TestResult{}, fmt.Errorf("failed to decode test result: %w", err)
+	}
+	result.ReportFile = resultPath
+	return result, err
+}
+
+type Report struct {
+	Dir     string
+	Results []TestResult
+}
+
+func (r Report) Failed() bool {
+	for _, result := range r.Results {
+		if result.Failed() {
+			return true
 		}
 	}
-	return results
+	return false
 }
 
-func loadReport(t *testing.T, testDir string, reportFile string) autobahnReportResult {
-	t.Helper()
-	reportPath := path.Join(testDir, "report", reportFile)
-	t.Logf("report data: %s", reportPath)
-	t.Logf("report html: file://%s", strings.Replace(reportPath, ".json", ".html", 1))
-	f, err := os.Open(reportPath)
-	assert.NilError(t, err)
-	var report autobahnReportResult
-	assert.NilError(t, json.NewDecoder(f).Decode(&report))
-	return report
+type runSummary map[string]map[string]TestSummary // server name -> test case -> result
+
+type TestSummary struct {
+	ID              string `json:"id"`
+	Behavior        string `json:"behavior"`
+	BehaviorClose   string `json:"behaviorClose"`
+	Duration        int64  `json:"duration"`
+	RemoteCloseCode int64  `json:"remoteCloseCode"`
+	ReportFile      string `json:"reportfile"`
 }
 
-type autobahnReportSummary map[string]map[string]autobahnReportResult // server -> case -> result
-
-type autobahnReportResult struct {
+type TestResult struct {
 	ID            string `json:"id"`
 	Behavior      string `json:"behavior"`
 	BehaviorClose string `json:"behaviorClose"`
@@ -213,7 +214,7 @@ type autobahnReportResult struct {
 	ResultClose   string `json:"resultClose"`
 }
 
-func (r autobahnReportResult) Failed() bool {
+func (r TestResult) Failed() bool {
 	okayBehavior := map[string]bool{
 		"OK":            true,
 		"INFORMATIONAL": true,
