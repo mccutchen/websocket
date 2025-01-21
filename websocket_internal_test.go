@@ -11,22 +11,23 @@ func TestDefaults(t *testing.T) {
 	t.Parallel()
 
 	var (
-		wrapedConn net.Conn
-		key        = ClientKey("test-client-key")
-		opts       = Options{}
-		conn       = New(wrapedConn, key, opts)
+		conn net.Conn
+		key  = ClientKey("test-client-key")
+		opts = Options{}
+		ws   = New(conn, key, opts)
 	)
 
-	assert.Equal(t, conn.maxFragmentSize, DefaultMaxFragmentSize, "incorrect max fragment size")
-	assert.Equal(t, conn.maxMessageSize, DefaultMaxMessageSize, "incorrect max message size")
-	assert.Equal(t, conn.readTimeout, 0, "incorrect read timeout")
-	assert.Equal(t, conn.writeTimeout, 0, "incorrect write timeout")
-	assert.Equal(t, conn.server, true, "incorrect server value")
-	assert.Equal(t, conn.hooks.OnClose != nil, true, "OnClose hook is nil")
-	assert.Equal(t, conn.hooks.OnReadError != nil, true, "OnReadError hook is nil")
-	assert.Equal(t, conn.hooks.OnReadFrame != nil, true, "OnReadFrame hook is nil")
-	assert.Equal(t, conn.hooks.OnReadMessage != nil, true, "OnReadMessage hook is nil")
-	assert.Equal(t, conn.hooks.OnWriteError != nil, true, "OnWriteError hook is nil")
-	assert.Equal(t, conn.hooks.OnWriteFrame != nil, true, "OnWriteFrame hook is nil")
-	assert.Equal(t, conn.hooks.OnWriteMessage != nil, true, "OnWriteMessage hook is nil")
+	assert.Equal(t, ws.ClientKey(), key, "incorrect client key")
+	assert.Equal(t, ws.maxFragmentSize, DefaultMaxFragmentSize, "incorrect max fragment size")
+	assert.Equal(t, ws.maxMessageSize, DefaultMaxMessageSize, "incorrect max message size")
+	assert.Equal(t, ws.readTimeout, 0, "incorrect read timeout")
+	assert.Equal(t, ws.writeTimeout, 0, "incorrect write timeout")
+	assert.Equal(t, ws.server, true, "incorrect server value")
+	assert.Equal(t, ws.hooks.OnClose != nil, true, "OnClose hook is nil")
+	assert.Equal(t, ws.hooks.OnReadError != nil, true, "OnReadError hook is nil")
+	assert.Equal(t, ws.hooks.OnReadFrame != nil, true, "OnReadFrame hook is nil")
+	assert.Equal(t, ws.hooks.OnReadMessage != nil, true, "OnReadMessage hook is nil")
+	assert.Equal(t, ws.hooks.OnWriteError != nil, true, "OnWriteError hook is nil")
+	assert.Equal(t, ws.hooks.OnWriteFrame != nil, true, "OnWriteFrame hook is nil")
+	assert.Equal(t, ws.hooks.OnWriteMessage != nil, true, "OnWriteMessage hook is nil")
 }
