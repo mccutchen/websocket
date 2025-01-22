@@ -1,0 +1,40 @@
+name: pr
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  bench-instructions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compose benchmark instructions
+        run: |
+          set -euo pipefail
+
+          # Create a URL-encoded dispatch URL that will pre-fill the parameters
+          REPO="${{ github.repository }}"
+          WORKFLOW_ID="bench"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          # Create the workflow dispatch URL
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+
+          # Create the full comment
+          cat <<EOF > pr_comment
+          🔥 Run benchmarks comparing $HEAD_SHA against \`main\`:
+          \`\`\`bash
+          gh workflow run $WORKFLOW_ID.yaml -f comparison_sha=${HEAD_SHA::7} -f pr_number=${PR_NUMBER}
+          \`\`\`
+
+          _Note: this comment will update with each new commit._
+
+          EOF
+
+      - name: post benchmark instructions
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: pr_comment

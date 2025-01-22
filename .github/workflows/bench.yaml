@@ -1,158 +1,147 @@
-# Adapted from:
-# https://github.com/swaggest/rest/blob/b19db8242abe420b23ea8ece43dd2fb79056a943/.github/workflows/bench.yml
 name: bench
 
 on:
   workflow_dispatch:
     inputs:
+      pr_number:
+        description: 'pull request number to benchmark'
+        required: true
+        type: number
       baseline_sha:
-        description: 'Baseline commit (defaults to latest main)'
+        description: 'baseline commit (defaults to latest main)'
         required: false
         type: string
         default: ''
-      comparison_commit:
-        description: 'Commit to compare against baseline'
-        required: true
-        type: string
-      pr_number:
-        description: 'Pull request on which to post benchmark results (optional)'
-        required: false
-        type: number
 
-# cancel CI runs when a new commit is pushed to any branch except main
+# cancel when a new worfkflow is dispatched
 concurrency:
-  group: "${{ github.workflow }}-${{ github.ref }}"
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-
-env:
-  BASELINE_RESULTS_FILE: bench-results-main.txt
-  BASELINE_COMMIT_FILE: bench-commit-main.txt
+  group: "${{ github.workflow }}-${{ inputs.pr_number }}"
+  cancel-in-progress: true
 
 jobs:
   baseline:
     runs-on: ubuntu-latest
-    if: ${{ github.ref == 'refs/heads/main' }}
+    outputs:
+      baseline_sha: ${{ steps.get-baseline.outputs.baseline }}
     steps:
       - uses: actions/setup-go@v5
         with:
           go-version: "stable"
 
       - uses: actions/checkout@v4
-
-      - name: cache previous baseline results
-        uses: actions/cache@v4
         with:
-          path: |
-            bench-*.txt
-          key: ${{ runner.os }}-bench-results-${{ hashFiles('websocket_benchmark_test.go') }}
-          restore-keys: |
-            ${{ runner.os }}-bench-results-
+          fetch-depth: 0
 
-      - name: run benchmarks
+      - name: determine baseline commit
+        id: get-baseline
         run: |
-          set -euo pipefail
+          if [ -z "${{ inputs.baseline_sha }}" ]; then
+            git fetch origin main
+            BASELINE=$(git rev-parse origin/main)
+          else
+            BASELINE="${{ inputs.baseline_sha }}"
+          fi
+          echo "baseline=${BASELINE::7}" >> $GITHUB_OUTPUT
 
-          COMMIT="${GITHUB_SHA::7}"
-          COMMIT_URL="https://github.com/mccutchen/websocket/commit/$COMMIT"
-          COMMIT_LINK="[$COMMIT]($COMMIT_URL)"
+      - name: run baseline benchmarks
+        run: |
+          git checkout ${{ steps.get-baseline.outputs.baseline }}
+          make bench | tee bench-results.txt $GITHUB_STEP_SUMMARY
 
-          echo -n "$COMMIT" > $BASELINE_COMMIT_FILE
-          make bench | tee $BASELINE_RESULTS_FILE
+      - name: upload baseline results
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-results
+          path: bench-results.txt
+          retention-days: 1
 
-          cat <<EOF >>$GITHUB_STEP_SUMMARY
-          ### benchmark results @ $COMMIT_LINK
-          \`\`\`
-          $(cat $BASELINE_RESULTS_FILE)
-          \`\`\`
-          EOF
-
-  pr:
+  head:
     runs-on: ubuntu-latest
-    if: ${{ github.ref != 'refs/heads/main' }}
+    outputs:
+      head_sha: ${{ steps.get-head.outputs.head }}
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
 
-    # allow commenting on PR:
-    # https://github.com/marocchino/sticky-pull-request-comment/blob/main/README.md#error-resource-not-accessible-by-integration
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: get pr head commit
+        id: get-head
+        run: |
+          # Use GitHub API to get PR details
+          PR_DATA=$(curl -s -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ inputs.pr_number }}")
+
+          HEAD_SHA=$(echo "$PR_DATA" | jq -r .head.sha)
+          if [ "$HEAD_SHA" = "null" ]; then
+            echo "Failed to get PR head commit"
+            exit 1
+          fi
+          echo "head=${HEAD_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: run head benchmarks
+        run: |
+          git checkout ${{ steps.get-head.outputs.head }}
+          make bench | tee bench-results.txt $GITHUB_STEP_SUMMARY
+
+      - name: upload head results
+        uses: actions/upload-artifact@v4
+        with:
+          name: head-results
+          path: bench-results.txt
+          retention-days: 1
+
+  analysis:
+    needs: [baseline, head]
+    runs-on: ubuntu-latest
     permissions:
       pull-requests: write
 
     steps:
-      - uses: actions/setup-go@v5
+      - name: download baseline results
+        uses: actions/download-artifact@v4
+        with:
+          name: baseline-results
+          path: ./baseline
+
+      - name: download head results
+        uses: actions/download-artifact@v4
+        with:
+          name: head-results
+          path: ./head
+
+      - name: install go
+        uses: actions/setup-go@v5
         with:
           go-version: "stable"
 
-      - uses: actions/checkout@v4
-        with:
-          # need to fetch all history to check out arbitrary commits for
-          # baseline benchmarks (if neceesssary)
-          fetch-depth: 0
-
-      - name: restore previous baseline results
-        id: baseline-restore
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            bench-*.txt
-          key: ${{ runner.os }}-bench-results-${{ hashFiles('websocket_benchmark_test.go') }}
-          restore-keys: |
-            ${{ runner.os }}-bench-results-
-
-      - name: benchmark current commit
-        run: |
-          set -euo pipefail
-
-          COMMIT="${{ github.event.pull_request.head.sha }}"
-          COMMIT="${COMMIT::7}"
-          COMMIT_URL="https://github.com/mccutchen/websocket/commit/$COMMIT"
-          COMMIT_LINK="[$COMMIT]($COMMIT_URL)"
-
-          make bench | tee bench-commit-$COMMIT.txt
-
-          cat <<EOF >>$GITHUB_STEP_SUMMARY
-          ### benchmark results @ $COMMIT_LINK
-          \`\`\`
-          $(cat bench-commit-$COMMIT.txt)
-          \`\`\`
-          EOF
-
-      - name: benchmark prev commit if necessary
-        if: ${{ steps.baseline-restore.outputs.cache-hit == '' }}
-        run: |
-          set -euo pipefail
-
-          BASE_SHA=${{ github.event.pull_request.base.sha }}
-          BASE_SHA="${BASE_SHA::7}"
-          echo $BASE_SHA > $BASELINE_COMMIT_FILE
-
-          git fetch origin main $BASE_SHA
-          git reset --hard $BASE_SHA
-          make bench | tee $BASELINE_RESULTS_FILE
-          git reset --hard $GITHUB_SHA
-
-      # TODO: cache benchstat binary
       - name: compare results with benchstat
         run: |
           set -euo pipefail
 
-          COMMIT="${{ github.event.pull_request.head.sha }}"
-          COMMIT="${COMMIT::7}"
-          PREV_COMMIT="$(cat $BASELINE_COMMIT_FILE 2>/dev/null)"
-          COMPARE_URL="https://github.com/mccutchen/websocket/compare/$PREV_COMMIT...$COMMIT"
-          COMPARE_LINK="[$PREV_COMMIT...$COMMIT]($COMPARE_URL)"
+          BASELINE="${{ needs.baseline.outputs.baseline_sha }}"
+          HEAD="${{ needs.head.outputs.head_sha }}"
+          COMPARE_URL="https://github.com/${{ github.repository }}/compare/$BASELINE...$HEAD"
+          COMPARE_LINK="[$BASELINE...$HEAD]($COMPARE_URL)"
           SUMMARY_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-          go run golang.org/x/perf/cmd/benchstat@latest $BASELINE_RESULTS_FILE bench-commit-$COMMIT.txt | tee -a bench-stats.txt
-
-          cat <<EOF >pr_comment
+          cat <<EOF > pr_comment
           ### benchstats: $COMPARE_LINK
 
-          View full benchmark output for $COMMIT on the [workflow summary]($SUMMARY_URL).
+          View full benchmark output on the [workflow summary]($SUMMARY_URL).
 
           \`\`\`
-          $(cat bench-stats.txt)
+          $(go run golang.org/x/perf/cmd/benchstat@latest ./baseline/bench-results.txt ./head/bench-results.txt)
           \`\`\`
           EOF
+
+          cat pr_comment >> $GITHUB_STEP_SUMMARY
 
       - name: post benchmark results
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           path: pr_comment
+          number: ${{ inputs.pr_number }}
