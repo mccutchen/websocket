@@ -259,9 +259,8 @@ func WriteFrameMasked(dst io.Writer, frame *Frame, mask [4]byte) error {
 	return nil
 }
 
-// writeCloseFrame writes a close frame to the wire, with an optional error
-// message.
-func writeCloseFrame(dst io.Writer, code StatusCode, err error) error {
+// CloseFrame creates a close frame with an optional error message.
+func CloseFrame(code StatusCode, err error) *Frame {
 	var payload []byte
 	if code > 0 {
 		var errMsg []byte
@@ -272,11 +271,11 @@ func writeCloseFrame(dst io.Writer, code StatusCode, err error) error {
 		payload = binary.BigEndian.AppendUint16(payload, uint16(code))
 		payload = append(payload, errMsg...)
 	}
-	return WriteFrame(dst, &Frame{
+	return &Frame{
 		Fin:     true,
 		Opcode:  OpcodeClose,
 		Payload: payload,
-	})
+	}
 }
 
 // messageFrames splits a message into N frames with payloads of at most
