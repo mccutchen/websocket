@@ -3,10 +3,21 @@
 name: bench
 
 on:
-  push:
-    branches: [main] # on pushes TO main
-  pull_request:
-    branches: [main] # on pull requests AGAINST main
+  workflow_dispatch:
+    inputs:
+      baseline_sha:
+        description: 'Baseline commit (defaults to latest main)'
+        required: false
+        type: string
+        default: ''
+      comparison_commit:
+        description: 'Commit to compare against baseline'
+        required: true
+        type: string
+      pr_number:
+        description: 'Pull request on which to post benchmark results (optional)'
+        required: false
+        type: number
 
 # cancel CI runs when a new commit is pushed to any branch except main
 concurrency:
