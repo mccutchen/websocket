@@ -8,7 +8,7 @@ on:
         required: false
         type: string
         default: ''
-      comparison_commit:
+      comparison_sha:
         description: 'Commit to compare against baseline'
         required: true
         type: string
@@ -67,7 +67,7 @@ jobs:
 
       - name: run comparison benchmarks
         run: |
-          git checkout ${{ inputs.comparison_commit }}
+          git checkout ${{ inputs.comparison_sha }}
           make bench | tee bench-results.txt $GITHUB_STEP_SUMMARY
 
       - name: upload comparison results
@@ -105,7 +105,7 @@ jobs:
           set -euo pipefail
 
           BASELINE_SHA="${{ needs.baseline.outputs.baseline_sha }}"
-          COMPARISON_SHA="${{ inputs.comparison_commit }}"
+          COMPARISON_SHA="${{ inputs.comparison_sha }}"
           COMPARISON_SHA="${COMPARISON_SHA::7}"
           COMPARISON_URL="https://github.com/${{ github.repository }}/compare/$BASELINE...$COMPARISON"
           COMPARISON_LINK="[$BASELINE...$COMPARISON]($COMPARISON_URL)"

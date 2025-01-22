@@ -29,13 +29,13 @@ jobs:
 
           Run benchmarks comparing $HEAD_SHA from this PR against \`main\`:
           \`\`\`bash
-          gh workflow run $WORKFLOW_ID.yaml -f comparison_commit=${HEAD_SHA::7} -f pr_number=${PR_NUMBER}
+          gh workflow run $WORKFLOW_ID.yaml -f comparison_sha=${HEAD_SHA::7} -f pr_number=${PR_NUMBER}
           \`\`\`
 
           <details>
           <summary>You can also compare against a specific baseline commit:</summary>
           \`\`\`bash
-          gh workflow run $WORKFLOW_ID.yaml -f comparison_commit=${HEAD_SHA::7} -f pr_number=${PR_NUMBER} -f baseline_commit=BASELINE_SHA
+          gh workflow run $WORKFLOW_ID.yaml -f comparison_sha=${HEAD_SHA::7} -f pr_number=${PR_NUMBER} -f baseline_sha=BASELINE_SHA
           \`\`\`
           </details>
           EOF
