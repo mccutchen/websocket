@@ -46,7 +46,13 @@ jobs:
       - name: run baseline benchmarks
         run: |
           git checkout ${{ steps.get-baseline.outputs.baseline }}
-          make bench | tee bench-results.txt $GITHUB_STEP_SUMMARY
+          make bench | tee bench-results.txt
+          cat <<EOF >> $GITHUB_STEP_SUMMARY
+          ### baseline benchmarks (${{ steps.get-baseline.outputs.baseline }})
+          \`\`\`
+          $(cat bench-results.txt)
+          \`\`\`
+          EOF
 
       - name: upload baseline results
         uses: actions/upload-artifact@v4
@@ -85,7 +91,13 @@ jobs:
       - name: run head benchmarks
         run: |
           git checkout ${{ steps.get-head.outputs.head }}
-          make bench | tee bench-results.txt $GITHUB_STEP_SUMMARY
+          make bench | tee bench-results.txt
+          cat <<EOF >> $GITHUB_STEP_SUMMARY
+          ### HEAD benchmarks (${{ steps.get-head.outputs.head }})
+          \`\`\`
+          $(cat bench-results.txt)
+          \`\`\`
+          EOF
 
       - name: upload head results
         uses: actions/upload-artifact@v4
