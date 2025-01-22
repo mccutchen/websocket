@@ -25,21 +25,13 @@ jobs:
 
           # Create the full comment
           cat <<EOF > pr_comment
-          ### 🏃 Run Benchmarks
-
-          Run benchmarks comparing $HEAD_SHA from this PR against \`main\`:
+          🔥 Run benchmarks comparing $HEAD_SHA against \`main\`:
           \`\`\`bash
           gh workflow run $WORKFLOW_ID.yaml -f comparison_sha=${HEAD_SHA::7} -f pr_number=${PR_NUMBER}
           \`\`\`
 
-          <details>
-          <summary>You can also compare against a specific baseline commit:</summary>
+          _Note: this comment will update with each new commit._
 
-          \`\`\`bash
-          gh workflow run $WORKFLOW_ID.yaml -f comparison_sha=${HEAD_SHA::7} -f pr_number=${PR_NUMBER} -f baseline_sha=BASELINE_SHA
-          \`\`\`
-
-          </details>
           EOF
 
       - name: post benchmark instructions
