@@ -1,0 +1,51 @@
+name: pr
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  bench-instructions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compose benchmark instructions
+        run: |
+          set -euo pipefail
+
+          # Create a URL-encoded dispatch URL that will pre-fill the parameters
+          REPO="${{ github.repository }}"
+          WORKFLOW_ID="bench"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          # Create the workflow dispatch URL
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          DISPATCH_URL="https://github.com/${REPO}/actions/workflows/${WORKFLOW_ID}/dispatch"
+
+          # Create markdown for the manual trigger button with PR number included
+          BUTTON="[![Run Benchmarks](https://img.shields.io/badge/Run-Benchmarks-blue)](${DISPATCH_URL}?user=${USER}&ref=main&inputs=%7B%22compare_commit%22%3A%22${HEAD_SHA}%22%2C%22pr_number%22%3A%22${PR_NUMBER}%22%7D)"
+
+          # Create the full comment
+          cat <<EOF > pr_comment
+          ### 🏃 Run Benchmarks
+
+          Click here to run benchmarks comparing this PR against main:
+          ${BUTTON}
+
+          Or run manually with:
+          \`\`\`bash
+          gh workflow run $WORKFLOW_ID.yaml -f compare_commit=${HEAD_SHA::7} -f pr_number=${PR_NUMBER}
+          \`\`\`
+
+          You can also compare against a specific baseline commit:
+          \`\`\`bash
+          gh workflow run $WORKFLOW_ID.yaml -f compare_commit=${HEAD_SHA::7} -f pr_number=${PR_NUMBER} -f baseline_commit=<commit-sha>
+          \`\`\`
+          EOF
+
+      - name: post benchmark instructions
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: pr_comment
