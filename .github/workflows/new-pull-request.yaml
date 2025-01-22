@@ -27,7 +27,7 @@ jobs:
           cat <<EOF > pr_comment
           🔥 Run benchmarks comparing $HEAD_SHA against \`main\`:
           \`\`\`bash
-          gh workflow run $WORKFLOW_ID.yaml -f comparison_sha=${HEAD_SHA::7} -f pr_number=${PR_NUMBER}
+          gh workflow run $WORKFLOW_ID.yaml -f pr_number=${PR_NUMBER}
           \`\`\`
 
           _Note: this comment will update with each new commit._
@@ -37,4 +37,5 @@ jobs:
       - name: post benchmark instructions
         uses: marocchino/sticky-pull-request-comment@v2
         with:
+          header: instructions
           path: pr_comment
