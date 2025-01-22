@@ -70,6 +70,10 @@ jobs:
           go-version: "stable"
 
       - uses: actions/checkout@v4
+        with:
+          # need to fetch all history to check out arbitrary commits for
+          # baseline benchmarks (if neceesssary)
+          fetch-depth: 0
 
       - name: restore previous baseline results
         id: baseline-restore
