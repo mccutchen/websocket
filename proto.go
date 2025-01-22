@@ -109,11 +109,12 @@ func (m Message) String() string {
 }
 
 func truncatedPayload(p []byte, limit int) string {
-	if len(p) < limit {
-		return string(p)
-	}
-	suffix := fmt.Sprintf(" ... [%d bytes truncated]", len(p)-limit)
-	return string(p[:limit]) + suffix
+	return fmt.Sprintf("[%d bytes]", len(p))
+	// if len(p) < limit {
+	// 	return string(p)
+	// }
+	// suffix := fmt.Sprintf(" ... [%d bytes truncated]", len(p)-limit)
+	// return string(p[:limit]) + suffix
 }
 
 const (
