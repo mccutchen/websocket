@@ -143,5 +143,6 @@ jobs:
       - name: post benchmark results
         uses: marocchino/sticky-pull-request-comment@v2
         with:
+          header: results
           path: pr_comment
           number: ${{ inputs.pr_number }}
