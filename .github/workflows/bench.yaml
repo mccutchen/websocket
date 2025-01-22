@@ -3,25 +3,21 @@ name: bench
 on:
   workflow_dispatch:
     inputs:
+      pr_number:
+        description: 'pull request number to benchmark'
+        required: true
+        type: number
       baseline_sha:
-        description: 'Baseline commit (defaults to latest main)'
+        description: 'baseline commit (defaults to latest main)'
         required: false
         type: string
         default: ''
-      comparison_sha:
-        description: 'Commit to compare against baseline'
-        required: true
-        type: string
-      pr_number:
-        description: 'Pull request on which to post benchmark results (optional)'
-        required: false
-        type: number
 
 jobs:
   baseline:
     runs-on: ubuntu-latest
     outputs:
-      baseline_sha: ${{ steps.get-baseline.outputs.baseline_sha }}
+      baseline_sha: ${{ steps.get-baseline.outputs.baseline }}
     steps:
       - uses: actions/setup-go@v5
         with:
@@ -40,11 +36,11 @@ jobs:
           else
             BASELINE="${{ inputs.baseline_sha }}"
           fi
-          echo "baseline_sha=${BASELINE::7}" >> $GITHUB_OUTPUT
+          echo "baseline=${BASELINE::7}" >> $GITHUB_OUTPUT
 
       - name: run baseline benchmarks
         run: |
-          git checkout ${{ steps.get-baseline.outputs.baseline_sha }}
+          git checkout ${{ steps.get-baseline.outputs.baseline }}
           make bench | tee bench-results.txt $GITHUB_STEP_SUMMARY
 
       - name: upload baseline results
@@ -54,8 +50,10 @@ jobs:
           path: bench-results.txt
           retention-days: 1
 
-  comparison:
+  head:
     runs-on: ubuntu-latest
+    outputs:
+      head_sha: ${{ steps.get-head.outputs.head }}
     steps:
       - uses: actions/setup-go@v5
         with:
@@ -65,20 +63,34 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: run comparison benchmarks
+      - name: get pr head commit
+        id: get-head
         run: |
-          git checkout ${{ inputs.comparison_sha }}
+          # Use GitHub API to get PR details
+          PR_DATA=$(curl -s -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ inputs.pr_number }}")
+
+          HEAD_SHA=$(echo "$PR_DATA" | jq -r .head.sha)
+          if [ "$HEAD_SHA" = "null" ]; then
+            echo "Failed to get PR head commit"
+            exit 1
+          fi
+          echo "head=${HEAD_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: run head benchmarks
+        run: |
+          git checkout ${{ steps.get-head.outputs.head }}
           make bench | tee bench-results.txt $GITHUB_STEP_SUMMARY
 
-      - name: upload comparison results
+      - name: upload head results
         uses: actions/upload-artifact@v4
         with:
-          name: comparison-results
+          name: head-results
           path: bench-results.txt
           retention-days: 1
 
   analysis:
-    needs: [baseline, comparison]
+    needs: [baseline, head]
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -90,45 +102,41 @@ jobs:
           name: baseline-results
           path: ./baseline
 
-      - name: download comparison results
+      - name: download head results
         uses: actions/download-artifact@v4
         with:
-          name: comparison-results
-          path: ./comparison
+          name: head-results
+          path: ./head
 
-      - uses: actions/setup-go@v5
+      - name: install go
+        uses: actions/setup-go@v5
         with:
           go-version: "stable"
 
-      - name: analyze results
+      - name: compare results with benchstat
         run: |
           set -euo pipefail
 
-          BASELINE_SHA="${{ needs.baseline.outputs.baseline_sha }}"
-          COMPARISON_SHA="${{ inputs.comparison_sha }}"
-          COMPARISON_SHA="${COMPARISON_SHA::7}"
-          COMPARISON_URL="https://github.com/${{ github.repository }}/compare/$BASELINE...$COMPARISON"
-          COMPARISON_LINK="[$BASELINE...$COMPARISON]($COMPARISON_URL)"
+          BASELINE="${{ needs.baseline.outputs.baseline_sha }}"
+          HEAD="${{ needs.head.outputs.head_sha }}"
+          COMPARE_URL="https://github.com/${{ github.repository }}/compare/$BASELINE...$HEAD"
+          COMPARE_LINK="[$BASELINE...$HEAD]($COMPARE_URL)"
           SUMMARY_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-          go run golang.org/x/perf/cmd/benchstat@latest ./baseline/bench-results.txt ./comparison/bench-results.txt | tee bench-stats.txt
-
-          # Create both GitHub step summary and PR comment content
-          cat <<EOF >pr_comment
-          ### benchstats: $COMPARISON_LINK
+          cat <<EOF > pr_comment
+          ### benchstats: $COMPARE_LINK
 
           View full benchmark output on the [workflow summary]($SUMMARY_URL).
 
           \`\`\`
-          $(cat bench-stats.txt)
+          $(go run golang.org/x/perf/cmd/benchstat@latest ./baseline/bench-results.txt ./head/bench-results.txt)
           \`\`\`
           EOF
 
           cat pr_comment >> $GITHUB_STEP_SUMMARY
 
-      - name: post benchmark summary
+      - name: post benchmark results
         uses: marocchino/sticky-pull-request-comment@v2
-        if: inputs.pr_number
         with:
           path: pr_comment
           number: ${{ inputs.pr_number }}
