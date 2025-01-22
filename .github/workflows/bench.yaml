@@ -13,6 +13,11 @@ on:
         type: string
         default: ''
 
+# cancel when a new worfkflow is dispatched
+concurrency:
+  group: "${{ github.workflow }}-${{ inputs.pr_number }}"
+  cancel-in-progress: true
+
 jobs:
   baseline:
     runs-on: ubuntu-latest
