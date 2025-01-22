@@ -3,6 +3,7 @@ package websocket_test
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -34,6 +36,7 @@ var defaultExcludedTestCases = []string{
 func TestWebSocketServer(t *testing.T) {
 	t.Parallel()
 
+	// TODO: document AUTOBAHN_* env vars that control test functionality
 	if os.Getenv("AUTOBAHN_TESTS") == "" {
 		t.Skipf("set AUTOBAHN_TESTS=1 to run autobahn integration tests")
 	}
@@ -48,32 +51,36 @@ func TestWebSocketServer(t *testing.T) {
 		hooks = newTestHooks(t)
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ws, err := websocket.Accept(w, r, websocket.Options{
-			Hooks: hooks,
-			// long ReadTimeout because some autobahn test cases (e.g. 5.19)
-			// sleep up to 1 second between frames
-			ReadTimeout:  5000 * time.Millisecond,
-			WriteTimeout: 500 * time.Millisecond,
-			// some autobahn test cases send large frames, so we need to
-			// support large fragments and messages
-			MaxFragmentSize: 1024 * 1024 * 16,
-			MaxMessageSize:  1024 * 1024 * 16,
-		})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		ws.Serve(r.Context(), websocket.EchoHandler)
-	}))
-	defer srv.Close()
+	targetURL := os.Getenv("AUTOBAHN_TARGET")
+	if targetURL == "" {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ws, err := websocket.Accept(w, r, websocket.Options{
+				Hooks: hooks,
+				// long ReadTimeout because some autobahn test cases (e.g. 5.19)
+				// sleep up to 1 second between frames
+				ReadTimeout:  5000 * time.Millisecond,
+				WriteTimeout: 500 * time.Millisecond,
+				// some autobahn test cases send large frames, so we need to
+				// support large fragments and messages
+				MaxFragmentSize: 1024 * 1024 * 16,
+				MaxMessageSize:  1024 * 1024 * 16,
+			})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			ws.Serve(r.Context(), websocket.EchoHandler)
+		}))
+		defer srv.Close()
+		targetURL = srv.URL
+	} else {
+		t.Logf("running autobahn against external target: %s", targetURL)
+	}
 
 	testDir := newTestDir(t)
 	t.Logf("test dir: %s", testDir)
-
-	targetURL := newAutobahnTargetURL(t, srv)
+	targetURL = newAutobahnTargetURL(t, targetURL)
 	t.Logf("target url: %s", targetURL)
-
 	autobahnCfg := map[string]any{
 		"servers": []map[string]string{
 			{
@@ -131,30 +138,56 @@ func TestWebSocketServer(t *testing.T) {
 	}
 }
 
-// newAutobahnTargetURL returns the URL that the autobahn test suite should use
-// to connect to the given httptest server.
+// newAutobahnTargetURL returns the URL that the autobahn test client should
+// use to connect to the given target URL, which may be an ephemeral httptest
+// server URL listening on localhost and a random port or some external URL
+// provided by the AUTOBAHN_TARGET env var.
 //
-// On Macs, the docker engine is running inside an implicit VM, so even with
-// --net=host, we need to use the special hostname to escape the VM.
+// Note that the autobahn client will be running inside a container using
+// --net=host, so localhost inside the container *should* map to localhost
+// outside the container.
+//
+// On macOS, however, we must use a special "host.docker.internal" hostname for
+// localhost addrs, because otherwise localhost inside the container will
+// resolve to localhost on the implicit guest VM where docker is running rather
+// than localhost on the actual macOS host machine.
 //
 // See the Docker Desktop docs[1] for more information. This same special
 // hostname seems to work across Docker Desktop for Mac, OrbStack, and Colima.
 //
 // [1]: https://docs.docker.com/desktop/networking/#i-want-to-connect-from-a-container-to-a-service-on-the-host
-func newAutobahnTargetURL(t *testing.T, srv *httptest.Server) string {
+func newAutobahnTargetURL(t *testing.T, targetURL string) string {
 	t.Helper()
-	u, err := url.Parse(srv.URL)
-	assert.NilError(t, err)
-
-	var host string
-	switch runtime.GOOS {
-	case "darwin":
-		host = "host.docker.internal"
-	default:
-		host = "127.0.0.1"
+	if matched, _ := regexp.MatchString("^https?://", targetURL); !matched {
+		targetURL = "http://" + targetURL
 	}
+	u, err := url.Parse(targetURL)
+	assert.NilError(t, err)
+	u.Scheme = "ws"
+	if runtime.GOOS == "darwin" && isLocalhost(u.Hostname()) {
+		host := "host.docker.internal"
+		_, port, _ := net.SplitHostPort(u.Host)
+		if port != "" {
+			host = net.JoinHostPort(host, port)
+		}
+		u.Host = host
+	}
+	return u.String()
+}
 
-	return fmt.Sprintf("ws://%s:%s/websocket/echo", host, u.Port())
+func isLocalhost(ipAddr string) bool {
+	ipAddr = strings.ToLower(ipAddr)
+	for _, addr := range []string{
+		"localhost",
+		"127.0.0.1",
+		"::1",
+		"0:0:0:0:0:0:0:1",
+	} {
+		if ipAddr == addr {
+			return true
+		}
+	}
+	return false
 }
 
 func runCmd(t *testing.T, cmd *exec.Cmd) {

@@ -304,3 +304,8 @@ func (ws *Websocket) resetWriteDeadline() {
 		panic(fmt.Sprintf("websocket: failed to set write deadline: %s", err))
 	}
 }
+
+// ClientKey returns the client key for a connection.
+func (ws *Websocket) ClientKey() ClientKey {
+	return ws.clientKey
+}
