@@ -3,10 +3,11 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"flag"
 	"log"
 	"log/slog"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"time"
 
@@ -14,20 +15,46 @@ import (
 )
 
 func main() {
+	var (
+		debug bool
+		pprof bool
+	)
+	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
+	flag.BoolVar(&pprof, "pprof", false, "Enable pprof endpoints on port 6060")
+	flag.Parse()
+
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	if pprof {
+		go func() {
+			logger.Info("starting pprof server", "addr", "http://127.0.0.1:6060")
+			log.Fatal(http.ListenAndServe("127.0.0.1:6060", nil))
+		}()
+	}
+
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, websocket.Options{
-			ReadTimeout:     60 * time.Second,
-			WriteTimeout:    1 * time.Second,
-			MaxFragmentSize: 1024 * 1024,
-			MaxMessageSize:  1024 * 1024,
-			Hooks:           newDebugHooks(r.Context(), logger),
+		var hooks websocket.Hooks
+		if debug {
+			hooks = newDebugHooks(r.Context(), logger)
+		}
+		ws, err := websocket.Accept(w, r, websocket.Options{
+			Hooks:        hooks,
+			ReadTimeout:  60 * time.Second,
+			WriteTimeout: 1 * time.Second,
+			// Allow very large fragments and messages to allow testing with
+			// the autobahn websocket test suite.
+			//
+			// Prefer much lower limits when your application allows it.
+			MaxFragmentSize: 1024 * 1024 * 16,
+			MaxMessageSize:  1024 * 1024 * 16,
 		})
 		if err != nil {
-			http.Error(w, fmt.Sprintf("websocket handshake failed: %s", err), http.StatusBadRequest)
+			logger.ErrorContext(r.Context(), "websocket handshake failed", "error", err.Error())
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		conn.Serve(r.Context(), websocket.EchoHandler)
+		logger.InfoContext(r.Context(), "websocket handshake completed, starting echo handler", "client-key", ws.ClientKey())
+		ws.Serve(r.Context(), websocket.EchoHandler)
 	})
 	addr := getListenAddr()
 	logger.Info("starting echoserver", "addr", "http://"+addr)

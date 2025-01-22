@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"flag"
 	"fmt"
 	"log"
 	"log/slog"
@@ -15,7 +16,28 @@ import (
 )
 
 func main() {
+	var (
+		debug bool
+		pprof bool
+	)
+	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
+	flag.BoolVar(&pprof, "pprof", false, "Enable pprof endpoints on port 6060")
+	flag.Parse()
+
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	if pprof {
+		go func() {
+			logger.Info("starting pprof server", "addr", "http://127.0.0.1:6060")
+			log.Fatal(http.ListenAndServe("127.0.0.1:6060", nil))
+		}()
+	}
+
+	var hooks websocket.Hooks
+	if debug {
+		hooks = newDebugHooks(context.Background(), logger)
+	}
+
 	mux := http.NewServeMux()
 
 	// 1. Connection speed test
@@ -31,15 +53,15 @@ func main() {
 	// The client sends {randomText}, and the server responds with
 	// {randomText}.
 	mux.HandleFunc("/plain", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, websocket.Options{
-			Hooks: newDebugHooks(r.Context(), logger),
+		ws, err := websocket.Accept(w, r, websocket.Options{
+			Hooks: hooks,
 		})
 		if err != nil {
 			http.Error(w, fmt.Sprintf("websocket handshake failed: %s", err), http.StatusBadRequest)
 			logger.ErrorContext(r.Context(), "websocket handshake failed", "err", err)
 			return
 		}
-		conn.Serve(r.Context(), websocket.EchoHandler)
+		ws.Serve(r.Context(), websocket.EchoHandler)
 	})
 
 	// 3. JSON message test
@@ -54,13 +76,13 @@ func main() {
 		Number int `json:"number"`
 	}
 	mux.HandleFunc("/json", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, websocket.Options{})
+		ws, err := websocket.Accept(w, r, websocket.Options{})
 		if err != nil {
 			http.Error(w, fmt.Sprintf("websocket handshake failed: %s", err), http.StatusBadRequest)
 			logger.ErrorContext(r.Context(), "websocket handshake failed", "err", err)
 			return
 		}
-		conn.Serve(r.Context(), func(_ context.Context, msg *websocket.Message) (*websocket.Message, error) {
+		ws.Serve(r.Context(), func(_ context.Context, msg *websocket.Message) (*websocket.Message, error) {
 			var m jsonMessage
 			if err := json.Unmarshal(msg.Payload, &m); err != nil {
 				return nil, err
@@ -83,13 +105,13 @@ func main() {
 	//
 	// If the number is even, the server responds with number+2.
 	mux.HandleFunc("/binary", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, websocket.Options{})
+		ws, err := websocket.Accept(w, r, websocket.Options{})
 		if err != nil {
 			http.Error(w, fmt.Sprintf("websocket handshake failed: %s", err), http.StatusBadRequest)
 			logger.ErrorContext(r.Context(), "websocket handshake failed", "err", err)
 			return
 		}
-		conn.Serve(r.Context(), func(_ context.Context, msg *websocket.Message) (*websocket.Message, error) {
+		ws.Serve(r.Context(), func(_ context.Context, msg *websocket.Message) (*websocket.Message, error) {
 			if len(msg.Payload) != 4 {
 				return nil, fmt.Errorf("invalid payload length: %d", len(msg.Payload))
 			}
