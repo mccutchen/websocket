@@ -118,7 +118,6 @@ func BenchmarkReadMessage(b *testing.B) {
 			}
 		})
 	}
-
 }
 
 type dummyConn struct {
