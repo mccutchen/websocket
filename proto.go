@@ -173,13 +173,19 @@ func ReadFrame(src io.Reader, buf []byte, maxPayloadSize int) (*Frame, error) {
 		return nil, ErrFrameTooLarge
 	}
 
-	payloadOffset := uint64(0)
+	minBufSize := payloadLen
+	if masked {
+		minBufSize += frameMaskingKeySize
+	}
+
+	// allocate fresh buffer if our reusable buffer is too small
+	if minBufSize > uint64(bufLen) {
+		buf = make([]byte, minBufSize)
+	}
 
 	// read mask key (if present)
+	payloadOffset := uint64(0)
 	if masked {
-		if (frameMaskingKeySize + payloadLen) > uint64(bufLen) {
-			return nil, fmt.Errorf("buffer too small to read masking key and payload")
-		}
 		if _, err := io.ReadFull(src, buf[:frameMaskingKeySize]); err != nil {
 			return nil, fmt.Errorf("error reading masking key: %w", err)
 		}

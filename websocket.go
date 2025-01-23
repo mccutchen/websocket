@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -28,6 +29,7 @@ var EchoHandler Handler = func(_ context.Context, msg *Message) (*Message, error
 const (
 	DefaultMaxFrameSize   int = 1024 * 16  // 16KiB
 	DefaultMaxMessageSize int = 1024 * 256 // 256KiB
+	DefaultBufferSize     int = 1024 * 4   // 4KiB
 )
 
 // Options define the limits imposed on a websocket connection.
@@ -37,6 +39,7 @@ type Options struct {
 	WriteTimeout   time.Duration
 	MaxFrameSize   int
 	MaxMessageSize int
+	BufferSize     int
 }
 
 type deadliner interface {
@@ -64,6 +67,9 @@ type Websocket struct {
 	writeTimeout   time.Duration
 	maxFrameSize   int
 	maxMessageSize int
+
+	// pool for buffer reuse
+	pool *bufferPool
 }
 
 // Accept handles the initial HTTP-based handshake and upgrades the TCP
@@ -109,6 +115,7 @@ func New(conn io.Closer, connBuf *bufio.ReadWriter, clientKey ClientKey, opts Op
 		writeTimeout:   opts.WriteTimeout,
 		maxFrameSize:   opts.MaxFrameSize,
 		maxMessageSize: opts.MaxMessageSize,
+		pool:           newBufferPool(opts.BufferSize),
 	}
 }
 
@@ -119,6 +126,9 @@ func setDefaults(opts *Options) {
 	}
 	if opts.MaxMessageSize <= 0 {
 		opts.MaxMessageSize = DefaultMaxMessageSize
+	}
+	if opts.BufferSize <= 0 {
+		opts.BufferSize = DefaultBufferSize
 	}
 	setupHooks(&opts.Hooks)
 }
@@ -150,7 +160,9 @@ func handshake(w http.ResponseWriter, r *http.Request) (ClientKey, error) {
 // automatically. The connection will be closed on any error.
 func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 	var msg *Message
-	frameBuf := make([]byte, ws.maxFrameSize+frameMaskingKeySize)
+	frameBuf := ws.pool.Get()
+	defer ws.pool.Put(frameBuf)
+
 	for {
 		select {
 		case <-ws.closedCh:
@@ -323,4 +335,26 @@ func (ws *Websocket) resetWriteDeadline() {
 // ClientKey returns the client key for a connection.
 func (ws *Websocket) ClientKey() ClientKey {
 	return ws.clientKey
+}
+
+type bufferPool struct {
+	pool sync.Pool
+}
+
+func newBufferPool(size int) *bufferPool {
+	return &bufferPool{
+		pool: sync.Pool{
+			New: func() any {
+				return make([]byte, size)
+			},
+		},
+	}
+}
+
+func (bp *bufferPool) Get() []byte {
+	return bp.pool.Get().([]byte)
+}
+
+func (bp *bufferPool) Put(x []byte) {
+	bp.pool.Put(x)
 }
