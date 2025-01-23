@@ -188,10 +188,10 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			if msg == nil {
 				return nil, ws.closeOnReadError(StatusProtocolError, ErrInvalidContinuation)
 			}
-			msg.Payload = append(msg.Payload, frame.Payload...)
-			if len(msg.Payload) > ws.maxMessageSize {
-				return nil, ws.closeOnReadError(StatusTooLarge, fmt.Errorf("message size %d exceeds maximum of %d bytes", len(msg.Payload), ws.maxMessageSize))
+			if len(msg.Payload)+len(frame.Payload) > ws.maxMessageSize {
+				return nil, ws.closeOnReadError(StatusTooLarge, fmt.Errorf("message size exceeds maximum of %d bytes", ws.maxMessageSize))
 			}
+			msg.Payload = append(msg.Payload, frame.Payload...)
 		case OpcodeClose:
 			if err := ws.Close(); err != nil {
 				return nil, err
