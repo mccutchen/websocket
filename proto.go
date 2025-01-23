@@ -279,8 +279,8 @@ func CloseFrame(code StatusCode, err error) *Frame {
 }
 
 // messageFrames splits a message into N frames with payloads of at most
-// fragmentSize bytes.
-func messageFrames(msg *Message, fragmentSize int) []*Frame {
+// frameSize bytes.
+func messageFrames(msg *Message, frameSize int) []*Frame {
 	var result []*Frame
 
 	fin := false
@@ -295,7 +295,7 @@ func messageFrames(msg *Message, fragmentSize int) []*Frame {
 		if offset > 0 {
 			opcode = OpcodeContinuation
 		}
-		end := offset + fragmentSize
+		end := offset + frameSize
 		if end >= dataLen {
 			fin = true
 			end = dataLen
@@ -329,7 +329,7 @@ var reservedStatusCodes = map[uint16]bool{
 	2999: true,
 }
 
-func validateFrame(frame *Frame, maxFragmentSize int, requireMask bool) error {
+func validateFrame(frame *Frame, maxFrameSize int, requireMask bool) error {
 	// We do not support any extensions, per the spec all RSV bits must be 0:
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
 	if frame.RSV1 || frame.RSV2 || frame.RSV3 {
@@ -342,8 +342,8 @@ func validateFrame(frame *Frame, maxFragmentSize int, requireMask bool) error {
 
 	switch frame.Opcode {
 	case OpcodeContinuation, OpcodeText, OpcodeBinary:
-		if len(frame.Payload) > maxFragmentSize {
-			return fmt.Errorf("frame payload size %d exceeds maximum of %d bytes", len(frame.Payload), maxFragmentSize)
+		if len(frame.Payload) > maxFrameSize {
+			return fmt.Errorf("frame payload size %d exceeds maximum of %d bytes", len(frame.Payload), maxFrameSize)
 		}
 	case OpcodeClose, OpcodePing, OpcodePong:
 		// All control frames MUST have a payload length of 125 bytes or less

@@ -246,9 +246,9 @@ func TestConnectionLimits(t *testing.T) {
 			defer wg.Done()
 			start := time.Now()
 			ws, err := websocket.Accept(w, r, websocket.Options{
-				ReadTimeout:     serverTimeout,
-				MaxFragmentSize: 128,
-				MaxMessageSize:  256,
+				ReadTimeout:    serverTimeout,
+				MaxFrameSize:   128,
+				MaxMessageSize: 256,
 				Hooks: websocket.Hooks{
 					OnReadError: func(key websocket.ClientKey, err error) {
 						gotServerReadError = err
@@ -302,18 +302,18 @@ func TestConnectionLimits(t *testing.T) {
 // - unexpected continuation frames
 func TestProtocolBasics(t *testing.T) {
 	var (
-		maxDuration     = 250 * time.Millisecond
-		maxFragmentSize = 16
-		maxMessageSize  = 32
+		maxDuration    = 250 * time.Millisecond
+		maxFrameSize   = 16
+		maxMessageSize = 32
 	)
 
 	echoHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := websocket.Accept(w, r, websocket.Options{
-			ReadTimeout:     maxDuration,
-			WriteTimeout:    maxDuration,
-			MaxFragmentSize: maxFragmentSize,
-			MaxMessageSize:  maxMessageSize,
-			Hooks:           newTestHooks(t),
+			ReadTimeout:    maxDuration,
+			WriteTimeout:   maxDuration,
+			MaxFrameSize:   maxFrameSize,
+			MaxMessageSize: maxMessageSize,
+			Hooks:          newTestHooks(t),
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -333,7 +333,7 @@ func TestProtocolBasics(t *testing.T) {
 		}
 		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, makeMaskingKey()))
 		// read server frame
-		serverFrame, err := websocket.ReadFrame(conn, maxFragmentSize)
+		serverFrame, err := websocket.ReadFrame(conn, maxFrameSize)
 		assert.NilError(t, err)
 		// ensure we get back the same frame
 		assert.Equal(t, serverFrame.Fin, clientFrame.Fin, "expected matching FIN bits")

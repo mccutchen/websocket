@@ -11,10 +11,10 @@ import (
 func ExampleEchoHandler() {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := websocket.Accept(w, r, websocket.Options{
-			ReadTimeout:     500 * time.Millisecond,
-			WriteTimeout:    500 * time.Millisecond,
-			MaxFragmentSize: 16 * 1024,   // 16KiB
-			MaxMessageSize:  1024 * 1024, // 1MiB
+			ReadTimeout:    500 * time.Millisecond,
+			WriteTimeout:   500 * time.Millisecond,
+			MaxFrameSize:   16 * 1024,   // 16KiB
+			MaxMessageSize: 1024 * 1024, // 1MiB
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

@@ -18,7 +18,7 @@ func TestDefaults(t *testing.T) {
 	)
 
 	assert.Equal(t, ws.ClientKey(), key, "incorrect client key")
-	assert.Equal(t, ws.maxFragmentSize, DefaultMaxFragmentSize, "incorrect max fragment size")
+	assert.Equal(t, ws.maxFrameSize, DefaultMaxFrameSize, "incorrect max framesize")
 	assert.Equal(t, ws.maxMessageSize, DefaultMaxMessageSize, "incorrect max message size")
 	assert.Equal(t, ws.readTimeout, 0, "incorrect read timeout")
 	assert.Equal(t, ws.writeTimeout, 0, "incorrect write timeout")

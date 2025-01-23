@@ -25,17 +25,17 @@ var EchoHandler Handler = func(_ context.Context, msg *Message) (*Message, error
 
 // Default options.
 const (
-	DefaultMaxFragmentSize int = 1024 * 16  // 16KiB
-	DefaultMaxMessageSize  int = 1024 * 256 // 256KiB
+	DefaultMaxFrameSize   int = 1024 * 16  // 16KiB
+	DefaultMaxMessageSize int = 1024 * 256 // 256KiB
 )
 
 // Options define the limits imposed on a websocket connection.
 type Options struct {
-	Hooks           Hooks
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	MaxFragmentSize int
-	MaxMessageSize  int
+	Hooks          Hooks
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
+	MaxFrameSize   int
+	MaxMessageSize int
 }
 
 type deadliner interface {
@@ -55,10 +55,10 @@ type Websocket struct {
 	hooks     Hooks
 
 	// limits
-	readTimeout     time.Duration
-	writeTimeout    time.Duration
-	maxFragmentSize int
-	maxMessageSize  int
+	readTimeout    time.Duration
+	writeTimeout   time.Duration
+	maxFrameSize   int
+	maxMessageSize int
 }
 
 // Accept handles the initial HTTP-based handshake and upgrades the TCP
@@ -94,22 +94,22 @@ func New(src io.ReadWriteCloser, clientKey ClientKey, opts Options) *Websocket {
 		}
 	}
 	return &Websocket{
-		conn:            src,
-		closedCh:        make(chan struct{}),
-		server:          true,
-		clientKey:       clientKey,
-		hooks:           opts.Hooks,
-		readTimeout:     opts.ReadTimeout,
-		writeTimeout:    opts.WriteTimeout,
-		maxFragmentSize: opts.MaxFragmentSize,
-		maxMessageSize:  opts.MaxMessageSize,
+		conn:           src,
+		closedCh:       make(chan struct{}),
+		server:         true,
+		clientKey:      clientKey,
+		hooks:          opts.Hooks,
+		readTimeout:    opts.ReadTimeout,
+		writeTimeout:   opts.WriteTimeout,
+		maxFrameSize:   opts.MaxFrameSize,
+		maxMessageSize: opts.MaxMessageSize,
 	}
 }
 
 // setDefaults sets the default values for any unset options.
 func setDefaults(opts *Options) {
-	if opts.MaxFragmentSize <= 0 {
-		opts.MaxFragmentSize = DefaultMaxFragmentSize
+	if opts.MaxFrameSize <= 0 {
+		opts.MaxFrameSize = DefaultMaxFrameSize
 	}
 	if opts.MaxMessageSize <= 0 {
 		opts.MaxMessageSize = DefaultMaxMessageSize
@@ -155,7 +155,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			ws.resetReadDeadline()
 		}
 
-		frame, err := ReadFrame(ws.conn, ws.maxFragmentSize)
+		frame, err := ReadFrame(ws.conn, ws.maxFrameSize)
 		if err != nil {
 			code := StatusServerError
 			if errors.Is(err, io.EOF) {
@@ -163,7 +163,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 			return nil, ws.closeOnReadError(code, err)
 		}
-		if err := validateFrame(frame, ws.maxFragmentSize, ws.server); err != nil {
+		if err := validateFrame(frame, ws.maxFrameSize, ws.server); err != nil {
 			return nil, ws.closeOnReadError(StatusProtocolError, err)
 		}
 		ws.hooks.OnReadFrame(ws.clientKey, frame)
@@ -216,7 +216,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 // on any error.
 func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 	ws.hooks.OnWriteMessage(ws.clientKey, msg)
-	for _, frame := range messageFrames(msg, ws.maxFragmentSize) {
+	for _, frame := range messageFrames(msg, ws.maxFrameSize) {
 		ws.hooks.OnWriteFrame(ws.clientKey, frame)
 		select {
 		case <-ctx.Done():
