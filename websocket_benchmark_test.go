@@ -48,12 +48,11 @@ func BenchmarkReadFrame(b *testing.B) {
 			src := bytes.NewReader(payloadBuf.Bytes())
 			readBuf := make([]byte, size+len(mask))
 			b.ResetTimer()
+			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				_, _ = src.Seek(0, 0)
 				_, err := websocket.ReadFrame(src, readBuf, size)
-				if err != nil {
-					b.Fatalf("unexpected error: %v", err)
-				}
+				assert.NilError(b, err)
 			}
 		})
 	}
