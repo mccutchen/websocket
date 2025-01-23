@@ -61,9 +61,9 @@ func TestWebSocketServer(t *testing.T) {
 				ReadTimeout:  5000 * time.Millisecond,
 				WriteTimeout: 500 * time.Millisecond,
 				// some autobahn test cases send large frames, so we need to
-				// support large fragments and messages
-				MaxFragmentSize: 1024 * 1024 * 16,
-				MaxMessageSize:  1024 * 1024 * 16,
+				// support large frames and messages
+				MaxFrameSize:   1024 * 1024 * 16,
+				MaxMessageSize: 1024 * 1024 * 16,
 			})
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)

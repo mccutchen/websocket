@@ -41,12 +41,12 @@ func main() {
 			Hooks:        hooks,
 			ReadTimeout:  60 * time.Second,
 			WriteTimeout: 1 * time.Second,
-			// Allow very large fragments and messages to allow testing with
+			// Allow very large frames and messages to allow testing with
 			// the autobahn websocket test suite.
 			//
 			// Prefer much lower limits when your application allows it.
-			MaxFragmentSize: 1024 * 1024 * 16,
-			MaxMessageSize:  1024 * 1024 * 16,
+			MaxFrameSize:   1024 * 1024 * 16,
+			MaxMessageSize: 1024 * 1024 * 16,
 		})
 		if err != nil {
 			logger.ErrorContext(r.Context(), "websocket handshake failed", "error", err.Error())
