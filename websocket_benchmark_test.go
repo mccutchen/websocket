@@ -1,6 +1,7 @@
 package websocket_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -37,21 +38,21 @@ func BenchmarkReadFrame(b *testing.B) {
 
 	for _, size := range frameSizes {
 		frame := makeFrame(websocket.OpcodeText, true, size)
-		mask := [4]byte{1, 2, 3, 4}
+		mask := makeMaskingKey()
 
-		buf := &bytes.Buffer{}
-		assert.NilError(b, websocket.WriteFrameMasked(buf, frame, mask))
+		payloadBuf := &bytes.Buffer{}
+		assert.NilError(b, websocket.WriteFrameMasked(payloadBuf, frame, mask))
 
 		// Run sub-benchmarks for each payload size
 		b.Run(formatSize(size), func(b *testing.B) {
-			src := bytes.NewReader(buf.Bytes())
+			src := bytes.NewReader(payloadBuf.Bytes())
+			readBuf := make([]byte, size+len(mask))
 			b.ResetTimer()
+			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				_, _ = src.Seek(0, 0)
-				_, err := websocket.ReadFrame(src, size)
-				if err != nil {
-					b.Fatalf("unexpected error: %v", err)
-				}
+				_, err := websocket.ReadFrame(src, readBuf, size)
+				assert.NilError(b, err)
 			}
 		})
 	}
@@ -102,7 +103,7 @@ func BenchmarkReadMessage(b *testing.B) {
 			in:  reader,
 			out: io.Discard,
 		}
-		ws := websocket.New(conn, websocket.ClientKey(makeClientKey()), websocket.Options{
+		ws := websocket.New(conn, conn.buf(), websocket.ClientKey(makeClientKey()), websocket.Options{
 			MaxFrameSize:   frameSize,
 			MaxMessageSize: msgSize,
 			// Hooks:           newTestHooks(b),
@@ -124,6 +125,10 @@ type dummyConn struct {
 	in     io.Reader
 	out    io.Writer
 	closed atomic.Bool
+}
+
+func (c *dummyConn) buf() *bufio.ReadWriter {
+	return bufio.NewReadWriter(bufio.NewReader(c.in), bufio.NewWriter(c.out))
 }
 
 func (c *dummyConn) Read(p []byte) (int, error) {

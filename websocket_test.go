@@ -333,7 +333,8 @@ func TestProtocolBasics(t *testing.T) {
 		}
 		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, makeMaskingKey()))
 		// read server frame
-		serverFrame, err := websocket.ReadFrame(conn, maxFrameSize)
+		buf := make([]byte, maxFrameSize)
+		serverFrame, err := websocket.ReadFrame(conn, buf, maxFrameSize)
 		assert.NilError(t, err)
 		// ensure we get back the same frame
 		assert.Equal(t, serverFrame.Fin, clientFrame.Fin, "expected matching FIN bits")
@@ -431,7 +432,8 @@ func validateCloseFrame(t *testing.T, r io.Reader, wantStatus websocket.StatusCo
 	//
 	// This is already enforced in validateFrame, called by ReadFrame, but we
 	// must pass in a max payload size here.
-	frame, err := websocket.ReadFrame(r, 125)
+	buf := make([]byte, 4096)
+	frame, err := websocket.ReadFrame(r, buf, 125)
 	assert.NilError(t, err)
 	assert.Equal(t, frame.Opcode, websocket.OpcodeClose, "expected close frame")
 
