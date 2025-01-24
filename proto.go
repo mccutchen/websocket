@@ -88,6 +88,7 @@ type Frame struct {
 	Opcode  Opcode
 	Payload []byte
 	Masked  bool
+	Size    int
 }
 
 func (f Frame) String() string {
@@ -211,6 +212,7 @@ func ReadFrame(src io.Reader, buf []byte, maxPayloadSize int) (*Frame, error) {
 		Opcode:  opcode,
 		Payload: payload,
 		Masked:  masked,
+		Size:    int(payloadLen),
 	}, nil
 }
 

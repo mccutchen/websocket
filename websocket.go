@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -159,8 +160,10 @@ func handshake(w http.ResponseWriter, r *http.Request) (ClientKey, error) {
 // handling fragments and control frames automatically. frames are handled
 // automatically. The connection will be closed on any error.
 func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
-	var msg *Message
-	frameBuf := ws.pool.Get()
+	var (
+		msg      *Message
+		frameBuf = ws.pool.Get()
+	)
 	defer ws.pool.Put(frameBuf)
 
 	for {
@@ -194,8 +197,9 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 			msg = &Message{
 				Binary:  frame.Opcode == OpcodeBinary,
-				Payload: frame.Payload[:],
+				Payload: make([]byte, frame.Size),
 			}
+			copy(msg.Payload, frame.Payload)
 		case OpcodeContinuation:
 			if msg == nil {
 				return nil, ws.closeOnReadError(StatusProtocolError, ErrInvalidContinuation)
