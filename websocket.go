@@ -158,8 +158,11 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		frame, err := ReadFrame(ws.conn, ws.maxFrameSize)
 		if err != nil {
 			code := StatusServerError
-			if errors.Is(err, io.EOF) {
+			switch {
+			case errors.Is(err, io.EOF):
 				code = StatusNormalClosure
+			case errors.Is(err, ErrFrameTooLarge):
+				code = StatusTooLarge
 			}
 			return nil, ws.closeOnReadError(code, err)
 		}
@@ -181,10 +184,10 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			if msg == nil {
 				return nil, ws.closeOnReadError(StatusProtocolError, ErrInvalidContinuation)
 			}
-			msg.Payload = append(msg.Payload, frame.Payload...)
-			if len(msg.Payload) > ws.maxMessageSize {
-				return nil, ws.closeOnReadError(StatusTooLarge, fmt.Errorf("message size %d exceeds maximum of %d bytes", len(msg.Payload), ws.maxMessageSize))
+			if len(msg.Payload)+len(frame.Payload) > ws.maxMessageSize {
+				return nil, ws.closeOnReadError(StatusTooLarge, fmt.Errorf("message size exceeds maximum of %d bytes", ws.maxMessageSize))
 			}
+			msg.Payload = append(msg.Payload, frame.Payload...)
 		case OpcodeClose:
 			_ = ws.Close()
 			return nil, io.EOF
