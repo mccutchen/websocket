@@ -207,7 +207,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		if frame.Fin {
 			ws.hooks.OnReadMessage(ws.clientKey, msg)
 			if !msg.Binary && !utf8.Valid(msg.Payload) {
-				return nil, ws.closeOnReadError(StatusUnsupportedPayload, ErrInvalidUT8)
+				return nil, ws.closeOnReadError(StatusUnsupportedPayload, ErrInvalidUTF8)
 			}
 			return msg, nil
 		}

@@ -15,12 +15,17 @@ const requiredVersion = "13"
 
 // Protocol-level errors.
 var (
-	ErrContinuationExpected = errors.New("expected continuation frame")
-	ErrInvalidContinuation  = errors.New("unexpected continuation frame")
-	ErrInvalidUT8           = errors.New("invalid UTF-8")
-	ErrUnmaskedClientFrame  = errors.New("received unmasked client frame")
-	ErrUnsupportedRSVBits   = errors.New("frame has unsupported RSV bits set")
-	ErrFrameTooLarge        = errors.New("frame payload too large")
+	ErrCloseStatusInvalid     = errors.New("close frame status code out of range")
+	ErrCloseStatusReserved    = errors.New("close frame status code is reserve")
+	ErrContinuationExpected   = errors.New("expected continuation frame")
+	ErrControlFrameFragmented = errors.New("control frame must not be fragmented")
+	ErrControlFrameTooLarge   = errors.New("control frame payload exceeds 125 bytes")
+	ErrFrameTooLarge          = errors.New("frame payload too large")
+	ErrInvalidClosePayload    = errors.New("close frame payload must be at least 2 bytes")
+	ErrInvalidContinuation    = errors.New("unexpected continuation frame")
+	ErrInvalidUTF8            = errors.New("invalid UTF-8")
+	ErrUnmaskedClientFrame    = errors.New("received unmasked client frame")
+	ErrUnsupportedRSVBits     = errors.New("frame has unsupported RSV bits set")
 )
 
 // Opcode is a websocket OPCODE.
@@ -336,43 +341,42 @@ func validateFrame(frame *Frame, maxFrameSize int, requireMask bool) error {
 		return ErrUnmaskedClientFrame
 	}
 
+	payloadLen := len(frame.Payload)
+
 	switch frame.Opcode {
 	case OpcodeContinuation, OpcodeText, OpcodeBinary:
-		if len(frame.Payload) > maxFrameSize {
-			return fmt.Errorf("frame payload size %d exceeds maximum of %d bytes", len(frame.Payload), maxFrameSize)
+		if payloadLen > maxFrameSize {
+			return ErrFrameTooLarge
 		}
 	case OpcodeClose, OpcodePing, OpcodePong:
 		// All control frames MUST have a payload length of 125 bytes or less
 		// and MUST NOT be fragmented.
 		// https://datatracker.ietf.org/doc/html/rfc6455#section-5.5
-		if len(frame.Payload) > 125 {
-			return fmt.Errorf("control frame %v payload size %d exceeds 125 bytes", frame.Opcode, len(frame.Payload))
+		if payloadLen > 125 {
+			return ErrControlFrameTooLarge
 		}
 		if !frame.Fin {
-			return fmt.Errorf("control frame %v must not be fragmented", frame.Opcode)
+			return ErrControlFrameFragmented
 		}
 	}
 
 	if frame.Opcode == OpcodeClose {
-		if len(frame.Payload) == 0 {
+		if payloadLen == 0 {
 			return nil
 		}
-		if len(frame.Payload) == 1 {
-			return fmt.Errorf("close frame payload must be at least 2 bytes")
+		if payloadLen == 1 {
+			return ErrInvalidClosePayload
 		}
 
 		code := binary.BigEndian.Uint16(frame.Payload[:2])
 		if code < 1000 || code >= 5000 {
-			return fmt.Errorf("close frame status code %d out of range", code)
+			return ErrCloseStatusInvalid
 		}
 		if reservedStatusCodes[code] {
-			return fmt.Errorf("close frame status code %d is reserved", code)
+			return ErrCloseStatusReserved
 		}
-
-		if len(frame.Payload) > 2 {
-			if !utf8.Valid(frame.Payload[2:]) {
-				return errors.New("close frame payload must be vaid UTF-8")
-			}
+		if payloadLen > 2 && !utf8.Valid(frame.Payload[2:]) {
+			return ErrInvalidUTF8
 		}
 	}
 
