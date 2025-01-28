@@ -3,8 +3,6 @@ package websocket_test
 import (
 	"bufio"
 	"bytes"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -331,7 +329,7 @@ func TestProtocolBasics(t *testing.T) {
 			Fin:     true,
 			Payload: []byte("hello"),
 		}
-		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, makeMaskingKey()))
+		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, websocket.NewMaskingKey()))
 		// read server frame
 		serverFrame, err := websocket.ReadFrame(conn, maxFrameSize)
 		assert.NilError(t, err)
@@ -342,7 +340,7 @@ func TestProtocolBasics(t *testing.T) {
 
 		// ensure closing handshake is completed when initiated by client
 		clientClose := websocket.CloseFrame(websocket.StatusNormalClosure, nil)
-		assert.NilError(t, websocket.WriteFrameMasked(conn, clientClose, makeMaskingKey()))
+		assert.NilError(t, websocket.WriteFrameMasked(conn, clientClose, websocket.NewMaskingKey()))
 		validateCloseFrame(t, conn, websocket.StatusNormalClosure, "")
 
 		// FIXME: this write should fail, but the connection doesn't seem to
@@ -386,7 +384,7 @@ func setupRawConn(t testing.TB, handler http.Handler) (*httptest.Server, net.Con
 	for k, v := range map[string]string{
 		"Connection":            "upgrade",
 		"Upgrade":               "websocket",
-		"Sec-WebSocket-Key":     makeClientKey(),
+		"Sec-WebSocket-Key":     string(websocket.NewClientKey()),
 		"Sec-WebSocket-Version": "13",
 	} {
 		handshakeReq.Header.Set(k, v)
@@ -399,24 +397,6 @@ func setupRawConn(t testing.TB, handler http.Handler) (*httptest.Server, net.Con
 	assert.StatusCode(t, resp, http.StatusSwitchingProtocols)
 
 	return srv, conn
-}
-
-func makeClientKey() string {
-	b := make([]byte, 16)
-	_, err := rand.Read(b)
-	if err != nil {
-		panic(fmt.Sprintf("failed to read random bytes: %s", err))
-	}
-	return base64.StdEncoding.EncodeToString(b)
-}
-
-func makeMaskingKey() [4]byte {
-	var key [4]byte
-	_, err := rand.Read(key[:]) // Fill the key with 4 random bytes
-	if err != nil {
-		panic(fmt.Sprintf("failed to read random bytes for masking key: %s", err))
-	}
-	return key
 }
 
 // validateCloseFrame ensures that we can read a close frame from the given

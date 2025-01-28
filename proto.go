@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
@@ -21,11 +22,6 @@ var (
 	ErrUnsupportedRSVBits   = errors.New("frame has unsupported RSV bits set")
 	ErrFrameTooLarge        = errors.New("frame payload too large")
 )
-
-var zeroMask [4]byte
-
-// ClientKey is a websocket client key.
-type ClientKey string
 
 // Opcode is a websocket OPCODE.
 type Opcode uint8
@@ -198,7 +194,7 @@ func WriteFrame(dst io.Writer, frame *Frame) error {
 }
 
 // WriteFrameMasked writes a masked websocket frame to the wire.
-func WriteFrameMasked(dst io.Writer, frame *Frame, mask [4]byte) error {
+func WriteFrameMasked(dst io.Writer, frame *Frame, mask MaskingKey) error {
 	// worst case payload size is 13 header bytes + payload size, where 13 is
 	// (1 byte header) + (1-8 byte length) + (0-4 byte mask key)
 	buf := make([]byte, 0, 13+len(frame.Payload))
@@ -389,4 +385,34 @@ func acceptKey(clientKey string) string {
 	h := sha1.New()
 	_, _ = io.WriteString(h, clientKey+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
+}
+
+// ClientKey identifies the client in the websocket handshake.
+type ClientKey string
+
+// NewClientKey returns a randomly-generated ClientKey for client handshake.
+// Panics on insufficient randomness.
+func NewClientKey() ClientKey {
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		panic(fmt.Sprintf("NewClientKey: failed to read random bytes: %s", err))
+	}
+	return ClientKey(base64.StdEncoding.EncodeToString(b))
+}
+
+// MaskingKey masks client frames.
+type MaskingKey [4]byte
+
+var zeroMask = MaskingKey([4]byte{})
+
+// NewMaskingKey returns a randomly generated making key for client frames.
+// Panics on insufficient randomness.
+func NewMaskingKey() MaskingKey {
+	var key [4]byte
+	_, err := rand.Read(key[:]) // Fill the key with 4 random bytes
+	if err != nil {
+		panic(fmt.Sprintf("NewMaskingKey: failed to read random bytes: %s", err))
+	}
+	return key
 }
