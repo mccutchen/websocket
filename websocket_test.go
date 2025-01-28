@@ -292,8 +292,6 @@ func TestConnectionLimits(t *testing.T) {
 	})
 }
 
-// TODO: flesh out basic protocol test cases
-// - utf8 validation (with and without fragmentation)
 func TestProtocolBasics(t *testing.T) {
 	var (
 		maxDuration    = 250 * time.Millisecond
@@ -392,13 +390,8 @@ func TestProtocolBasics(t *testing.T) {
 			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
 			wantMessagePayload = append(wantMessagePayload, frame.Payload...)
 		}
-
-		select {
-		case msg := <-msgLog:
-			assert.DeepEqual(t, msg.Payload, wantMessagePayload, "incorrect messaage payload")
-		case <-time.After(time.Second):
-			t.Fatalf("expected message to be handled and logged by test server")
-		}
+		msg := mustConsumeMessage(t, msgLog)
+		assert.DeepEqual(t, msg.Payload, wantMessagePayload, "incorrect messaage payload")
 	})
 
 	t.Run("unexpected continuation frame", func(t *testing.T) {
@@ -507,6 +500,103 @@ func TestProtocolBasics(t *testing.T) {
 		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
 		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrControlFrameTooLarge.Error())
 	})
+
+	t.Run("test messages must be valid utf8", func(t *testing.T) {
+		t.Parallel()
+		echoHandler, msgLog := newLoggingEchoHandler()
+		_, conn := setupRawConn(t, echoHandler)
+
+		// valid UTF-8 accepted and echoed back
+		{
+			frame := &websocket.Frame{
+				Opcode:  websocket.OpcodeText,
+				Fin:     true,
+				Payload: []byte("Iñtërnâtiônàlizætiøn"),
+			}
+			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
+			msg := mustConsumeMessage(t, msgLog)
+			assert.DeepEqual(t, msg.Payload, frame.Payload, "incorrect message payloady")
+		}
+
+		// valid UTF-8 fragmented on codepoint boundaries is okay
+		{
+			frames := []*websocket.Frame{
+				{
+					Opcode:  websocket.OpcodeText,
+					Fin:     false,
+					Payload: []byte("Iñtër"),
+				},
+
+				{
+					Opcode:  websocket.OpcodeContinuation,
+					Fin:     false,
+					Payload: []byte("nâtiônàl"),
+				},
+
+				{
+					Opcode:  websocket.OpcodeContinuation,
+					Fin:     true,
+					Payload: []byte("izætiøn"),
+				},
+			}
+			for _, frame := range frames {
+				assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
+			}
+
+			msg := mustConsumeMessage(t, msgLog)
+			assert.DeepEqual(t, msg.Payload, []byte("Iñtërnâtiônàlizætiøn"), "incorrect message payloady")
+		}
+
+		// valid UTF-8 fragmented in the middle of a codepoint is reassembled
+		// into a valid message
+		{
+			frames := []*websocket.Frame{
+				{
+					Opcode:  websocket.OpcodeText,
+					Fin:     false,
+					Payload: []byte("jalape\xc3"),
+				},
+
+				{
+					Opcode:  websocket.OpcodeContinuation,
+					Fin:     true,
+					Payload: []byte("\xb1o"),
+				},
+			}
+			for _, frame := range frames {
+				assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
+			}
+
+			msg := mustConsumeMessage(t, msgLog)
+			assert.DeepEqual(t, msg.Payload, []byte("jalapeño"), "incorrect message payloady")
+		}
+
+		// invlalid UTF-8 causes connection to close
+		{
+
+			frame := &websocket.Frame{
+				Opcode:  websocket.OpcodeText,
+				Fin:     true,
+				Payload: []byte{0xc3},
+			}
+			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
+			validateCloseFrame(t, conn, websocket.StatusUnsupportedPayload, "invalid UTF-8")
+
+		}
+
+	})
+
+}
+
+func mustConsumeMessage(tb testing.TB, msgLog <-chan *websocket.Message) *websocket.Message {
+	tb.Helper()
+	select {
+	case msg := <-msgLog:
+		return msg
+	case <-time.After(time.Second):
+		tb.Fatalf("failed to consume message in time")
+	}
+	panic("unreachable")
 }
 
 // setupRawConn is a test helpers that runs a test server and does the
