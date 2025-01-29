@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -214,7 +215,7 @@ func TestConnectionLimits(t *testing.T) {
 		elapsed := time.Since(start)
 		assert.NilError(t, err)
 		assert.RoughlyEqual(t, elapsed, maxDuration, 25*time.Millisecond)
-		validateCloseFrame(t, bytes.NewBuffer(resp), websocket.StatusServerError, "timeout")
+		validateCloseFrame(t, bytes.NewBuffer(resp), websocket.StatusServerError, errors.New("xxx"))
 
 		// connection should be closed, so we should get EOF when trying to
 		// read from it again
@@ -353,7 +354,7 @@ func TestProtocolBasics(t *testing.T) {
 		// ensure closing handshake is completed when initiated by client
 		clientClose := websocket.CloseFrame(websocket.StatusNormalClosure, nil)
 		assert.NilError(t, websocket.WriteFrameMasked(conn, clientClose, websocket.NewMaskingKey()))
-		validateCloseFrame(t, conn, websocket.StatusNormalClosure, "")
+		validateCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
 
 		// FIXME: this write should fail, but the connection doesn't seem to
 		// get closed. for now we skip.
@@ -403,7 +404,7 @@ func TestProtocolBasics(t *testing.T) {
 			Payload: []byte("0"),
 		}
 		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, websocket.NewMaskingKey()))
-		validateCloseFrame(t, conn, websocket.StatusProtocolError, "unexpected continuation")
+		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrContinuationExpected)
 	})
 
 	t.Run("max frame size", func(t *testing.T) {
@@ -415,7 +416,7 @@ func TestProtocolBasics(t *testing.T) {
 			Payload: bytes.Repeat([]byte("0"), maxFrameSize+1),
 		}
 		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, websocket.NewMaskingKey()))
-		validateCloseFrame(t, conn, websocket.StatusTooLarge, "frame payload too large")
+		validateCloseFrame(t, conn, websocket.StatusTooLarge, websocket.ErrFrameTooLarge)
 	})
 
 	t.Run("max message size", func(t *testing.T) {
@@ -451,9 +452,8 @@ func TestProtocolBasics(t *testing.T) {
 		// the server should close the connection with an error after reading
 		// the 3rd fragment above, as it will cause the total message size to
 		// exceed the limit.
-		validateCloseFrame(t, conn, websocket.StatusTooLarge, "message size exceeds maximum")
+		validateCloseFrame(t, conn, websocket.StatusTooLarge, websocket.ErrFrameTooLarge)
 	})
-
 	t.Run("server requires masked frames", func(t *testing.T) {
 		t.Parallel()
 		_, conn := setupRawConn(t, newEchoHandler())
@@ -463,7 +463,7 @@ func TestProtocolBasics(t *testing.T) {
 			Payload: []byte("hello"),
 		}
 		assert.NilError(t, websocket.WriteFrame(conn, frame))
-		validateCloseFrame(t, conn, websocket.StatusProtocolError, "received unmasked client frame")
+		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrUnmaskedClientFrame)
 	})
 
 	t.Run("server rejects RSV bits", func(t *testing.T) {
@@ -476,7 +476,7 @@ func TestProtocolBasics(t *testing.T) {
 			Payload: []byte("hello"),
 		}
 		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrUnsupportedRSVBits.Error())
+		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrUnsupportedRSVBits)
 	})
 
 	t.Run("control frames must not be fragmented", func(t *testing.T) {
@@ -487,7 +487,7 @@ func TestProtocolBasics(t *testing.T) {
 			Fin:    false,
 		}
 		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrControlFrameFragmented.Error())
+		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrControlFrameFragmented)
 	})
 
 	t.Run("control frames must be less than 125 bytes", func(t *testing.T) {
@@ -498,7 +498,7 @@ func TestProtocolBasics(t *testing.T) {
 			Payload: bytes.Repeat([]byte("0"), 126),
 		}
 		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrControlFrameTooLarge.Error())
+		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrControlFrameTooLarge)
 	})
 
 	t.Run("test messages must be valid utf8", func(t *testing.T) {
@@ -568,7 +568,7 @@ func TestProtocolBasics(t *testing.T) {
 			}
 
 			msg := mustConsumeMessage(t, msgLog)
-			assert.DeepEqual(t, msg.Payload, []byte("jalapeño"), "incorrect message payloady")
+			assert.DeepEqual(t, msg.Payload, []byte("jalapeño"), "payload")
 		}
 
 		// invlalid UTF-8 causes connection to close
@@ -636,7 +636,7 @@ func setupRawConn(t testing.TB, handler http.Handler) (*httptest.Server, net.Con
 // validateCloseFrame ensures that we can read a close frame from the given
 // reader and optionally ensures that the close frame includes a specific
 // status code and message.
-func validateCloseFrame(t *testing.T, r io.Reader, wantStatus websocket.StatusCode, wantMsg string) {
+func validateCloseFrame(t *testing.T, r io.Reader, wantStatus websocket.StatusCode, wantErr error) {
 	t.Helper()
 
 	// All control frames MUST have a payload length of 125 bytes or less
@@ -659,7 +659,9 @@ func validateCloseFrame(t *testing.T, r io.Reader, wantStatus websocket.StatusCo
 	closeMsg := string(frame.Payload[2:])
 	t.Logf("got close frame: code=%v msg=%q", statusCode, closeMsg)
 	assert.Equal(t, int(statusCode), int(wantStatus), "got incorrect close status code")
-	assert.Contains(t, closeMsg, wantMsg, "got incorrect close message")
+	if wantErr != nil {
+		assert.Contains(t, closeMsg, wantErr.Error(), "got incorrect close message")
+	}
 }
 
 // brokenHijackResponseWriter implements just enough to satisfy the
