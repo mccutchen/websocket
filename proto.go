@@ -310,6 +310,7 @@ func messageFrames(msg *Message, frameSize int) []*Frame {
 		if fin {
 			break
 		}
+		offset += frameSize
 	}
 	return result
 }
