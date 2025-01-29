@@ -215,7 +215,7 @@ func TestConnectionLimits(t *testing.T) {
 		elapsed := time.Since(start)
 		assert.NilError(t, err)
 		assert.RoughlyEqual(t, elapsed, maxDuration, 25*time.Millisecond)
-		validateCloseFrame(t, bytes.NewBuffer(resp), websocket.StatusServerError, errors.New("xxx"))
+		validateCloseFrame(t, bytes.NewBuffer(resp), websocket.StatusServerError, errors.New("error reading frame header"))
 
 		// connection should be closed, so we should get EOF when trying to
 		// read from it again
@@ -296,8 +296,8 @@ func TestConnectionLimits(t *testing.T) {
 func TestProtocolBasics(t *testing.T) {
 	var (
 		maxDuration    = 250 * time.Millisecond
-		maxFrameSize   = 256
-		maxMessageSize = 512
+		maxFrameSize   = 128
+		maxMessageSize = 256
 	)
 
 	newLoggingEchoHandler := func() (http.HandlerFunc, <-chan *websocket.Message) {
@@ -452,7 +452,7 @@ func TestProtocolBasics(t *testing.T) {
 		// the server should close the connection with an error after reading
 		// the 3rd fragment above, as it will cause the total message size to
 		// exceed the limit.
-		validateCloseFrame(t, conn, websocket.StatusTooLarge, websocket.ErrFrameTooLarge)
+		validateCloseFrame(t, conn, websocket.StatusTooLarge, websocket.ErrMessageTooLarge)
 	})
 	t.Run("server requires masked frames", func(t *testing.T) {
 		t.Parallel()
@@ -571,7 +571,7 @@ func TestProtocolBasics(t *testing.T) {
 			assert.DeepEqual(t, msg.Payload, []byte("jalapeño"), "payload")
 		}
 
-		// invlalid UTF-8 causes connection to close
+		// invalid UTF-8 causes connection to close
 		{
 
 			frame := &websocket.Frame{
@@ -647,6 +647,7 @@ func validateCloseFrame(t *testing.T, r io.Reader, wantStatus websocket.StatusCo
 	// must pass in a max payload size here.
 	frame, err := websocket.ReadFrame(r, 125)
 	assert.NilError(t, err)
+	t.Logf("validateCloseFrame: got frame: %v", frame)
 	assert.Equal(t, frame.Opcode, websocket.OpcodeClose, "expected close frame")
 
 	if wantStatus == 0 {

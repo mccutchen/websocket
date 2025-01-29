@@ -21,6 +21,7 @@ var (
 	ErrControlFrameFragmented = errors.New("control frame must not be fragmented")
 	ErrControlFrameTooLarge   = errors.New("control frame payload exceeds 125 bytes")
 	ErrFrameTooLarge          = errors.New("frame payload too large")
+	ErrMessageTooLarge        = errors.New("message paylaod too large")
 	ErrInvalidClosePayload    = errors.New("close frame payload must be at least 2 bytes")
 	ErrInvalidContinuation    = errors.New("unexpected continuation frame")
 	ErrInvalidUTF8            = errors.New("invalid UTF-8")

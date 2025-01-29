@@ -185,7 +185,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 				return nil, ws.closeOnReadError(StatusProtocolError, ErrInvalidContinuation)
 			}
 			if len(msg.Payload)+len(frame.Payload) > ws.maxMessageSize {
-				return nil, ws.closeOnReadError(StatusTooLarge, fmt.Errorf("message size exceeds maximum of %d bytes", ws.maxMessageSize))
+				return nil, ws.closeOnReadError(StatusTooLarge, ErrMessageTooLarge)
 			}
 			msg.Payload = append(msg.Payload, frame.Payload...)
 		case OpcodeClose:
@@ -205,10 +205,10 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		}
 
 		if frame.Fin {
-			ws.hooks.OnReadMessage(ws.clientKey, msg)
 			if !msg.Binary && !utf8.Valid(msg.Payload) {
 				return nil, ws.closeOnReadError(StatusUnsupportedPayload, ErrInvalidUTF8)
 			}
+			ws.hooks.OnReadMessage(ws.clientKey, msg)
 			return msg, nil
 		}
 	}
