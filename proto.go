@@ -332,7 +332,7 @@ var reservedStatusCodes = map[uint16]bool{
 	2999: true,
 }
 
-func validateFrame(frame *Frame, maxFrameSize int, mode Mode) error {
+func validateFrame(frame *Frame, mode Mode) error {
 	// We do not support any extensions, per the spec all RSV bits must be 0:
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
 	if frame.RSV1 || frame.RSV2 || frame.RSV3 {
@@ -348,10 +348,6 @@ func validateFrame(frame *Frame, maxFrameSize int, mode Mode) error {
 	payloadLen := len(frame.Payload)
 
 	switch frame.Opcode {
-	case OpcodeContinuation, OpcodeText, OpcodeBinary:
-		if payloadLen > maxFrameSize {
-			return ErrFrameTooLarge
-		}
 	case OpcodeClose, OpcodePing, OpcodePong:
 		// All control frames MUST have a payload length of 125 bytes or less
 		// and MUST NOT be fragmented.

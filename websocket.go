@@ -175,7 +175,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 			return nil, ws.closeOnReadError(code, err)
 		}
-		if err := validateFrame(frame, ws.maxFrameSize, ws.mode); err != nil {
+		if err := validateFrame(frame, ws.mode); err != nil {
 			return nil, ws.closeOnReadError(StatusProtocolError, err)
 		}
 		ws.hooks.OnReadFrame(ws.clientKey, frame)
