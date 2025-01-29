@@ -21,7 +21,7 @@ func Equal[T comparable](t testing.TB, got, want T, msg string, arg ...any) {
 			msg = "expected values to match"
 		}
 		msg = fmt.Sprintf(msg, arg...)
-		t.Fatalf("%s:\nwant: %#v\n got: %#v", msg, want, got)
+		t.Fatalf("%s:\nwant: %v\n got: %v", msg, want, got)
 	}
 }
 

@@ -343,13 +343,10 @@ func TestProtocolBasics(t *testing.T) {
 			Payload: []byte("hello"),
 		}
 		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, websocket.NewMaskingKey()))
-		// read server frame
+		// read server frame and ensure that it matches client frame
 		serverFrame, err := websocket.ReadFrame(conn, maxFrameSize)
 		assert.NilError(t, err)
-		// ensure we get back the same frame
-		assert.Equal(t, serverFrame.Fin, clientFrame.Fin, "expected matching FIN bits")
-		assert.Equal(t, serverFrame.Opcode, clientFrame.Opcode, "expected matching opcodes")
-		assert.Equal(t, string(serverFrame.Payload), string(clientFrame.Payload), "expected matching payloads")
+		assert.DeepEqual(t, serverFrame, clientFrame, "matching frames")
 
 		// ensure closing handshake is completed when initiated by client
 		clientClose := websocket.CloseFrame(websocket.StatusNormalClosure, nil)
@@ -580,8 +577,7 @@ func TestProtocolBasics(t *testing.T) {
 				Payload: []byte{0xc3},
 			}
 			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-			validateCloseFrame(t, conn, websocket.StatusUnsupportedPayload, "invalid UTF-8")
-
+			validateCloseFrame(t, conn, websocket.StatusUnsupportedPayload, websocket.ErrInvalidUTF8)
 		}
 
 	})
@@ -648,7 +644,7 @@ func validateCloseFrame(t *testing.T, r io.Reader, wantStatus websocket.StatusCo
 	frame, err := websocket.ReadFrame(r, 125)
 	assert.NilError(t, err)
 	t.Logf("validateCloseFrame: got frame: %v", frame)
-	assert.Equal(t, frame.Opcode, websocket.OpcodeClose, "expected close frame")
+	assert.Equal(t, frame.Opcode, websocket.OpcodeClose, "expected close opcode")
 
 	if wantStatus == 0 {
 		// nothing else to validate

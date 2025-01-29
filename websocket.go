@@ -29,6 +29,15 @@ const (
 	DefaultMaxMessageSize int = 1024 * 256 // 256KiB
 )
 
+// Mode enalbes server or client behavior
+type Mode bool
+
+// Valid modes
+const (
+	ServerMode Mode = false
+	ClientMode      = true
+)
+
 // Options define the limits imposed on a websocket connection.
 type Options struct {
 	Hooks          Hooks
@@ -48,7 +57,7 @@ type Websocket struct {
 	// connection state
 	conn     io.ReadWriteCloser
 	closedCh chan struct{}
-	server   bool
+	mode     Mode
 
 	// observability
 	clientKey ClientKey
@@ -79,14 +88,14 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Websocket, e
 		panic(fmt.Errorf("websocket: accept: hijack failed: %s", err))
 	}
 
-	return New(conn, clientKey, opts), nil
+	return New(conn, clientKey, ServerMode, opts), nil
 }
 
 // New manually creates a new websocket connection. Caller is responsible for
 // completing initial handshake before creating a websocket connection.
 //
 // Prefer Accept() when possible.
-func New(src io.ReadWriteCloser, clientKey ClientKey, opts Options) *Websocket {
+func New(src io.ReadWriteCloser, clientKey ClientKey, mode Mode, opts Options) *Websocket {
 	setDefaults(&opts)
 	if opts.ReadTimeout != 0 || opts.WriteTimeout != 0 {
 		if _, ok := src.(deadliner); !ok {
@@ -96,7 +105,7 @@ func New(src io.ReadWriteCloser, clientKey ClientKey, opts Options) *Websocket {
 	return &Websocket{
 		conn:           src,
 		closedCh:       make(chan struct{}),
-		server:         true,
+		mode:           mode,
 		clientKey:      clientKey,
 		hooks:          opts.Hooks,
 		readTimeout:    opts.ReadTimeout,
@@ -166,7 +175,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 			return nil, ws.closeOnReadError(code, err)
 		}
-		if err := validateFrame(frame, ws.maxFrameSize, ws.server); err != nil {
+		if err := validateFrame(frame, ws.maxFrameSize, ws.mode); err != nil {
 			return nil, ws.closeOnReadError(StatusProtocolError, err)
 		}
 		ws.hooks.OnReadFrame(ws.clientKey, frame)

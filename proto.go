@@ -331,14 +331,16 @@ var reservedStatusCodes = map[uint16]bool{
 	2999: true,
 }
 
-func validateFrame(frame *Frame, maxFrameSize int, requireMask bool) error {
+func validateFrame(frame *Frame, maxFrameSize int, mode Mode) error {
 	// We do not support any extensions, per the spec all RSV bits must be 0:
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
 	if frame.RSV1 || frame.RSV2 || frame.RSV3 {
 		return ErrUnsupportedRSVBits
 	}
 
-	if requireMask && !frame.Masked {
+	// If the data is being sent by the client, the frame(s) MUST be masked
+	// https://datatracker.ietf.org/doc/html/rfc6455#section-6.1
+	if mode == ServerMode && !frame.Masked {
 		return ErrUnmaskedClientFrame
 	}
 

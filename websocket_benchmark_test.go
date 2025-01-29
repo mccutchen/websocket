@@ -102,7 +102,7 @@ func BenchmarkReadMessage(b *testing.B) {
 			in:  reader,
 			out: io.Discard,
 		}
-		ws := websocket.New(conn, websocket.NewClientKey(), websocket.Options{
+		ws := websocket.New(conn, websocket.NewClientKey(), websocket.ServerMode, websocket.Options{
 			MaxFrameSize:   frameSize,
 			MaxMessageSize: msgSize,
 			// Hooks:           newTestHooks(b),

@@ -14,7 +14,7 @@ func TestDefaults(t *testing.T) {
 		conn net.Conn
 		key  = ClientKey("test-client-key")
 		opts = Options{}
-		ws   = New(conn, key, opts)
+		ws   = New(conn, key, ServerMode, opts)
 	)
 
 	assert.Equal(t, ws.ClientKey(), key, "incorrect client key")
@@ -22,7 +22,7 @@ func TestDefaults(t *testing.T) {
 	assert.Equal(t, ws.maxMessageSize, DefaultMaxMessageSize, "incorrect max message size")
 	assert.Equal(t, ws.readTimeout, 0, "incorrect read timeout")
 	assert.Equal(t, ws.writeTimeout, 0, "incorrect write timeout")
-	assert.Equal(t, ws.server, true, "incorrect server value")
+	assert.Equal(t, ws.mode, ServerMode, "incorrect mode value")
 	assert.Equal(t, ws.hooks.OnClose != nil, true, "OnClose hook is nil")
 	assert.Equal(t, ws.hooks.OnReadError != nil, true, "OnReadError hook is nil")
 	assert.Equal(t, ws.hooks.OnReadFrame != nil, true, "OnReadFrame hook is nil")
