@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -301,7 +300,6 @@ func (ws *Websocket) closeOnWriteError(code StatusCode, err error) error {
 }
 
 func (ws *Websocket) resetReadDeadline() {
-	log.Printf("XXX setting read timeout to %v", ws.readTimeout)
 	if ws.readTimeout <= 0 {
 		return
 	}
