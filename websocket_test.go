@@ -195,18 +195,11 @@ func TestConnectionLimits(t *testing.T) {
 		t.Parallel()
 
 		maxDuration := 250 * time.Millisecond
-		_, conn := setupRawConn(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ws, err := websocket.Accept(w, r, websocket.Options{
-				ReadTimeout:  maxDuration,
-				WriteTimeout: maxDuration,
-				Hooks:        newTestHooks(t),
-			})
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			ws.Serve(r.Context(), websocket.EchoHandler)
-		}))
+		_, conn := setupRawConn(t, websocket.Options{
+			ReadTimeout:  maxDuration,
+			WriteTimeout: maxDuration,
+			Hooks:        newTestHooks(t),
+		})
 
 		// client read should succeed, because we expect the server to send
 		// a close frame when its read deadline is reached
@@ -242,26 +235,16 @@ func TestConnectionLimits(t *testing.T) {
 		)
 
 		wg.Add(1)
-		_, conn := setupRawConn(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer wg.Done()
-			start := time.Now()
-			ws, err := websocket.Accept(w, r, websocket.Options{
-				ReadTimeout:    serverTimeout,
-				MaxFrameSize:   128,
-				MaxMessageSize: 256,
-				Hooks: websocket.Hooks{
-					OnReadError: func(key websocket.ClientKey, err error) {
-						gotServerReadError = err
-					},
+		_, conn := setupRawConn(t, websocket.Options{
+			ReadTimeout:    serverTimeout,
+			MaxFrameSize:   128,
+			MaxMessageSize: 256,
+			Hooks: websocket.Hooks{
+				OnReadError: func(key websocket.ClientKey, err error) {
+					gotServerReadError = err
 				},
-			})
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			ws.Serve(r.Context(), websocket.EchoHandler)
-			elapsedServerTime = time.Since(start)
-		}))
+			},
+		})
 
 		// should cause the client end of the connection to close well before
 		// the max request time configured above
@@ -300,42 +283,19 @@ func TestProtocolBasics(t *testing.T) {
 		maxMessageSize = 256
 	)
 
-	newLoggingEchoHandler := func() (http.HandlerFunc, <-chan *websocket.Message) {
-		// buffered chan to allow msg to be appended before test client code
-		// is ready to read
-		msgLog := make(chan *websocket.Message, 1)
-		handler := func(w http.ResponseWriter, r *http.Request) {
-			ws, err := websocket.Accept(w, r, websocket.Options{
-				ReadTimeout:    maxDuration,
-				WriteTimeout:   maxDuration,
-				MaxFrameSize:   maxFrameSize,
-				MaxMessageSize: maxMessageSize,
-				Hooks:          newTestHooks(t),
-			})
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			ws.Serve(r.Context(), func(ctx context.Context, msg *websocket.Message) (*websocket.Message, error) {
-				msg, err := websocket.EchoHandler(ctx, msg)
-				if err != nil {
-					return nil, err
-				}
-				msgLog <- msg
-				return msg, nil
-			})
+	newOpts := func(t *testing.T) websocket.Options {
+		return websocket.Options{
+			ReadTimeout:    maxDuration,
+			WriteTimeout:   maxDuration,
+			MaxFrameSize:   maxFrameSize,
+			MaxMessageSize: maxMessageSize,
+			Hooks:          newTestHooks(t),
 		}
-		return handler, msgLog
-	}
-
-	newEchoHandler := func() http.HandlerFunc {
-		handler, _ := newLoggingEchoHandler()
-		return handler
 	}
 
 	t.Run("basic echo functionality", func(t *testing.T) {
 		t.Parallel()
-		_, conn := setupRawConn(t, newEchoHandler())
+		_, conn := setupRawConn(t, newOpts(t))
 		// write client frame
 		clientFrame := &websocket.Frame{
 			Opcode:  websocket.OpcodeText,
@@ -353,6 +313,7 @@ func TestProtocolBasics(t *testing.T) {
 		assert.NilError(t, websocket.WriteFrameMasked(conn, clientClose, websocket.NewMaskingKey()))
 		validateCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
 
+		assert.Error(t, conn.Close(), errors.New("foo"))
 		// FIXME: this write should fail, but the connection doesn't seem to
 		// get closed. for now we skip.
 		if false {
@@ -366,8 +327,7 @@ func TestProtocolBasics(t *testing.T) {
 		t.Parallel()
 
 		assert.Equal(t, maxMessageSize/maxFrameSize, 2, "test assumes maxMessageSize/maxFrameSize == 2, may need to be updated")
-		echoHandler, msgLog := newLoggingEchoHandler()
-		_, conn := setupRawConn(t, echoHandler)
+		ws, conn := setupRawConn(t, newOpts(t))
 
 		// write fragmented message that will be assembled into a message that
 		// exceeds the message size limit
@@ -388,13 +348,14 @@ func TestProtocolBasics(t *testing.T) {
 			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
 			wantMessagePayload = append(wantMessagePayload, frame.Payload...)
 		}
-		msg := mustConsumeMessage(t, msgLog)
+		t.Logf("expecting final payload: %q", wantMessagePayload)
+		msg := mustConsumeMessage(t, ws)
 		assert.DeepEqual(t, msg.Payload, wantMessagePayload, "incorrect messaage payload")
 	})
 
 	t.Run("unexpected continuation frame", func(t *testing.T) {
 		t.Parallel()
-		_, conn := setupRawConn(t, newEchoHandler())
+		_, conn := setupRawConn(t, newOpts(t))
 		clientFrame := &websocket.Frame{
 			Opcode:  websocket.OpcodeContinuation,
 			Fin:     true,
@@ -406,7 +367,7 @@ func TestProtocolBasics(t *testing.T) {
 
 	t.Run("max frame size", func(t *testing.T) {
 		t.Parallel()
-		_, conn := setupRawConn(t, newEchoHandler())
+		_, conn := setupRawConn(t, newOpts(t))
 		clientFrame := &websocket.Frame{
 			Opcode:  websocket.OpcodeText,
 			Fin:     true,
@@ -420,7 +381,7 @@ func TestProtocolBasics(t *testing.T) {
 		t.Parallel()
 
 		assert.Equal(t, maxMessageSize/maxFrameSize, 2, "test assumes maxMessageSize/maxFrameSize == 2, may need to be updated")
-		_, conn := setupRawConn(t, newEchoHandler())
+		_, conn := setupRawConn(t, newOpts(t))
 
 		// write fragmented message that will be assembled into a message that
 		// exceeds the message size limit
@@ -453,7 +414,7 @@ func TestProtocolBasics(t *testing.T) {
 	})
 	t.Run("server requires masked frames", func(t *testing.T) {
 		t.Parallel()
-		_, conn := setupRawConn(t, newEchoHandler())
+		_, conn := setupRawConn(t, newOpts(t))
 		frame := &websocket.Frame{
 			Opcode:  websocket.OpcodeText,
 			Fin:     true,
@@ -465,7 +426,7 @@ func TestProtocolBasics(t *testing.T) {
 
 	t.Run("server rejects RSV bits", func(t *testing.T) {
 		t.Parallel()
-		_, conn := setupRawConn(t, newEchoHandler())
+		_, conn := setupRawConn(t, newOpts(t))
 		frame := &websocket.Frame{
 			Opcode:  websocket.OpcodeText,
 			RSV1:    true,
@@ -478,7 +439,7 @@ func TestProtocolBasics(t *testing.T) {
 
 	t.Run("control frames must not be fragmented", func(t *testing.T) {
 		t.Parallel()
-		_, conn := setupRawConn(t, newEchoHandler())
+		_, conn := setupRawConn(t, newOpts(t))
 		frame := &websocket.Frame{
 			Opcode: websocket.OpcodeClose,
 			Fin:    false,
@@ -489,7 +450,7 @@ func TestProtocolBasics(t *testing.T) {
 
 	t.Run("control frames must be less than 125 bytes", func(t *testing.T) {
 		t.Parallel()
-		_, conn := setupRawConn(t, newEchoHandler())
+		_, conn := setupRawConn(t, newOpts(t))
 		frame := &websocket.Frame{
 			Opcode:  websocket.OpcodeClose,
 			Payload: bytes.Repeat([]byte("0"), 126),
@@ -500,8 +461,7 @@ func TestProtocolBasics(t *testing.T) {
 
 	t.Run("test messages must be valid utf8", func(t *testing.T) {
 		t.Parallel()
-		echoHandler, msgLog := newLoggingEchoHandler()
-		_, conn := setupRawConn(t, echoHandler)
+		ws, conn := setupRawConn(t, newOpts(t))
 
 		// valid UTF-8 accepted and echoed back
 		{
@@ -511,7 +471,7 @@ func TestProtocolBasics(t *testing.T) {
 				Payload: []byte("Iñtërnâtiônàlizætiøn"),
 			}
 			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-			msg := mustConsumeMessage(t, msgLog)
+			msg := mustConsumeMessage(t, ws)
 			assert.DeepEqual(t, msg.Payload, frame.Payload, "incorrect message payloady")
 		}
 
@@ -540,7 +500,7 @@ func TestProtocolBasics(t *testing.T) {
 				assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
 			}
 
-			msg := mustConsumeMessage(t, msgLog)
+			msg := mustConsumeMessage(t, ws)
 			assert.DeepEqual(t, msg.Payload, []byte("Iñtërnâtiônàlizætiøn"), "incorrect message payloady")
 		}
 
@@ -564,7 +524,7 @@ func TestProtocolBasics(t *testing.T) {
 				assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
 			}
 
-			msg := mustConsumeMessage(t, msgLog)
+			msg := mustConsumeMessage(t, ws)
 			assert.DeepEqual(t, msg.Payload, []byte("jalapeño"), "payload")
 		}
 
@@ -584,24 +544,30 @@ func TestProtocolBasics(t *testing.T) {
 
 }
 
-func mustConsumeMessage(tb testing.TB, msgLog <-chan *websocket.Message) *websocket.Message {
+func mustConsumeMessage(tb testing.TB, ws *websocket.Websocket) *websocket.Message {
 	tb.Helper()
-	select {
-	case msg := <-msgLog:
-		return msg
-	case <-time.After(time.Second):
-		tb.Fatalf("failed to consume message in time")
-	}
-	panic("unreachable")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	msg, err := ws.ReadMessage(ctx)
+	assert.NilError(tb, err)
+	return msg
 }
 
-// setupRawConn is a test helpers that runs a test server and does the
-// initial websocket handshake. The returned connection is ready for use to
-// sent/receive websocket messages.
-func setupRawConn(t testing.TB, handler http.Handler) (*httptest.Server, net.Conn) {
+// setupRawConn runs a test echo server with the given opts, handles the
+// client handshake, and returns an initialized websocket.Websocket client
+// and the underlying TCP client connection, ready to send/receive messages.
+func setupRawConn(t testing.TB, opts websocket.Options) (*websocket.Websocket, net.Conn) {
 	t.Helper()
 
-	srv := httptest.NewServer(handler)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, opts)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ws.Serve(r.Context(), websocket.EchoHandler)
+	}))
+
 	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
 	assert.NilError(t, err)
 
@@ -626,7 +592,11 @@ func setupRawConn(t testing.TB, handler http.Handler) (*httptest.Server, net.Con
 	assert.NilError(t, err)
 	assert.StatusCode(t, resp, http.StatusSwitchingProtocols)
 
-	return srv, conn
+	ws := websocket.New(conn, websocket.ClientKey("test-client"), websocket.ClientMode, websocket.Options{})
+	t.Cleanup(func() {
+		assert.NilError(t, ws.Close())
+	})
+	return ws, conn
 }
 
 // validateCloseFrame ensures that we can read a close frame from the given
