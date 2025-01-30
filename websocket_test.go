@@ -600,6 +600,79 @@ func TestProtocolBasics(t *testing.T) {
 	})
 }
 
+func TestCloseFrames(t *testing.T) {
+	// construct a special close frame with an invalid utf8 reason outside of
+	// test table because it can't be defined inline in a struct literal
+	frameWithInvalidUTF8Reason := func() *websocket.Frame {
+		payload := make([]byte, 0, 3)
+		payload = binary.BigEndian.AppendUint16(payload, uint16(websocket.StatusNormalClosure))
+		payload = append(payload, 0xc3)
+		return &websocket.Frame{
+			Opcode:  websocket.OpcodeClose,
+			Fin:     true,
+			Payload: payload,
+		}
+	}
+
+	testCases := map[string]struct {
+		frame      *websocket.Frame
+		wantCode   websocket.StatusCode
+		wantReason string
+	}{
+		"empty payload ok": {
+			frame: &websocket.Frame{
+				Opcode: websocket.OpcodeClose,
+				Fin:    true,
+			},
+			wantCode:   websocket.StatusNormalClosure,
+			wantReason: "",
+		},
+		"one byte payload is illegal": {
+			frame: &websocket.Frame{
+				Opcode:  websocket.OpcodeClose,
+				Fin:     true,
+				Payload: []byte("X"),
+			},
+			wantCode:   websocket.StatusProtocolError,
+			wantReason: "close frame payload must be at least 2 bytes",
+		},
+		"invalid close code (too low)": {
+			frame:      websocket.CloseFrame(websocket.StatusCode(999), ""),
+			wantCode:   websocket.StatusProtocolError,
+			wantReason: "close status code out of range",
+		},
+		"invalid close code (too high))": {
+			frame:      websocket.CloseFrame(websocket.StatusCode(5001), ""),
+			wantCode:   websocket.StatusProtocolError,
+			wantReason: "close status code out of range",
+		},
+		"reserved close code": {
+			frame:      websocket.CloseFrame(websocket.StatusCode(1015), ""),
+			wantCode:   websocket.StatusProtocolError,
+			wantReason: "close status code is reserved",
+		},
+		"invalid utf8 in close reason": {
+			frame:      frameWithInvalidUTF8Reason(),
+			wantCode:   websocket.StatusProtocolError,
+			wantReason: "invalid UTF-8",
+		},
+	}
+
+	for name, tc := range testCases {
+		tc := tc
+		t.Run(name, func(t *testing.T) {
+			conn := setupRawConn(t, websocket.Options{})
+			t.Logf("sending close frame %v", tc.frame)
+			assert.NilError(t, websocket.WriteFrameMasked(conn, tc.frame, websocket.NewMaskingKey()))
+			var wantErr error
+			if tc.wantReason != "" {
+				wantErr = errors.New(tc.wantReason)
+			}
+			validateCloseFrame(t, conn, tc.wantCode, wantErr)
+		})
+	}
+}
+
 func mustConsumeMessage(tb testing.TB, ws *websocket.Websocket) *websocket.Message {
 	tb.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -651,6 +724,7 @@ func setupRawConn(t testing.TB, opts websocket.Options) net.Conn {
 }
 
 func setupClient(t testing.TB, conn net.Conn, opts websocket.Options) *websocket.Websocket {
+	t.Helper()
 	return websocket.New(conn, websocket.ClientKey("test-client"), websocket.ClientMode, opts)
 }
 
@@ -669,7 +743,7 @@ func validateCloseFrame(t *testing.T, r io.Reader, wantStatus websocket.StatusCo
 	frame, err := websocket.ReadFrame(r, 125)
 	assert.NilError(t, err)
 	t.Logf("validateCloseFrame: got frame: %v", frame)
-	assert.Equal(t, frame.Opcode, websocket.OpcodeClose, "expected close opcode")
+	assert.Equal(t, frame.Opcode, websocket.OpcodeClose, "opcode")
 
 	if wantStatus == 0 {
 		// nothing else to validate
@@ -680,9 +754,9 @@ func validateCloseFrame(t *testing.T, r io.Reader, wantStatus websocket.StatusCo
 	statusCode := websocket.StatusCode(binary.BigEndian.Uint16(frame.Payload[:2]))
 	closeMsg := string(frame.Payload[2:])
 	t.Logf("got close frame: code=%v msg=%q", statusCode, closeMsg)
-	assert.Equal(t, int(statusCode), int(wantStatus), "got incorrect close status code")
+	assert.Equal(t, int(statusCode), int(wantStatus), "status code")
 	if wantErr != nil {
-		assert.Contains(t, closeMsg, wantErr.Error(), "got incorrect close message")
+		assert.Contains(t, closeMsg, wantErr.Error(), "reason")
 	}
 }
 

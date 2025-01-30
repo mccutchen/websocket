@@ -15,8 +15,8 @@ const requiredVersion = "13"
 
 // Protocol-level errors.
 var (
-	ErrCloseStatusInvalid     = errors.New("close frame status code out of range")
-	ErrCloseStatusReserved    = errors.New("close frame status code is reserve")
+	ErrCloseStatusInvalid     = errors.New("close status code out of range")
+	ErrCloseStatusReserved    = errors.New("close status code is reserved")
 	ErrContinuationExpected   = errors.New("expected continuation frame")
 	ErrControlFrameFragmented = errors.New("control frame must not be fragmented")
 	ErrControlFrameTooLarge   = errors.New("control frame payload exceeds 125 bytes")
