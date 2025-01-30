@@ -461,26 +461,24 @@ func TestProtocol(t *testing.T) {
 
 	t.Run("jumbo frames are okay", func(t *testing.T) {
 		t.Parallel()
-		jumboSize := 64 * 1024
-		newOpts := func(t *testing.T) websocket.Options {
+		jumboSize := 64 * 1024 // payloads of length 65536 or more must be encoded as 8 bytes
+		newJumboOpts := func(t *testing.T) websocket.Options {
 			return websocket.Options{
 				MaxFrameSize:   jumboSize,
 				MaxMessageSize: jumboSize,
 				Hooks:          newTestHooks(t),
 			}
 		}
-		var (
-			conn = setupRawConn(t, newOpts(t))
-			ws   = setupClient(t, conn, newOpts(t))
-		)
-		frame := &websocket.Frame{
+		conn := setupRawConn(t, newJumboOpts(t))
+		clientFrame := &websocket.Frame{
 			Opcode:  websocket.OpcodeText,
 			Fin:     true,
 			Payload: bytes.Repeat([]byte("*"), jumboSize),
 		}
-		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-		msg := mustConsumeMessage(t, ws)
-		assert.DeepEqual(t, msg.Payload, frame.Payload, "payload")
+		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, websocket.NewMaskingKey()))
+		respFrame, err := websocket.ReadFrame(conn, jumboSize)
+		assert.NilError(t, err)
+		assert.DeepEqual(t, respFrame.Payload, clientFrame.Payload, "payload")
 	})
 
 	t.Run("ping frames handled between fragments", func(t *testing.T) {
