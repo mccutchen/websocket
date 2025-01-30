@@ -278,7 +278,11 @@ func (ws *Websocket) Close() error {
 func (ws *Websocket) closeWithError(code StatusCode, err error) error {
 	ws.hooks.OnClose(ws.clientKey, code, err)
 	close(ws.closedCh)
-	if err := WriteFrame(ws.conn, CloseFrame(code, err)); err != nil {
+	var reason string
+	if err != nil {
+		reason = err.Error()
+	}
+	if err := WriteFrame(ws.conn, CloseFrame(code, reason)); err != nil {
 		return fmt.Errorf("websocket: failed to write close frame: %w", err)
 	}
 	if err := ws.conn.Close(); err != nil {

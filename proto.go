@@ -262,16 +262,12 @@ func WriteFrameMasked(dst io.Writer, frame *Frame, mask MaskingKey) error {
 }
 
 // CloseFrame creates a close frame with an optional error message.
-func CloseFrame(code StatusCode, err error) *Frame {
+func CloseFrame(code StatusCode, reason string) *Frame {
 	var payload []byte
 	if code > 0 {
-		var errMsg []byte
-		if err != nil {
-			errMsg = []byte(err.Error())
-		}
-		payload = make([]byte, 0, 2+len(errMsg))
+		payload = make([]byte, 0, 2+len(reason))
 		payload = binary.BigEndian.AppendUint16(payload, uint16(code))
-		payload = append(payload, errMsg...)
+		payload = append(payload, []byte(reason)...)
 	}
 	return &Frame{
 		Fin:     true,

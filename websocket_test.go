@@ -319,7 +319,7 @@ func TestProtocolBasics(t *testing.T) {
 		assert.DeepEqual(t, serverFrame, clientFrame, "matching frames")
 
 		// ensure closing handshake is completed when initiated by client
-		clientClose := websocket.CloseFrame(websocket.StatusNormalClosure, nil)
+		clientClose := websocket.CloseFrame(websocket.StatusNormalClosure, "")
 		assert.NilError(t, websocket.WriteFrameMasked(conn, clientClose, websocket.NewMaskingKey()))
 		validateCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
 
@@ -576,6 +576,27 @@ func TestProtocolBasics(t *testing.T) {
 		assert.NilError(t, err)
 		assert.Equal(t, msg.Binary, true, "binary message")
 		assert.DeepEqual(t, msg.Payload, frame.Payload, "binary payload")
+	})
+
+	t.Run("jumbo frames are okay", func(t *testing.T) {
+		t.Parallel()
+		var (
+			opts = websocket.Options{
+				MaxFrameSize:   64*1024 + 1,
+				MaxMessageSize: 64*1024 + 1,
+				Hooks:          newTestHooks(t),
+			}
+			conn = setupRawConn(t, opts)
+			ws   = setupClient(t, conn, opts)
+		)
+		frame := &websocket.Frame{
+			Opcode:  websocket.OpcodeText,
+			Fin:     true,
+			Payload: bytes.Repeat([]byte("*"), opts.MaxFrameSize),
+		}
+		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
+		msg := mustConsumeMessage(t, ws)
+		assert.DeepEqual(t, msg.Payload, frame.Payload, "payload")
 	})
 }
 
