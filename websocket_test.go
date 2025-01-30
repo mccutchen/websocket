@@ -483,21 +483,17 @@ func TestProtocol(t *testing.T) {
 
 	t.Run("ping frames handled between fragments", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, maxMessageSize/maxFrameSize, 2, "test assumes maxMessageSize/maxFrameSize == 2, may need to be updated")
-
 		var (
 			opts = newOpts(t)
 			conn = setupRawConn(t, opts)
 			ws   = setupClient(t, conn, opts)
 		)
-
-		// write fragmented message that will be assembled into a message that
-		// exceeds the message size limit
+		// write two fragmented frames with a ping control frame in between
 		clientFrames := []*websocket.Frame{
 			{
 				Opcode:  websocket.OpcodeText,
 				Fin:     false,
-				Payload: bytes.Repeat([]byte("0"), maxFrameSize),
+				Payload: []byte("0"),
 			},
 			{
 				Opcode: websocket.OpcodePing,
@@ -506,25 +502,48 @@ func TestProtocol(t *testing.T) {
 			{
 				Opcode:  websocket.OpcodeContinuation,
 				Fin:     true,
-				Payload: bytes.Repeat([]byte("1"), maxFrameSize),
+				Payload: []byte("1"),
 			},
 		}
-		var wantMessagePayload []byte
 		for _, frame := range clientFrames {
 			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-			if frame.Opcode != websocket.OpcodePing {
-				wantMessagePayload = append(wantMessagePayload, frame.Payload...)
-			}
 		}
 
-		// should get a pong control frame first
+		// should get a pong control frame first, even though ping was sent
+		// as second frame
 		pongMsg, err := websocket.ReadFrame(conn, 125)
 		assert.NilError(t, err)
 		assert.Equal(t, pongMsg.Opcode, websocket.OpcodePong, "opcode")
 
 		// then should get the echo'd message from the two fragments
 		msg := mustConsumeMessage(t, ws)
-		assert.DeepEqual(t, msg.Payload, wantMessagePayload, "incorrect messaage payload")
+		assert.DeepEqual(t, msg.Payload, []byte("01"), "incorrect messaage payload")
+	})
+
+	t.Run("pong frames ignored", func(t *testing.T) {
+		t.Parallel()
+		conn := setupRawConn(t, newOpts(t))
+
+		// write two frames, pong control frame followed by text frame.
+		//
+		// pong frame should be ignored, text frame should be echo'd
+		clientFrames := []*websocket.Frame{
+			{
+				Opcode: websocket.OpcodePong,
+				Fin:    true,
+			},
+			{
+				Opcode:  websocket.OpcodeText,
+				Fin:     true,
+				Payload: []byte("0"),
+			},
+		}
+		for _, frame := range clientFrames {
+			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
+		}
+		frame, err := websocket.ReadFrame(conn, 10)
+		assert.NilError(t, err)
+		assert.DeepEqual(t, frame.Payload, []byte("0"), "payload")
 	})
 }
 
@@ -652,7 +671,7 @@ func TestProtocolErrors(t *testing.T) {
 		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrControlFrameTooLarge)
 	})
 
-	t.Run("test messages must be valid utf8", func(t *testing.T) {
+	t.Run("text messages must be valid utf8", func(t *testing.T) {
 		t.Parallel()
 		conn := setupRawConn(t, newOpts(t))
 		frame := &websocket.Frame{
@@ -662,6 +681,39 @@ func TestProtocolErrors(t *testing.T) {
 		}
 		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
 		validateCloseFrame(t, conn, websocket.StatusUnsupportedPayload, websocket.ErrInvalidUTF8)
+	})
+
+	t.Run("missed continuation frame", func(t *testing.T) {
+		t.Parallel()
+		conn := setupRawConn(t, newOpts(t))
+		// write fragmented message that will be assembled into a message that
+		// exceeds the message size limit
+		clientFrames := []*websocket.Frame{
+			{
+				Opcode:  websocket.OpcodeText,
+				Fin:     false,
+				Payload: bytes.Repeat([]byte("0"), maxFrameSize),
+			},
+			{
+				Opcode:  websocket.OpcodeText,
+				Fin:     true,
+				Payload: bytes.Repeat([]byte("1"), maxFrameSize),
+			},
+		}
+		for _, frame := range clientFrames {
+			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
+		}
+		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrContinuationExpected)
+	})
+
+	t.Run("unknown opcode", func(t *testing.T) {
+		t.Parallel()
+		conn := setupRawConn(t, newOpts(t))
+		assert.NilError(t, websocket.WriteFrameMasked(conn, &websocket.Frame{
+			Opcode: websocket.Opcode(255),
+			Fin:    true,
+		}, websocket.NewMaskingKey()))
+		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrUnknownOpcode)
 	})
 }
 

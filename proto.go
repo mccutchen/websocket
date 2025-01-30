@@ -25,6 +25,7 @@ var (
 	ErrInvalidClosePayload    = errors.New("close frame payload must be at least 2 bytes")
 	ErrInvalidContinuation    = errors.New("unexpected continuation frame")
 	ErrInvalidUTF8            = errors.New("invalid UTF-8")
+	ErrUnknownOpcode          = errors.New("unknown opcode")
 	ErrUnmaskedClientFrame    = errors.New("received unmasked client frame")
 	ErrUnsupportedRSVBits     = errors.New("frame has unsupported RSV bits set")
 )
