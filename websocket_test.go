@@ -286,7 +286,7 @@ func TestConnectionLimits(t *testing.T) {
 	})
 }
 
-func TestProtocolBasics(t *testing.T) {
+func TestProtocol(t *testing.T) {
 	var (
 		maxDuration    = 250 * time.Millisecond
 		maxFrameSize   = 128
@@ -366,112 +366,6 @@ func TestProtocolBasics(t *testing.T) {
 		assert.DeepEqual(t, msg.Payload, wantMessagePayload, "incorrect messaage payload")
 	})
 
-	t.Run("unexpected continuation frame", func(t *testing.T) {
-		t.Parallel()
-		conn := setupRawConn(t, newOpts(t))
-		clientFrame := &websocket.Frame{
-			Opcode:  websocket.OpcodeContinuation,
-			Fin:     true,
-			Payload: []byte("0"),
-		}
-		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, websocket.NewMaskingKey()))
-		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrContinuationExpected)
-	})
-
-	t.Run("max frame size", func(t *testing.T) {
-		t.Parallel()
-		conn := setupRawConn(t, newOpts(t))
-		clientFrame := &websocket.Frame{
-			Opcode:  websocket.OpcodeText,
-			Fin:     true,
-			Payload: bytes.Repeat([]byte("0"), maxFrameSize+1),
-		}
-		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, websocket.NewMaskingKey()))
-		validateCloseFrame(t, conn, websocket.StatusTooLarge, websocket.ErrFrameTooLarge)
-	})
-
-	t.Run("max message size", func(t *testing.T) {
-		t.Parallel()
-
-		assert.Equal(t, maxMessageSize/maxFrameSize, 2, "test assumes maxMessageSize/maxFrameSize == 2, may need to be updated")
-		conn := setupRawConn(t, newOpts(t))
-
-		// write fragmented message that will be assembled into a message that
-		// exceeds the message size limit
-		clientFrames := []*websocket.Frame{
-			{
-				Opcode:  websocket.OpcodeText,
-				Fin:     false,
-				Payload: bytes.Repeat([]byte("0"), maxFrameSize),
-			},
-			{
-				Opcode:  websocket.OpcodeContinuation,
-				Fin:     false,
-				Payload: bytes.Repeat([]byte("1"), maxFrameSize),
-			},
-
-			{
-				Opcode:  websocket.OpcodeContinuation,
-				Fin:     true,
-				Payload: []byte("2"),
-			},
-		}
-		for _, frame := range clientFrames {
-			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-		}
-
-		// the server should close the connection with an error after reading
-		// the 3rd fragment above, as it will cause the total message size to
-		// exceed the limit.
-		validateCloseFrame(t, conn, websocket.StatusTooLarge, websocket.ErrMessageTooLarge)
-	})
-	t.Run("server requires masked frames", func(t *testing.T) {
-		t.Parallel()
-		conn := setupRawConn(t, newOpts(t))
-		frame := &websocket.Frame{
-			Opcode:  websocket.OpcodeText,
-			Fin:     true,
-			Payload: []byte("hello"),
-		}
-		assert.NilError(t, websocket.WriteFrame(conn, frame))
-		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrUnmaskedClientFrame)
-	})
-
-	t.Run("server rejects RSV bits", func(t *testing.T) {
-		t.Parallel()
-		conn := setupRawConn(t, newOpts(t))
-		frame := &websocket.Frame{
-			Opcode:  websocket.OpcodeText,
-			RSV1:    true,
-			Fin:     true,
-			Payload: []byte("hello"),
-		}
-		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrUnsupportedRSVBits)
-	})
-
-	t.Run("control frames must not be fragmented", func(t *testing.T) {
-		t.Parallel()
-		conn := setupRawConn(t, newOpts(t))
-		frame := &websocket.Frame{
-			Opcode: websocket.OpcodeClose,
-			Fin:    false,
-		}
-		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrControlFrameFragmented)
-	})
-
-	t.Run("control frames must be less than 125 bytes", func(t *testing.T) {
-		t.Parallel()
-		conn := setupRawConn(t, newOpts(t))
-		frame := &websocket.Frame{
-			Opcode:  websocket.OpcodeClose,
-			Payload: bytes.Repeat([]byte("0"), 126),
-		}
-		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrControlFrameTooLarge)
-	})
-
 	t.Run("test messages must be valid utf8", func(t *testing.T) {
 		t.Parallel()
 		var (
@@ -544,19 +438,6 @@ func TestProtocolBasics(t *testing.T) {
 			msg := mustConsumeMessage(t, ws)
 			assert.DeepEqual(t, msg.Payload, []byte("jalapeño"), "payload")
 		}
-
-		// invalid UTF-8 causes connection to close
-		{
-
-			frame := &websocket.Frame{
-				Opcode:  websocket.OpcodeText,
-				Fin:     true,
-				Payload: []byte{0xc3},
-			}
-			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-			validateCloseFrame(t, conn, websocket.StatusUnsupportedPayload, websocket.ErrInvalidUTF8)
-		}
-
 	})
 
 	t.Run("binary messages can be invalid UTF-8", func(t *testing.T) {
@@ -580,23 +461,209 @@ func TestProtocolBasics(t *testing.T) {
 
 	t.Run("jumbo frames are okay", func(t *testing.T) {
 		t.Parallel()
-		var (
-			opts = websocket.Options{
-				MaxFrameSize:   64*1024 + 1,
-				MaxMessageSize: 64*1024 + 1,
+		jumboSize := 64 * 1024
+		newOpts := func(t *testing.T) websocket.Options {
+			return websocket.Options{
+				MaxFrameSize:   jumboSize,
+				MaxMessageSize: jumboSize,
 				Hooks:          newTestHooks(t),
 			}
-			conn = setupRawConn(t, opts)
-			ws   = setupClient(t, conn, opts)
+		}
+		var (
+			conn = setupRawConn(t, newOpts(t))
+			ws   = setupClient(t, conn, newOpts(t))
 		)
 		frame := &websocket.Frame{
 			Opcode:  websocket.OpcodeText,
 			Fin:     true,
-			Payload: bytes.Repeat([]byte("*"), opts.MaxFrameSize),
+			Payload: bytes.Repeat([]byte("*"), jumboSize),
 		}
 		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
 		msg := mustConsumeMessage(t, ws)
 		assert.DeepEqual(t, msg.Payload, frame.Payload, "payload")
+	})
+
+	t.Run("ping frames handled between fragments", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, maxMessageSize/maxFrameSize, 2, "test assumes maxMessageSize/maxFrameSize == 2, may need to be updated")
+
+		var (
+			opts = newOpts(t)
+			conn = setupRawConn(t, opts)
+			ws   = setupClient(t, conn, opts)
+		)
+
+		// write fragmented message that will be assembled into a message that
+		// exceeds the message size limit
+		clientFrames := []*websocket.Frame{
+			{
+				Opcode:  websocket.OpcodeText,
+				Fin:     false,
+				Payload: bytes.Repeat([]byte("0"), maxFrameSize),
+			},
+			{
+				Opcode: websocket.OpcodePing,
+				Fin:    true,
+			},
+			{
+				Opcode:  websocket.OpcodeContinuation,
+				Fin:     true,
+				Payload: bytes.Repeat([]byte("1"), maxFrameSize),
+			},
+		}
+		var wantMessagePayload []byte
+		for _, frame := range clientFrames {
+			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
+			if frame.Opcode != websocket.OpcodePing {
+				wantMessagePayload = append(wantMessagePayload, frame.Payload...)
+			}
+		}
+
+		// should get a pong control frame first
+		pongMsg, err := websocket.ReadFrame(conn, 125)
+		assert.NilError(t, err)
+		assert.Equal(t, pongMsg.Opcode, websocket.OpcodePong, "opcode")
+
+		// then should get the echo'd message from the two fragments
+		msg := mustConsumeMessage(t, ws)
+		assert.DeepEqual(t, msg.Payload, wantMessagePayload, "incorrect messaage payload")
+	})
+}
+
+func TestProtocolErrors(t *testing.T) {
+	var (
+		maxDuration    = 250 * time.Millisecond
+		maxFrameSize   = 128
+		maxMessageSize = 256
+	)
+
+	newOpts := func(t *testing.T) websocket.Options {
+		return websocket.Options{
+			ReadTimeout:    maxDuration,
+			WriteTimeout:   maxDuration,
+			MaxFrameSize:   maxFrameSize,
+			MaxMessageSize: maxMessageSize,
+			Hooks:          newTestHooks(t),
+		}
+	}
+
+	t.Run("unexpected continuation frame", func(t *testing.T) {
+		t.Parallel()
+		conn := setupRawConn(t, newOpts(t))
+		clientFrame := &websocket.Frame{
+			Opcode:  websocket.OpcodeContinuation,
+			Fin:     true,
+			Payload: []byte("0"),
+		}
+		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, websocket.NewMaskingKey()))
+		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrContinuationExpected)
+	})
+
+	t.Run("max frame size", func(t *testing.T) {
+		t.Parallel()
+		conn := setupRawConn(t, newOpts(t))
+		clientFrame := &websocket.Frame{
+			Opcode:  websocket.OpcodeText,
+			Fin:     true,
+			Payload: bytes.Repeat([]byte("0"), maxFrameSize+1),
+		}
+		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, websocket.NewMaskingKey()))
+		validateCloseFrame(t, conn, websocket.StatusTooLarge, websocket.ErrFrameTooLarge)
+	})
+
+	t.Run("max message size", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, maxMessageSize/maxFrameSize, 2, "test assumes maxMessageSize/maxFrameSize == 2, may need to be updated")
+		conn := setupRawConn(t, newOpts(t))
+
+		// write fragmented message that will be assembled into a message that
+		// exceeds the message size limit
+		clientFrames := []*websocket.Frame{
+			{
+				Opcode:  websocket.OpcodeText,
+				Fin:     false,
+				Payload: bytes.Repeat([]byte("0"), maxFrameSize),
+			},
+			{
+				Opcode:  websocket.OpcodeContinuation,
+				Fin:     false,
+				Payload: bytes.Repeat([]byte("1"), maxFrameSize),
+			},
+
+			{
+				Opcode:  websocket.OpcodeContinuation,
+				Fin:     true,
+				Payload: []byte("2"),
+			},
+		}
+		for _, frame := range clientFrames {
+			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
+		}
+
+		// the server should close the connection with an error after reading
+		// the 3rd fragment above, as it will cause the total message size to
+		// exceed the limit.
+		validateCloseFrame(t, conn, websocket.StatusTooLarge, websocket.ErrMessageTooLarge)
+	})
+
+	t.Run("server requires masked frames", func(t *testing.T) {
+		t.Parallel()
+		conn := setupRawConn(t, newOpts(t))
+		frame := &websocket.Frame{
+			Opcode:  websocket.OpcodeText,
+			Fin:     true,
+			Payload: []byte("hello"),
+		}
+		assert.NilError(t, websocket.WriteFrame(conn, frame))
+		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrUnmaskedClientFrame)
+	})
+
+	t.Run("server rejects RSV bits", func(t *testing.T) {
+		t.Parallel()
+		conn := setupRawConn(t, newOpts(t))
+		frame := &websocket.Frame{
+			Opcode:  websocket.OpcodeText,
+			RSV1:    true,
+			Fin:     true,
+			Payload: []byte("hello"),
+		}
+		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
+		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrUnsupportedRSVBits)
+	})
+
+	t.Run("control frames must not be fragmented", func(t *testing.T) {
+		t.Parallel()
+		conn := setupRawConn(t, newOpts(t))
+		frame := &websocket.Frame{
+			Opcode: websocket.OpcodeClose,
+			Fin:    false,
+		}
+		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
+		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrControlFrameFragmented)
+	})
+
+	t.Run("control frames must be less than 125 bytes", func(t *testing.T) {
+		t.Parallel()
+		conn := setupRawConn(t, newOpts(t))
+		frame := &websocket.Frame{
+			Opcode:  websocket.OpcodeClose,
+			Payload: bytes.Repeat([]byte("0"), 126),
+		}
+		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
+		validateCloseFrame(t, conn, websocket.StatusProtocolError, websocket.ErrControlFrameTooLarge)
+	})
+
+	t.Run("test messages must be valid utf8", func(t *testing.T) {
+		t.Parallel()
+		conn := setupRawConn(t, newOpts(t))
+		frame := &websocket.Frame{
+			Opcode:  websocket.OpcodeText,
+			Fin:     true,
+			Payload: []byte{0xc3},
+		}
+		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
+		validateCloseFrame(t, conn, websocket.StatusUnsupportedPayload, websocket.ErrInvalidUTF8)
 	})
 }
 
