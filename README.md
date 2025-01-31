@@ -45,12 +45,6 @@ Or generate code coverage:
 make testcover
 ```
 
-Or generate code coverage:
-
-```bash
-make testcover
-```
-
 ### Autobahn integration tests
 
 The [crossbario/autobahn-testsuite][autobahn] project's "fuzzing client" is
