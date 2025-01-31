@@ -1,7 +1,7 @@
 # Default flags used by the test, testci, testcover targets
 COVERAGE_PATH ?= coverage.out
 COVERAGE_ARGS ?= -covermode=atomic -coverprofile=$(COVERAGE_PATH)
-TEST_ARGS     ?= -race -count=1 -timeout=10s 
+TEST_ARGS     ?= -race -count=1 -timeout=10s
 AUTOBAHN_ARGS ?= -race -count=1 -timeout=120s
 BENCH_COUNT   ?= 10
 BENCH_ARGS    ?= -bench=. -benchmem -count=$(BENCH_COUNT) -run=^$$

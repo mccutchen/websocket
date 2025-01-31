@@ -73,7 +73,7 @@ type Websocket struct {
 // Accept handles the initial HTTP-based handshake and upgrades the TCP
 // connection to a websocket connection.
 func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Websocket, error) {
-	clientKey, err := handshake(w, r)
+	clientKey, err := Handshake(w, r)
 	if err != nil {
 		return nil, fmt.Errorf("websocket: accept: handshake failed: %w", err)
 	}
@@ -91,10 +91,11 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Websocket, e
 	return New(conn, clientKey, ServerMode, opts), nil
 }
 
-// New manually creates a new websocket connection. Caller is responsible for
-// completing initial handshake before creating a websocket connection.
+// New is a low-level API that manually creates a new websocket connection.
+// Caller is responsible for completing initial handshake before creating a
+// websocket connection.
 //
-// Prefer Accept() when possible.
+// Prefer the higher-level Accept() API when possible. See also Handshake().
 func New(src io.ReadWriteCloser, clientKey ClientKey, mode Mode, opts Options) *Websocket {
 	setDefaults(&opts)
 	if opts.ReadTimeout != 0 || opts.WriteTimeout != 0 {
@@ -126,9 +127,12 @@ func setDefaults(opts *Options) {
 	setupHooks(&opts.Hooks)
 }
 
-// handshake validates the request and performs the WebSocket handshake, after
-// which only websocket frames should be written to the underlying connection.
-func handshake(w http.ResponseWriter, r *http.Request) (ClientKey, error) {
+// Handshake is a low-level helper that validates the request and performs
+// the WebSocket Handshake, after which only websocket frames should be
+// written to the underlying connection.
+//
+// Prefer the higher-level Accept() API when possible.
+func Handshake(w http.ResponseWriter, r *http.Request) (ClientKey, error) {
 	if strings.ToLower(r.Header.Get("Upgrade")) != "websocket" {
 		return "", fmt.Errorf("missing required `Upgrade: websocket` header")
 	}
