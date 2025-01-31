@@ -94,7 +94,7 @@ type Frame struct {
 }
 
 func (f Frame) String() string {
-	return fmt.Sprintf("Frame{Fin: %v, Opcode: %v, Payload: %q}", f.Fin, f.Opcode, truncatedPayload(f.Payload, 512))
+	return fmt.Sprintf("Frame{Fin: %v, Opcode: %v, Payload: %s}", f.Fin, f.Opcode, formatPayload(f.Payload))
 }
 
 // Message is an application-level message from the client, which may be
@@ -105,18 +105,16 @@ type Message struct {
 }
 
 func (m Message) String() string {
-	if m.Binary {
-		return fmt.Sprintf("Message{Binary: %v, Payload: %v}", m.Binary, truncatedPayload(m.Payload, 512))
-	}
-	return fmt.Sprintf("Message{Binary: %v, Payload: %q}", m.Binary, truncatedPayload(m.Payload, 512))
+	return fmt.Sprintf("Message{Binary: %v, Payload: %s}", m.Binary, formatPayload(m.Payload))
 }
 
-func truncatedPayload(p []byte, limit int) string {
-	if len(p) < limit {
-		return string(p)
+// formatPayload is the formatter used by Frame and Message String() methods,
+// which may be overridden in tests for more detailed output.
+var formatPayload = func(p []byte) string {
+	if len(p) <= 64 {
+		return fmt.Sprintf("%q", p)
 	}
-	suffix := fmt.Sprintf(" ... [%d bytes truncated]", len(p)-limit)
-	return string(p[:limit]) + suffix
+	return fmt.Sprintf("[%d bytes]", len(p))
 }
 
 // ReadFrame reads a websocket frame from the wire.
