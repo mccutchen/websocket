@@ -880,8 +880,8 @@ func setupRawConnWithHandler(t testing.TB, handler http.Handler) net.Conn {
 	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
 	assert.NilError(t, err)
 	t.Cleanup(func() {
-		srv.Close()
 		conn.Close()
+		srv.Close()
 	})
 
 	handshakeReq := httptest.NewRequest(http.MethodGet, "/", nil)
