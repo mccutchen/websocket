@@ -29,11 +29,11 @@ test:
 # Test command to run for continuous integration, which includes code coverage
 # based on codecov.io's documentation:
 # https://github.com/codecov/example-go/blob/b85638743b972bd0bd2af63421fe513c6f968930/README.md
-testci:
+test-ci:
 	go test $(TEST_ARGS) $(COVERAGE_ARGS) ./...
 .PHONY: testci
 
-testcover: testci
+test-cover: testci
 	go tool cover -html=$(COVERAGE_PATH)
 .PHONY: testcover
 
@@ -42,9 +42,13 @@ testcover: testci
 # To run only a subset of autobahn tests, specify them in an AUTOBAHN_CASES env
 # var:
 #
-#     AUTOBAHN_CASES=5.7,6.12.* make testautobahn
-testautobahn:
-	AUTOBAHN_TESTS=1 AUTOBAHN_OPEN_REPORT=1 go test -run ^TestWebSocketServer$$ $(AUTOBAHN_ARGS) $(COVERAGE_ARGS) ./...
+#     AUTOBAHN_CASES=5.7,6.12.* make test-autobahn
+#
+# To automatically open the HTML test report, add AUTOBAHN_REPORT:
+#
+#     AUTOBAHN_REPORT=1 make test-autobahn
+test-autobahn:
+	AUTOBAHN_TESTS=1 go test -run ^TestAutobahn$$ $(AUTOBAHN_ARGS) ./...
 .PHONY: autobahntests
 
 

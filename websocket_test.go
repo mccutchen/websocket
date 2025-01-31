@@ -671,7 +671,6 @@ func TestProtocolErrors(t *testing.T) {
 		},
 		"unknown opcode": {
 			frames: []*websocket.Frame{
-
 				{
 					Opcode: websocket.Opcode(255),
 					Fin:    true,

@@ -33,7 +33,7 @@ var defaultExcludedTestCases = []string{
 	"13.*",
 }
 
-func TestWebSocketServer(t *testing.T) {
+func TestAutobahn(t *testing.T) {
 	t.Parallel()
 
 	// TODO: document AUTOBAHN_* env vars that control test functionality
@@ -133,7 +133,7 @@ func TestWebSocketServer(t *testing.T) {
 	}
 
 	t.Logf("autobahn test report: file://%s", path.Join(testDir, "report/index.html"))
-	if os.Getenv("AUTOBAHN_OPEN_REPORT") != "" {
+	if os.Getenv("AUTOBAHN_REPORT") == "1" {
 		runCmd(t, exec.Command("open", path.Join(testDir, "report/index.html")))
 	}
 }
