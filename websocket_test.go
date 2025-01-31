@@ -858,6 +858,17 @@ func mustReadCloseFrame(t *testing.T, r io.Reader, wantCode websocket.StatusCode
 // sending/receiving websocket messages.
 func setupRawConn(t testing.TB, opts websocket.Options) net.Conn {
 	return setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// unset any hooks to avoid reliable but flaky data race somewhere in
+		// the bowels of t.Logf that only triggers when newTestHooks are
+		// passed to both a server and a client.
+		//
+		// basic attempts like manually locking around t.Logf calls were
+		// unsuccessful.
+		//
+		// FIXME: for now, we just disable server side hooks until we can
+		// find a fix.
+		opts.Hooks = websocket.Hooks{}
+
 		ws, err := websocket.Accept(w, r, opts)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
