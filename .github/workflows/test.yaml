@@ -33,7 +33,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: test
-      run: make test-ci
+      run: make testci
 
     - name: report code coverage
       uses: codecov/codecov-action@v5
@@ -55,4 +55,4 @@ jobs:
       uses: actions/checkout@v4
 
     - name: run autobahn tests
-      run: make test-autobahn
+      run: make testautobahn
