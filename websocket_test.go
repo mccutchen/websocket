@@ -20,7 +20,7 @@ import (
 	"github.com/mccutchen/websocket/internal/testing/assert"
 )
 
-func TestAccept(t *testing.T) {
+func TestHandshake(t *testing.T) {
 	testCases := map[string]struct {
 		reqHeaders      map[string]string
 		wantStatus      int
@@ -286,7 +286,7 @@ func TestConnectionLimits(t *testing.T) {
 	})
 }
 
-func TestProtocol(t *testing.T) {
+func TestProtocolOkay(t *testing.T) {
 	var (
 		maxDuration    = 250 * time.Millisecond
 		maxFrameSize   = 128
@@ -303,24 +303,25 @@ func TestProtocol(t *testing.T) {
 		}
 	}
 
-	t.Run("basic echo functionality", func(t *testing.T) {
+	t.Run("echo okay", func(t *testing.T) {
 		t.Parallel()
-		conn := setupRawConn(t, newOpts(t))
+
 		// write client frame
+		conn := setupRawConn(t, newOpts(t))
 		clientFrame := &websocket.Frame{
 			Opcode:  websocket.OpcodeText,
 			Fin:     true,
 			Payload: []byte("hello"),
 		}
-		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, websocket.NewMaskingKey()))
+		mustWriteFrame(t, conn, true, clientFrame)
+
 		// read server frame and ensure that it matches client frame
-		serverFrame, err := websocket.ReadFrame(conn, maxFrameSize)
-		assert.NilError(t, err)
+		serverFrame := mustReadFrame(t, conn, maxFrameSize)
 		assert.DeepEqual(t, serverFrame, clientFrame, "matching frames")
 
 		// ensure closing handshake is completed when initiated by client
 		clientClose := websocket.CloseFrame(websocket.StatusNormalClosure, "")
-		assert.NilError(t, websocket.WriteFrameMasked(conn, clientClose, websocket.NewMaskingKey()))
+		mustWriteFrame(t, conn, true, clientClose)
 		mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
 
 		// FIXME: this write should fail, but the connection doesn't seem to
@@ -332,41 +333,41 @@ func TestProtocol(t *testing.T) {
 		}
 	})
 
-	t.Run("fragmented echo", func(t *testing.T) {
+	t.Run("fragmented echo okay", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, maxMessageSize/maxFrameSize, 2, "test assumes maxMessageSize/maxFrameSize == 2, may need to be updated")
 
 		var (
-			opts = newOpts(t)
+			opts = websocket.Options{
+				// msg size must be double frame size for this test case
+				MaxFrameSize:   128,
+				MaxMessageSize: 256,
+				Hooks:          newTestHooks(t),
+			}
 			conn = setupRawConn(t, opts)
 			ws   = setupClient(t, conn, opts)
 		)
 
-		// write fragmented message that will be assembled into a message that
-		// exceeds the message size limit
-		clientFrames := []*websocket.Frame{
+		msgPayload := make([]byte, 0, opts.MaxMessageSize)
+		msgPayload = append(msgPayload, bytes.Repeat([]byte("0"), opts.MaxFrameSize)...)
+		msgPayload = append(msgPayload, bytes.Repeat([]byte("1"), opts.MaxFrameSize)...)
+
+		mustWriteFrames(t, conn, true, []*websocket.Frame{
 			{
 				Opcode:  websocket.OpcodeText,
 				Fin:     false,
-				Payload: bytes.Repeat([]byte("0"), maxFrameSize),
+				Payload: msgPayload[:opts.MaxFrameSize],
 			},
 			{
 				Opcode:  websocket.OpcodeContinuation,
 				Fin:     true,
-				Payload: bytes.Repeat([]byte("1"), maxFrameSize),
+				Payload: msgPayload[opts.MaxFrameSize:],
 			},
-		}
-		var wantMessagePayload []byte
-		for _, frame := range clientFrames {
-			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-			wantMessagePayload = append(wantMessagePayload, frame.Payload...)
-		}
-		t.Logf("expecting final payload: %q", wantMessagePayload)
+		})
 		msg := mustReadMessage(t, ws)
-		assert.DeepEqual(t, msg.Payload, wantMessagePayload, "incorrect messaage payload")
+		assert.DeepEqual(t, msg.Payload, msgPayload, "incorrect messaage payload")
 	})
 
-	t.Run("test messages must be valid utf8", func(t *testing.T) {
+	t.Run("utf8 handling okay", func(t *testing.T) {
 		t.Parallel()
 		var (
 			opts = newOpts(t)
@@ -381,14 +382,14 @@ func TestProtocol(t *testing.T) {
 				Fin:     true,
 				Payload: []byte("Iñtërnâtiônàlizætiøn"),
 			}
-			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
+			mustWriteFrame(t, conn, true, frame)
 			msg := mustReadMessage(t, ws)
 			assert.DeepEqual(t, msg.Payload, frame.Payload, "incorrect message payloady")
 		}
 
 		// valid UTF-8 fragmented on codepoint boundaries is okay
 		{
-			frames := []*websocket.Frame{
+			mustWriteFrames(t, conn, true, []*websocket.Frame{
 				{
 					Opcode:  websocket.OpcodeText,
 					Fin:     false,
@@ -406,11 +407,7 @@ func TestProtocol(t *testing.T) {
 					Fin:     true,
 					Payload: []byte("izætiøn"),
 				},
-			}
-			for _, frame := range frames {
-				assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-			}
-
+			})
 			msg := mustReadMessage(t, ws)
 			assert.DeepEqual(t, msg.Payload, []byte("Iñtërnâtiônàlizætiøn"), "incorrect message payloady")
 		}
@@ -418,7 +415,7 @@ func TestProtocol(t *testing.T) {
 		// valid UTF-8 fragmented in the middle of a codepoint is reassembled
 		// into a valid message
 		{
-			frames := []*websocket.Frame{
+			mustWriteFrames(t, conn, true, []*websocket.Frame{
 				{
 					Opcode:  websocket.OpcodeText,
 					Fin:     false,
@@ -430,11 +427,7 @@ func TestProtocol(t *testing.T) {
 					Fin:     true,
 					Payload: []byte("\xb1o"),
 				},
-			}
-			for _, frame := range frames {
-				assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-			}
-
+			})
 			msg := mustReadMessage(t, ws)
 			assert.DeepEqual(t, msg.Payload, []byte("jalapeño"), "payload")
 		}
@@ -452,32 +445,27 @@ func TestProtocol(t *testing.T) {
 			Fin:     true,
 			Payload: []byte{0xc3},
 		}
-		assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-		msg, err := ws.ReadMessage(context.Background())
-		assert.NilError(t, err)
+		mustWriteFrame(t, conn, true, frame)
+		msg := mustReadMessage(t, ws)
 		assert.Equal(t, msg.Binary, true, "binary message")
 		assert.DeepEqual(t, msg.Payload, frame.Payload, "binary payload")
 	})
 
-	t.Run("jumbo frames are okay", func(t *testing.T) {
+	t.Run("jumbo frames okay", func(t *testing.T) {
 		t.Parallel()
 		jumboSize := 64 * 1024 // payloads of length 65536 or more must be encoded as 8 bytes
-		newJumboOpts := func(t *testing.T) websocket.Options {
-			return websocket.Options{
-				MaxFrameSize:   jumboSize,
-				MaxMessageSize: jumboSize,
-				Hooks:          newTestHooks(t),
-			}
-		}
-		conn := setupRawConn(t, newJumboOpts(t))
+		conn := setupRawConn(t, websocket.Options{
+			MaxFrameSize:   jumboSize,
+			MaxMessageSize: jumboSize,
+			Hooks:          newTestHooks(t),
+		})
 		clientFrame := &websocket.Frame{
 			Opcode:  websocket.OpcodeText,
 			Fin:     true,
 			Payload: bytes.Repeat([]byte("*"), jumboSize),
 		}
-		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, websocket.NewMaskingKey()))
-		respFrame, err := websocket.ReadFrame(conn, jumboSize)
-		assert.NilError(t, err)
+		mustWriteFrame(t, conn, true, clientFrame)
+		respFrame := mustReadFrame(t, conn, jumboSize)
 		assert.DeepEqual(t, respFrame.Payload, clientFrame.Payload, "payload")
 	})
 
@@ -489,7 +477,7 @@ func TestProtocol(t *testing.T) {
 			ws   = setupClient(t, conn, opts)
 		)
 		// write two fragmented frames with a ping control frame in between
-		clientFrames := []*websocket.Frame{
+		mustWriteFrames(t, conn, true, []*websocket.Frame{
 			{
 				Opcode:  websocket.OpcodeText,
 				Fin:     false,
@@ -504,30 +492,25 @@ func TestProtocol(t *testing.T) {
 				Fin:     true,
 				Payload: []byte("1"),
 			},
-		}
-		for _, frame := range clientFrames {
-			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-		}
+		})
 
 		// should get a pong control frame first, even though ping was sent
 		// as second frame
-		pongMsg, err := websocket.ReadFrame(conn, 125)
-		assert.NilError(t, err)
-		assert.Equal(t, pongMsg.Opcode, websocket.OpcodePong, "opcode")
+		pongFrame := mustReadFrame(t, conn, 125)
+		assert.Equal(t, pongFrame.Opcode, websocket.OpcodePong, "opcode")
 
 		// then should get the echo'd message from the two fragments
 		msg := mustReadMessage(t, ws)
 		assert.DeepEqual(t, msg.Payload, []byte("01"), "incorrect messaage payload")
 	})
 
-	t.Run("pong frames ignored", func(t *testing.T) {
+	t.Run("pong frames from client are ignored", func(t *testing.T) {
 		t.Parallel()
-		conn := setupRawConn(t, newOpts(t))
-
 		// write two frames, pong control frame followed by text frame.
 		//
-		// pong frame should be ignored, text frame should be echo'd
-		clientFrames := []*websocket.Frame{
+		// pong frame should be ignored, text frame should be echoed
+		conn := setupRawConn(t, newOpts(t))
+		mustWriteFrames(t, conn, true, []*websocket.Frame{
 			{
 				Opcode: websocket.OpcodePong,
 				Fin:    true,
@@ -537,13 +520,9 @@ func TestProtocol(t *testing.T) {
 				Fin:     true,
 				Payload: []byte("0"),
 			},
-		}
-		for _, frame := range clientFrames {
-			assert.NilError(t, websocket.WriteFrameMasked(conn, frame, websocket.NewMaskingKey()))
-		}
-		frame, err := websocket.ReadFrame(conn, 10)
-		assert.NilError(t, err)
-		assert.DeepEqual(t, frame.Payload, []byte("0"), "payload")
+		})
+		respFrame := mustReadFrame(t, conn, 10)
+		assert.DeepEqual(t, respFrame.Payload, []byte("0"), "payload")
 	})
 }
 
