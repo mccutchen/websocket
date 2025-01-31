@@ -13,7 +13,6 @@ concurrency:
 
 jobs:
   test:
-    name: test
     runs-on: ubuntu-latest
 
     strategy:
@@ -34,7 +33,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: test
-      run: make testci
+      run: make test-ci
 
     - name: report code coverage
       uses: codecov/codecov-action@v5
@@ -42,3 +41,18 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
         fail_ci_if_error: true
       if: ${{ matrix.go-version == 'stable' }}
+
+  autobahn:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: setup
+      uses: actions/setup-go@v5
+      with:
+        go-version: stable
+
+    - name: checkout
+      uses: actions/checkout@v4
+
+    - name: run autobahn tests
+      run: make test-autobahn

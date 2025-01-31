@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
@@ -14,18 +15,20 @@ const requiredVersion = "13"
 
 // Protocol-level errors.
 var (
-	ErrContinuationExpected = errors.New("expected continuation frame")
-	ErrInvalidContinuation  = errors.New("unexpected continuation frame")
-	ErrInvalidUT8           = errors.New("invalid UTF-8")
-	ErrUnmaskedClientFrame  = errors.New("received unmasked client frame")
-	ErrUnsupportedRSVBits   = errors.New("frame has unsupported RSV bits set")
-	ErrFrameTooLarge        = errors.New("frame payload too large")
+	ErrCloseStatusInvalid     = errors.New("close status code out of range")
+	ErrCloseStatusReserved    = errors.New("close status code is reserved")
+	ErrContinuationExpected   = errors.New("expected continuation frame")
+	ErrControlFrameFragmented = errors.New("control frame must not be fragmented")
+	ErrControlFrameTooLarge   = errors.New("control frame payload exceeds 125 bytes")
+	ErrFrameTooLarge          = errors.New("frame payload too large")
+	ErrMessageTooLarge        = errors.New("message paylaod too large")
+	ErrInvalidClosePayload    = errors.New("close frame payload must be at least 2 bytes")
+	ErrInvalidContinuation    = errors.New("unexpected continuation frame")
+	ErrInvalidUTF8            = errors.New("invalid UTF-8")
+	ErrUnknownOpcode          = errors.New("unknown opcode")
+	ErrUnmaskedClientFrame    = errors.New("received unmasked client frame")
+	ErrUnsupportedRSVBits     = errors.New("frame has unsupported RSV bits set")
 )
-
-var zeroMask [4]byte
-
-// ClientKey is a websocket client key.
-type ClientKey string
 
 // Opcode is a websocket OPCODE.
 type Opcode uint8
@@ -198,7 +201,7 @@ func WriteFrame(dst io.Writer, frame *Frame) error {
 }
 
 // WriteFrameMasked writes a masked websocket frame to the wire.
-func WriteFrameMasked(dst io.Writer, frame *Frame, mask [4]byte) error {
+func WriteFrameMasked(dst io.Writer, frame *Frame, mask MaskingKey) error {
 	// worst case payload size is 13 header bytes + payload size, where 13 is
 	// (1 byte header) + (1-8 byte length) + (0-4 byte mask key)
 	buf := make([]byte, 0, 13+len(frame.Payload))
@@ -260,16 +263,12 @@ func WriteFrameMasked(dst io.Writer, frame *Frame, mask [4]byte) error {
 }
 
 // CloseFrame creates a close frame with an optional error message.
-func CloseFrame(code StatusCode, err error) *Frame {
+func CloseFrame(code StatusCode, reason string) *Frame {
 	var payload []byte
 	if code > 0 {
-		var errMsg []byte
-		if err != nil {
-			errMsg = []byte(err.Error())
-		}
-		payload = make([]byte, 0, 2+len(errMsg))
+		payload = make([]byte, 0, 2+len(reason))
 		payload = binary.BigEndian.AppendUint16(payload, uint16(code))
-		payload = append(payload, errMsg...)
+		payload = append(payload, []byte(reason)...)
 	}
 	return &Frame{
 		Fin:     true,
@@ -308,6 +307,7 @@ func messageFrames(msg *Message, frameSize int) []*Frame {
 		if fin {
 			break
 		}
+		offset += frameSize
 	}
 	return result
 }
@@ -329,54 +329,51 @@ var reservedStatusCodes = map[uint16]bool{
 	2999: true,
 }
 
-func validateFrame(frame *Frame, maxFrameSize int, requireMask bool) error {
+func validateFrame(frame *Frame, mode Mode) error {
 	// We do not support any extensions, per the spec all RSV bits must be 0:
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
 	if frame.RSV1 || frame.RSV2 || frame.RSV3 {
 		return ErrUnsupportedRSVBits
 	}
 
-	if requireMask && !frame.Masked {
+	// If the data is being sent by the client, the frame(s) MUST be masked
+	// https://datatracker.ietf.org/doc/html/rfc6455#section-6.1
+	if mode == ServerMode && !frame.Masked {
 		return ErrUnmaskedClientFrame
 	}
 
+	payloadLen := len(frame.Payload)
+
 	switch frame.Opcode {
-	case OpcodeContinuation, OpcodeText, OpcodeBinary:
-		if len(frame.Payload) > maxFrameSize {
-			return fmt.Errorf("frame payload size %d exceeds maximum of %d bytes", len(frame.Payload), maxFrameSize)
-		}
 	case OpcodeClose, OpcodePing, OpcodePong:
 		// All control frames MUST have a payload length of 125 bytes or less
 		// and MUST NOT be fragmented.
 		// https://datatracker.ietf.org/doc/html/rfc6455#section-5.5
-		if len(frame.Payload) > 125 {
-			return fmt.Errorf("control frame %v payload size %d exceeds 125 bytes", frame.Opcode, len(frame.Payload))
+		if payloadLen > 125 {
+			return ErrControlFrameTooLarge
 		}
 		if !frame.Fin {
-			return fmt.Errorf("control frame %v must not be fragmented", frame.Opcode)
+			return ErrControlFrameFragmented
 		}
 	}
 
 	if frame.Opcode == OpcodeClose {
-		if len(frame.Payload) == 0 {
+		if payloadLen == 0 {
 			return nil
 		}
-		if len(frame.Payload) == 1 {
-			return fmt.Errorf("close frame payload must be at least 2 bytes")
+		if payloadLen == 1 {
+			return ErrInvalidClosePayload
 		}
 
 		code := binary.BigEndian.Uint16(frame.Payload[:2])
 		if code < 1000 || code >= 5000 {
-			return fmt.Errorf("close frame status code %d out of range", code)
+			return ErrCloseStatusInvalid
 		}
 		if reservedStatusCodes[code] {
-			return fmt.Errorf("close frame status code %d is reserved", code)
+			return ErrCloseStatusReserved
 		}
-
-		if len(frame.Payload) > 2 {
-			if !utf8.Valid(frame.Payload[2:]) {
-				return errors.New("close frame payload must be vaid UTF-8")
-			}
+		if payloadLen > 2 && !utf8.Valid(frame.Payload[2:]) {
+			return ErrInvalidUTF8
 		}
 	}
 
@@ -389,4 +386,34 @@ func acceptKey(clientKey string) string {
 	h := sha1.New()
 	_, _ = io.WriteString(h, clientKey+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
+}
+
+// ClientKey identifies the client in the websocket handshake.
+type ClientKey string
+
+// NewClientKey returns a randomly-generated ClientKey for client handshake.
+// Panics on insufficient randomness.
+func NewClientKey() ClientKey {
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		panic(fmt.Sprintf("NewClientKey: failed to read random bytes: %s", err))
+	}
+	return ClientKey(base64.StdEncoding.EncodeToString(b))
+}
+
+// MaskingKey masks client frames.
+type MaskingKey [4]byte
+
+var zeroMask = MaskingKey([4]byte{})
+
+// NewMaskingKey returns a randomly generated making key for client frames.
+// Panics on insufficient randomness.
+func NewMaskingKey() MaskingKey {
+	var key [4]byte
+	_, err := rand.Read(key[:]) // Fill the key with 4 random bytes
+	if err != nil {
+		panic(fmt.Sprintf("NewMaskingKey: failed to read random bytes: %s", err))
+	}
+	return key
 }

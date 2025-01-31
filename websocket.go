@@ -29,6 +29,15 @@ const (
 	DefaultMaxMessageSize int = 1024 * 256 // 256KiB
 )
 
+// Mode enalbes server or client behavior
+type Mode bool
+
+// Valid modes
+const (
+	ServerMode Mode = false
+	ClientMode      = true
+)
+
 // Options define the limits imposed on a websocket connection.
 type Options struct {
 	Hooks          Hooks
@@ -48,7 +57,7 @@ type Websocket struct {
 	// connection state
 	conn     io.ReadWriteCloser
 	closedCh chan struct{}
-	server   bool
+	mode     Mode
 
 	// observability
 	clientKey ClientKey
@@ -79,14 +88,14 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Websocket, e
 		panic(fmt.Errorf("websocket: accept: hijack failed: %s", err))
 	}
 
-	return New(conn, clientKey, opts), nil
+	return New(conn, clientKey, ServerMode, opts), nil
 }
 
 // New manually creates a new websocket connection. Caller is responsible for
 // completing initial handshake before creating a websocket connection.
 //
 // Prefer Accept() when possible.
-func New(src io.ReadWriteCloser, clientKey ClientKey, opts Options) *Websocket {
+func New(src io.ReadWriteCloser, clientKey ClientKey, mode Mode, opts Options) *Websocket {
 	setDefaults(&opts)
 	if opts.ReadTimeout != 0 || opts.WriteTimeout != 0 {
 		if _, ok := src.(deadliner); !ok {
@@ -96,7 +105,7 @@ func New(src io.ReadWriteCloser, clientKey ClientKey, opts Options) *Websocket {
 	return &Websocket{
 		conn:           src,
 		closedCh:       make(chan struct{}),
-		server:         true,
+		mode:           mode,
 		clientKey:      clientKey,
 		hooks:          opts.Hooks,
 		readTimeout:    opts.ReadTimeout,
@@ -158,12 +167,15 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		frame, err := ReadFrame(ws.conn, ws.maxFrameSize)
 		if err != nil {
 			code := StatusServerError
-			if errors.Is(err, io.EOF) {
+			switch {
+			case errors.Is(err, io.EOF):
 				code = StatusNormalClosure
+			case errors.Is(err, ErrFrameTooLarge):
+				code = StatusTooLarge
 			}
 			return nil, ws.closeOnReadError(code, err)
 		}
-		if err := validateFrame(frame, ws.maxFrameSize, ws.server); err != nil {
+		if err := validateFrame(frame, ws.mode); err != nil {
 			return nil, ws.closeOnReadError(StatusProtocolError, err)
 		}
 		ws.hooks.OnReadFrame(ws.clientKey, frame)
@@ -181,10 +193,10 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			if msg == nil {
 				return nil, ws.closeOnReadError(StatusProtocolError, ErrInvalidContinuation)
 			}
-			msg.Payload = append(msg.Payload, frame.Payload...)
-			if len(msg.Payload) > ws.maxMessageSize {
-				return nil, ws.closeOnReadError(StatusTooLarge, fmt.Errorf("message size %d exceeds maximum of %d bytes", len(msg.Payload), ws.maxMessageSize))
+			if len(msg.Payload)+len(frame.Payload) > ws.maxMessageSize {
+				return nil, ws.closeOnReadError(StatusTooLarge, ErrMessageTooLarge)
 			}
+			msg.Payload = append(msg.Payload, frame.Payload...)
 		case OpcodeClose:
 			_ = ws.Close()
 			return nil, io.EOF
@@ -202,10 +214,10 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		}
 
 		if frame.Fin {
-			ws.hooks.OnReadMessage(ws.clientKey, msg)
 			if !msg.Binary && !utf8.Valid(msg.Payload) {
-				return nil, ws.closeOnReadError(StatusUnsupportedPayload, ErrInvalidUT8)
+				return nil, ws.closeOnReadError(StatusUnsupportedPayload, ErrInvalidUTF8)
 			}
+			ws.hooks.OnReadMessage(ws.clientKey, msg)
 			return msg, nil
 		}
 	}
@@ -266,7 +278,11 @@ func (ws *Websocket) Close() error {
 func (ws *Websocket) closeWithError(code StatusCode, err error) error {
 	ws.hooks.OnClose(ws.clientKey, code, err)
 	close(ws.closedCh)
-	if err := WriteFrame(ws.conn, CloseFrame(code, err)); err != nil {
+	var reason string
+	if err != nil {
+		reason = err.Error()
+	}
+	if err := WriteFrame(ws.conn, CloseFrame(code, reason)); err != nil {
 		return fmt.Errorf("websocket: failed to write close frame: %w", err)
 	}
 	if err := ws.conn.Close(); err != nil {

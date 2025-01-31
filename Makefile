@@ -1,7 +1,8 @@
 # Default flags used by the test, testci, testcover targets
 COVERAGE_PATH ?= coverage.out
 COVERAGE_ARGS ?= -covermode=atomic -coverprofile=$(COVERAGE_PATH)
-TEST_ARGS     ?= -race -timeout 60s -count=1
+TEST_ARGS     ?= -race -count=1 -timeout=10s 
+AUTOBAHN_ARGS ?= -race -count=1 -timeout=120s
 BENCH_COUNT   ?= 10
 BENCH_ARGS    ?= -bench=. -benchmem -count=$(BENCH_COUNT) -run=^$$
 
@@ -11,34 +12,28 @@ CMD_REVIVE      := go run github.com/mgechev/revive@v1.5.1
 CMD_STATICCHECK := go run honnef.co/go/tools/cmd/staticcheck@2024.1.1
 
 # Find examples to build
+OUT_DIR         ?= bin
+OUT_DIR_ABS     := $(abspath $(OUT_DIR))
 EXAMPLE_DIR     := examples
 EXAMPLE_NAMES   := $(shell ls $(EXAMPLE_DIR))
-OUT_DIR         ?= bin
-OUT_PATHS       := $(addprefix $(OUT_DIR)/,$(EXAMPLE_NAMES)) # -> $(OUT_DIR)/foo $(OUT_DIR)/bar
-OUT_DIR_ABS     := $(abspath $(OUT_DIR))
+EXAMPLE_PATHS   := $(addprefix $(OUT_DIR)/,$(EXAMPLE_NAMES)) # -> $(OUT_DIR)/foo $(OUT_DIR)/bar
 
-# Build every example we found
-build: clean $(OUT_PATHS)
-.PHONY: build
 
-# Build a specific example
-$(OUT_DIR)/%: force-rebuild
-	@mkdir -p $(OUT_DIR)
-	@echo "Building $@"
-	cd $(EXAMPLE_DIR)/$* && CGO_ENABLED=0 go build $(BUILD_ARGS) -o $(abspath $(OUT_DIR))/$*
-
-test: build
+# ===========================================================================
+# Tests
+# ===========================================================================
+test:
 	go test $(TEST_ARGS) ./...
 .PHONY: test
 
 # Test command to run for continuous integration, which includes code coverage
 # based on codecov.io's documentation:
 # https://github.com/codecov/example-go/blob/b85638743b972bd0bd2af63421fe513c6f968930/README.md
-testci:
-	AUTOBAHN_TESTS=1 go test $(TEST_ARGS) $(COVERAGE_ARGS) ./...
+test-ci:
+	go test $(TEST_ARGS) $(COVERAGE_ARGS) ./...
 .PHONY: testci
 
-testcover: testci
+test-cover: testci
 	go tool cover -html=$(COVERAGE_PATH)
 .PHONY: testcover
 
@@ -47,16 +42,27 @@ testcover: testci
 # To run only a subset of autobahn tests, specify them in an AUTOBAHN_CASES env
 # var:
 #
-#     AUTOBAHN_CASES=5.7,6.12.* make testautobahn
-testautobahn:
-	AUTOBAHN_TESTS=1 AUTOBAHN_OPEN_REPORT=1 go test -run ^TestWebSocketServer$$ $(TEST_ARGS) ./...
+#     AUTOBAHN_CASES=5.7,6.12.* make test-autobahn
+#
+# To automatically open the HTML test report, add AUTOBAHN_REPORT:
+#
+#     AUTOBAHN_REPORT=1 make test-autobahn
+test-autobahn:
+	AUTOBAHN_TESTS=1 go test -run ^TestAutobahn$$ $(AUTOBAHN_ARGS) ./...
 .PHONY: autobahntests
 
 
+# ===========================================================================
+# Benchmarks
+# ===========================================================================
 bench:
 	go test $(BENCH_ARGS)
 .PHONY: bench
 
+
+# ===========================================================================
+# Linting/formatting
+# ===========================================================================
 lint:
 	test -z "$$($(CMD_GOFUMPT) -d -e .)" || (echo "Error: gofmt failed"; $(CMD_GOFUMPT) -d -e . ; exit 1)
 	go vet ./...
@@ -68,11 +74,24 @@ fmt:
 	$(CMD_GOFUMPT) -d -e -w .
 .PHONY: fmt
 
-clean:
-	rm -rf $(OUT_DIR) $(COVERAGE_PATH)
-.PHONY: clean
 
+# ===========================================================================
+# Example binaries
+# ===========================================================================
+# Build every example we found
+examples: $(EXAMPLE_PATHS)
+.PHONY: examples
+
+# Build a specific example
+$(OUT_DIR)/%: force-rebuild
+	@mkdir -p $(OUT_DIR)
+	@echo "Building $@"
+	cd $(EXAMPLE_DIR)/$* && CGO_ENABLED=0 go build $(BUILD_ARGS) -o $(abspath $(OUT_DIR))/$*
 
 # phony target used to always rebuild the example binaries
 .PHONY: force-rebuild
 force-rebuild:
+
+clean:
+	rm -rf $(OUT_DIR) $(COVERAGE_PATH)
+.PHONY: clean

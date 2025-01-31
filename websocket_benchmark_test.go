@@ -93,7 +93,7 @@ func BenchmarkReadMessage(b *testing.B) {
 			fin := i == frameCount-1
 			b.Logf("frame=%d frameCount=%d fin=%v", i, frameCount, fin)
 			frame := makeFrame(opcode, fin, frameSize)
-			assert.NilError(b, websocket.WriteFrameMasked(buf, frame, makeMaskingKey()))
+			assert.NilError(b, websocket.WriteFrameMasked(buf, frame, websocket.NewMaskingKey()))
 		}
 
 		payload := buf.Bytes()
@@ -102,7 +102,7 @@ func BenchmarkReadMessage(b *testing.B) {
 			in:  reader,
 			out: io.Discard,
 		}
-		ws := websocket.New(conn, websocket.ClientKey(makeClientKey()), websocket.Options{
+		ws := websocket.New(conn, websocket.NewClientKey(), websocket.ServerMode, websocket.Options{
 			MaxFrameSize:   frameSize,
 			MaxMessageSize: msgSize,
 			// Hooks:           newTestHooks(b),

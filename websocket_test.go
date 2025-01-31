@@ -3,9 +3,9 @@ package websocket_test
 import (
 	"bufio"
 	"bytes"
-	"crypto/rand"
-	"encoding/base64"
+	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -20,7 +20,7 @@ import (
 	"github.com/mccutchen/websocket/internal/testing/assert"
 )
 
-func TestAccept(t *testing.T) {
+func TestHandshake(t *testing.T) {
 	testCases := map[string]struct {
 		reqHeaders      map[string]string
 		wantStatus      int
@@ -195,18 +195,11 @@ func TestConnectionLimits(t *testing.T) {
 		t.Parallel()
 
 		maxDuration := 250 * time.Millisecond
-		_, conn := setupRawConn(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ws, err := websocket.Accept(w, r, websocket.Options{
-				ReadTimeout:  maxDuration,
-				WriteTimeout: maxDuration,
-				Hooks:        newTestHooks(t),
-			})
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			ws.Serve(r.Context(), websocket.EchoHandler)
-		}))
+		conn := setupRawConn(t, websocket.Options{
+			ReadTimeout:  maxDuration,
+			WriteTimeout: maxDuration,
+			Hooks:        newTestHooks(t),
+		})
 
 		// client read should succeed, because we expect the server to send
 		// a close frame when its read deadline is reached
@@ -215,7 +208,7 @@ func TestConnectionLimits(t *testing.T) {
 		elapsed := time.Since(start)
 		assert.NilError(t, err)
 		assert.RoughlyEqual(t, elapsed, maxDuration, 25*time.Millisecond)
-		validateCloseFrame(t, bytes.NewBuffer(resp), websocket.StatusServerError, "timeout")
+		mustReadCloseFrame(t, bytes.NewBuffer(resp), websocket.StatusServerError, errors.New("error reading frame header"))
 
 		// connection should be closed, so we should get EOF when trying to
 		// read from it again
@@ -242,7 +235,7 @@ func TestConnectionLimits(t *testing.T) {
 		)
 
 		wg.Add(1)
-		_, conn := setupRawConn(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer wg.Done()
 			start := time.Now()
 			ws, err := websocket.Accept(w, r, websocket.Options{
@@ -273,7 +266,7 @@ func TestConnectionLimits(t *testing.T) {
 		// the server should detect the closed connection and abort the
 		// handler, also after roughly clientTimeout seconds.
 		start := time.Now()
-		_, err := conn.Read(make([]byte, 1))
+		_, clientReadErr := conn.Read(make([]byte, 1))
 		elapsedClientTime = time.Since(start)
 
 		// close client connection, which should interrupt the server's
@@ -281,7 +274,7 @@ func TestConnectionLimits(t *testing.T) {
 		conn.Close()
 		t.Logf("client connection closed")
 
-		assert.Equal(t, os.IsTimeout(err), true, "expected timeout error")
+		assert.Equal(t, os.IsTimeout(clientReadErr), true, "expected timeout error")
 		assert.RoughlyEqual(t, elapsedClientTime, clientTimeout, 10*time.Millisecond)
 
 		// wait for the server to finish handling the one request, then
@@ -293,57 +286,43 @@ func TestConnectionLimits(t *testing.T) {
 	})
 }
 
-// TODO: flesh out basic protocol test cases
-// - successful echo
-// - successful echo across multiple frames
-// - frame size limits
-// - message size limits
-// - utf8 validation
-// - unexpected continuation frames
-func TestProtocolBasics(t *testing.T) {
+func TestProtocolOkay(t *testing.T) {
 	var (
 		maxDuration    = 250 * time.Millisecond
-		maxFrameSize   = 16
-		maxMessageSize = 32
+		maxFrameSize   = 128
+		maxMessageSize = 256
 	)
 
-	echoHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ws, err := websocket.Accept(w, r, websocket.Options{
+	newOpts := func(t *testing.T) websocket.Options {
+		return websocket.Options{
 			ReadTimeout:    maxDuration,
 			WriteTimeout:   maxDuration,
 			MaxFrameSize:   maxFrameSize,
 			MaxMessageSize: maxMessageSize,
 			Hooks:          newTestHooks(t),
-		})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
 		}
-		ws.Serve(r.Context(), websocket.EchoHandler)
-	})
+	}
 
-	t.Run("basic echo functionality", func(t *testing.T) {
+	t.Run("echo okay", func(t *testing.T) {
 		t.Parallel()
-		_, conn := setupRawConn(t, echoHandler)
+
 		// write client frame
+		conn := setupRawConn(t, newOpts(t))
 		clientFrame := &websocket.Frame{
 			Opcode:  websocket.OpcodeText,
 			Fin:     true,
 			Payload: []byte("hello"),
 		}
-		assert.NilError(t, websocket.WriteFrameMasked(conn, clientFrame, makeMaskingKey()))
-		// read server frame
-		serverFrame, err := websocket.ReadFrame(conn, maxFrameSize)
-		assert.NilError(t, err)
-		// ensure we get back the same frame
-		assert.Equal(t, serverFrame.Fin, clientFrame.Fin, "expected matching FIN bits")
-		assert.Equal(t, serverFrame.Opcode, clientFrame.Opcode, "expected matching opcodes")
-		assert.Equal(t, string(serverFrame.Payload), string(clientFrame.Payload), "expected matching payloads")
+		mustWriteFrame(t, conn, true, clientFrame)
+
+		// read server frame and ensure that it matches client frame
+		serverFrame := mustReadFrame(t, conn, maxFrameSize)
+		assert.DeepEqual(t, serverFrame, clientFrame, "matching frames")
 
 		// ensure closing handshake is completed when initiated by client
-		clientClose := websocket.CloseFrame(websocket.StatusNormalClosure, nil)
-		assert.NilError(t, websocket.WriteFrameMasked(conn, clientClose, makeMaskingKey()))
-		validateCloseFrame(t, conn, websocket.StatusNormalClosure, "")
+		clientClose := websocket.CloseFrame(websocket.StatusNormalClosure, "")
+		mustWriteFrame(t, conn, true, clientClose)
+		mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
 
 		// FIXME: this write should fail, but the connection doesn't seem to
 		// get closed. for now we skip.
@@ -354,29 +333,563 @@ func TestProtocolBasics(t *testing.T) {
 		}
 	})
 
-	t.Run("server requires masked frames", func(t *testing.T) {
+	t.Run("fragmented echo okay", func(t *testing.T) {
 		t.Parallel()
-		_, conn := setupRawConn(t, echoHandler)
+
+		var (
+			opts = websocket.Options{
+				// msg size must be double frame size for this test case
+				MaxFrameSize:   128,
+				MaxMessageSize: 256,
+				Hooks:          newTestHooks(t),
+			}
+			conn = setupRawConn(t, opts)
+			ws   = setupWebsocketClient(t, conn, opts)
+		)
+
+		msgPayload := make([]byte, 0, opts.MaxMessageSize)
+		msgPayload = append(msgPayload, bytes.Repeat([]byte("0"), opts.MaxFrameSize)...)
+		msgPayload = append(msgPayload, bytes.Repeat([]byte("1"), opts.MaxFrameSize)...)
+
+		mustWriteFrames(t, conn, true, []*websocket.Frame{
+			{
+				Opcode:  websocket.OpcodeText,
+				Fin:     false,
+				Payload: msgPayload[:opts.MaxFrameSize],
+			},
+			{
+				Opcode:  websocket.OpcodeContinuation,
+				Fin:     true,
+				Payload: msgPayload[opts.MaxFrameSize:],
+			},
+		})
+		msg := mustReadMessage(t, ws)
+		assert.DeepEqual(t, msg.Payload, msgPayload, "incorrect messaage payload")
+	})
+
+	t.Run("utf8 handling okay", func(t *testing.T) {
+		t.Parallel()
+		var (
+			opts = newOpts(t)
+			conn = setupRawConn(t, opts)
+			ws   = setupWebsocketClient(t, conn, opts)
+		)
+
+		// valid UTF-8 accepted and echoed back
+		{
+			frame := &websocket.Frame{
+				Opcode:  websocket.OpcodeText,
+				Fin:     true,
+				Payload: []byte("Iñtërnâtiônàlizætiøn"),
+			}
+			mustWriteFrame(t, conn, true, frame)
+			msg := mustReadMessage(t, ws)
+			assert.DeepEqual(t, msg.Payload, frame.Payload, "incorrect message payloady")
+		}
+
+		// valid UTF-8 fragmented on codepoint boundaries is okay
+		{
+			mustWriteFrames(t, conn, true, []*websocket.Frame{
+				{
+					Opcode:  websocket.OpcodeText,
+					Fin:     false,
+					Payload: []byte("Iñtër"),
+				},
+
+				{
+					Opcode:  websocket.OpcodeContinuation,
+					Fin:     false,
+					Payload: []byte("nâtiônàl"),
+				},
+
+				{
+					Opcode:  websocket.OpcodeContinuation,
+					Fin:     true,
+					Payload: []byte("izætiøn"),
+				},
+			})
+			msg := mustReadMessage(t, ws)
+			assert.DeepEqual(t, msg.Payload, []byte("Iñtërnâtiônàlizætiøn"), "incorrect message payloady")
+		}
+
+		// valid UTF-8 fragmented in the middle of a codepoint is reassembled
+		// into a valid message
+		{
+			mustWriteFrames(t, conn, true, []*websocket.Frame{
+				{
+					Opcode:  websocket.OpcodeText,
+					Fin:     false,
+					Payload: []byte("jalape\xc3"),
+				},
+
+				{
+					Opcode:  websocket.OpcodeContinuation,
+					Fin:     true,
+					Payload: []byte("\xb1o"),
+				},
+			})
+			msg := mustReadMessage(t, ws)
+			assert.DeepEqual(t, msg.Payload, []byte("jalapeño"), "payload")
+		}
+	})
+
+	t.Run("binary messages can be invalid UTF-8", func(t *testing.T) {
+		t.Parallel()
+		var (
+			opts = newOpts(t)
+			conn = setupRawConn(t, opts)
+			ws   = setupWebsocketClient(t, conn, opts)
+		)
 		frame := &websocket.Frame{
+			Opcode:  websocket.OpcodeBinary,
+			Fin:     true,
+			Payload: []byte{0xc3},
+		}
+		mustWriteFrame(t, conn, true, frame)
+		msg := mustReadMessage(t, ws)
+		assert.Equal(t, msg.Binary, true, "binary message")
+		assert.DeepEqual(t, msg.Payload, frame.Payload, "binary payload")
+	})
+
+	t.Run("jumbo frames okay", func(t *testing.T) {
+		t.Parallel()
+		jumboSize := 64 * 1024 // payloads of length 65536 or more must be encoded as 8 bytes
+		conn := setupRawConn(t, websocket.Options{
+			MaxFrameSize:   jumboSize,
+			MaxMessageSize: jumboSize,
+			Hooks:          newTestHooks(t),
+		})
+		clientFrame := &websocket.Frame{
 			Opcode:  websocket.OpcodeText,
 			Fin:     true,
-			Payload: []byte("hello"),
+			Payload: bytes.Repeat([]byte("*"), jumboSize),
 		}
-		assert.NilError(t, websocket.WriteFrame(conn, frame))
-		validateCloseFrame(t, conn, websocket.StatusProtocolError, "received unmasked client frame")
+		mustWriteFrame(t, conn, true, clientFrame)
+		respFrame := mustReadFrame(t, conn, jumboSize)
+		assert.DeepEqual(t, respFrame.Payload, clientFrame.Payload, "payload")
+	})
+
+	t.Run("ping frames handled between fragments", func(t *testing.T) {
+		t.Parallel()
+		var (
+			opts = newOpts(t)
+			conn = setupRawConn(t, opts)
+			ws   = setupWebsocketClient(t, conn, opts)
+		)
+		// write two fragmented frames with a ping control frame in between
+		mustWriteFrames(t, conn, true, []*websocket.Frame{
+			{
+				Opcode:  websocket.OpcodeText,
+				Fin:     false,
+				Payload: []byte("0"),
+			},
+			{
+				Opcode: websocket.OpcodePing,
+				Fin:    true,
+			},
+			{
+				Opcode:  websocket.OpcodeContinuation,
+				Fin:     true,
+				Payload: []byte("1"),
+			},
+		})
+
+		// should get a pong control frame first, even though ping was sent
+		// as second frame
+		pongFrame := mustReadFrame(t, conn, 125)
+		assert.Equal(t, pongFrame.Opcode, websocket.OpcodePong, "opcode")
+
+		// then should get the echo'd message from the two fragments
+		msg := mustReadMessage(t, ws)
+		assert.DeepEqual(t, msg.Payload, []byte("01"), "incorrect messaage payload")
+	})
+
+	t.Run("pong frames from client are ignored", func(t *testing.T) {
+		t.Parallel()
+		// write two frames, pong control frame followed by text frame.
+		//
+		// pong frame should be ignored, text frame should be echoed
+		conn := setupRawConn(t, newOpts(t))
+		mustWriteFrames(t, conn, true, []*websocket.Frame{
+			{
+				Opcode: websocket.OpcodePong,
+				Fin:    true,
+			},
+			{
+				Opcode:  websocket.OpcodeText,
+				Fin:     true,
+				Payload: []byte("0"),
+			},
+		})
+		respFrame := mustReadFrame(t, conn, 10)
+		assert.DeepEqual(t, respFrame.Payload, []byte("0"), "payload")
 	})
 }
 
-// setupRawConn is a test helpers that runs a test server and does the
-// initial websocket handshake. The returned connection is ready for use to
-// sent/receive websocket messages.
-func setupRawConn(t testing.TB, handler http.Handler) (*httptest.Server, net.Conn) {
+func TestProtocolErrors(t *testing.T) {
+	var (
+		maxDuration    = 250 * time.Millisecond
+		maxFrameSize   = 128
+		maxMessageSize = 256
+	)
+
+	newOpts := func(t *testing.T) websocket.Options {
+		return websocket.Options{
+			ReadTimeout:    maxDuration,
+			WriteTimeout:   maxDuration,
+			MaxFrameSize:   maxFrameSize,
+			MaxMessageSize: maxMessageSize,
+			Hooks:          newTestHooks(t),
+		}
+	}
+
+	testCases := map[string]struct {
+		frames          []*websocket.Frame
+		wantCloseCode   websocket.StatusCode
+		wantCloseReason error
+
+		// further customize behavior
+		opts     func(*testing.T) websocket.Options
+		unmasked bool
+	}{
+		"unexpected continuation frame": {
+			frames: []*websocket.Frame{
+				{
+					Opcode:  websocket.OpcodeContinuation,
+					Fin:     true,
+					Payload: []byte("0"),
+				},
+			},
+			wantCloseCode:   websocket.StatusProtocolError,
+			wantCloseReason: websocket.ErrInvalidContinuation,
+		},
+		"max frame size": {
+			frames: []*websocket.Frame{
+				{
+					Opcode:  websocket.OpcodeText,
+					Fin:     true,
+					Payload: bytes.Repeat([]byte("0"), maxFrameSize+1),
+				},
+			},
+			wantCloseCode:   websocket.StatusTooLarge,
+			wantCloseReason: websocket.ErrFrameTooLarge,
+		},
+		"max message size": {
+			// 3rd frame will exceed max message size
+			frames: []*websocket.Frame{
+				{
+					Opcode:  websocket.OpcodeText,
+					Fin:     false,
+					Payload: bytes.Repeat([]byte("0"), maxFrameSize),
+				},
+				{
+					Opcode:  websocket.OpcodeContinuation,
+					Fin:     false,
+					Payload: bytes.Repeat([]byte("1"), maxFrameSize),
+				},
+
+				{
+					Opcode:  websocket.OpcodeContinuation,
+					Fin:     true,
+					Payload: []byte("2"),
+				},
+			},
+			wantCloseCode:   websocket.StatusTooLarge,
+			wantCloseReason: websocket.ErrMessageTooLarge,
+		},
+		"server requires masked frames": {
+			frames: []*websocket.Frame{
+				{
+					Opcode:  websocket.OpcodeText,
+					Fin:     true,
+					Payload: []byte("hello"),
+				},
+			},
+			unmasked:        true,
+			wantCloseCode:   websocket.StatusProtocolError,
+			wantCloseReason: websocket.ErrUnmaskedClientFrame,
+		},
+		"server rejects RSV bits": {
+			frames: []*websocket.Frame{
+				{
+					Opcode:  websocket.OpcodeText,
+					RSV1:    true,
+					Fin:     true,
+					Payload: []byte("hello"),
+				},
+			},
+			wantCloseCode:   websocket.StatusProtocolError,
+			wantCloseReason: websocket.ErrUnsupportedRSVBits,
+		},
+		"control frames must not be fragmented": {
+			frames: []*websocket.Frame{
+				{
+					Opcode: websocket.OpcodeClose,
+					Fin:    false,
+				},
+			},
+			wantCloseCode:   websocket.StatusProtocolError,
+			wantCloseReason: websocket.ErrControlFrameFragmented,
+		},
+
+		"control frames must be less than 125 bytes": {
+			frames: []*websocket.Frame{
+				{
+					Opcode:  websocket.OpcodeClose,
+					Payload: bytes.Repeat([]byte("0"), 126),
+				},
+			},
+			wantCloseCode:   websocket.StatusProtocolError,
+			wantCloseReason: websocket.ErrControlFrameTooLarge,
+		},
+		"text messages must be valid utf8": {
+			frames: []*websocket.Frame{
+				{
+					Opcode:  websocket.OpcodeText,
+					Fin:     true,
+					Payload: []byte{0xc3},
+				},
+			},
+			wantCloseCode:   websocket.StatusUnsupportedPayload,
+			wantCloseReason: websocket.ErrInvalidUTF8,
+		},
+		"missing continuation frame": {
+			frames: []*websocket.Frame{
+				{
+					Opcode:  websocket.OpcodeText,
+					Fin:     false,
+					Payload: bytes.Repeat([]byte("0"), maxFrameSize),
+				},
+				{
+					Opcode:  websocket.OpcodeText,
+					Fin:     true,
+					Payload: bytes.Repeat([]byte("1"), maxFrameSize),
+				},
+			},
+			wantCloseCode:   websocket.StatusProtocolError,
+			wantCloseReason: websocket.ErrContinuationExpected,
+		},
+		"unknown opcode": {
+			frames: []*websocket.Frame{
+				{
+					Opcode: websocket.Opcode(255),
+					Fin:    true,
+				},
+			},
+			wantCloseCode:   websocket.StatusProtocolError,
+			wantCloseReason: websocket.ErrUnknownOpcode,
+		},
+	}
+	for name, tc := range testCases {
+		tc := tc
+		if tc.opts == nil {
+			tc.opts = newOpts
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var opts websocket.Options
+			if tc.opts != nil {
+				opts = tc.opts(t)
+			} else {
+				opts = newOpts(t)
+			}
+			conn := setupRawConn(t, opts)
+			mustWriteFrames(t, conn, !tc.unmasked, tc.frames)
+			mustReadCloseFrame(t, conn, tc.wantCloseCode, tc.wantCloseReason)
+		})
+	}
+}
+
+func TestCloseFrames(t *testing.T) {
+	// construct a special close frame with an invalid utf8 reason outside of
+	// test table because it can't be defined inline in a struct literal
+	frameWithInvalidUTF8Reason := func() *websocket.Frame {
+		payload := make([]byte, 0, 3)
+		payload = binary.BigEndian.AppendUint16(payload, uint16(websocket.StatusNormalClosure))
+		payload = append(payload, 0xc3)
+		return &websocket.Frame{
+			Opcode:  websocket.OpcodeClose,
+			Fin:     true,
+			Payload: payload,
+		}
+	}
+
+	testCases := map[string]struct {
+		frame      *websocket.Frame
+		wantCode   websocket.StatusCode
+		wantReason string
+	}{
+		"empty payload ok": {
+			frame: &websocket.Frame{
+				Opcode: websocket.OpcodeClose,
+				Fin:    true,
+			},
+			wantCode:   websocket.StatusNormalClosure,
+			wantReason: "",
+		},
+		"one byte payload is illegal": {
+			frame: &websocket.Frame{
+				Opcode:  websocket.OpcodeClose,
+				Fin:     true,
+				Payload: []byte("X"),
+			},
+			wantCode:   websocket.StatusProtocolError,
+			wantReason: "close frame payload must be at least 2 bytes",
+		},
+		"invalid close code (too low)": {
+			frame:      websocket.CloseFrame(websocket.StatusCode(999), ""),
+			wantCode:   websocket.StatusProtocolError,
+			wantReason: "close status code out of range",
+		},
+		"invalid close code (too high))": {
+			frame:      websocket.CloseFrame(websocket.StatusCode(5001), ""),
+			wantCode:   websocket.StatusProtocolError,
+			wantReason: "close status code out of range",
+		},
+		"reserved close code": {
+			frame:      websocket.CloseFrame(websocket.StatusCode(1015), ""),
+			wantCode:   websocket.StatusProtocolError,
+			wantReason: "close status code is reserved",
+		},
+		"invalid utf8 in close reason": {
+			frame:      frameWithInvalidUTF8Reason(),
+			wantCode:   websocket.StatusProtocolError,
+			wantReason: "invalid UTF-8",
+		},
+	}
+
+	for name, tc := range testCases {
+		tc := tc
+		t.Run(name, func(t *testing.T) {
+			conn := setupRawConn(t, websocket.Options{})
+			t.Logf("sending close frame %v", tc.frame)
+			assert.NilError(t, websocket.WriteFrameMasked(conn, tc.frame, websocket.NewMaskingKey()))
+			var wantErr error
+			if tc.wantReason != "" {
+				wantErr = errors.New(tc.wantReason)
+			}
+			mustReadCloseFrame(t, conn, tc.wantCode, wantErr)
+		})
+	}
+}
+
+func TestNew(t *testing.T) {
+	t.Run("timeouts allowed only if deadline can be set", func(t *testing.T) {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatalf("expected panic did not occur")
+			}
+			assert.Equal(t, fmt.Sprint(r), "ReadTimeout and WriteTimeout may only be used when input source supports setting read/write deadlines", "incorrect panic message")
+		}()
+		websocket.New(&dummyConn{}, websocket.ClientKey("test-client-key"), websocket.ServerMode, websocket.Options{
+			// setting either read or write timeout will cause a panic if the
+			// given src doesn't support setting deadlines
+			ReadTimeout:  time.Second,
+			WriteTimeout: time.Second,
+		})
+	})
+}
+
+func mustReadFrame(t testing.TB, src io.Reader, maxPayloadLen int) *websocket.Frame {
+	t.Helper()
+	frame, err := websocket.ReadFrame(src, maxPayloadLen)
+	assert.NilError(t, err)
+	return frame
+}
+
+func mustReadMessage(t testing.TB, ws *websocket.Websocket) *websocket.Message {
+	t.Helper()
+	msg, err := ws.ReadMessage(context.Background())
+	assert.NilError(t, err)
+	return msg
+}
+
+func mustWriteFrame(t testing.TB, dst io.Writer, masked bool, frame *websocket.Frame) {
+	t.Helper()
+	var err error
+	if masked {
+		err = websocket.WriteFrameMasked(dst, frame, websocket.NewMaskingKey())
+	} else {
+		err = websocket.WriteFrame(dst, frame)
+	}
+	assert.NilError(t, err)
+}
+
+func mustWriteFrames(t testing.TB, dst io.Writer, masked bool, frames []*websocket.Frame) {
+	t.Helper()
+	for _, frame := range frames {
+		mustWriteFrame(t, dst, masked, frame)
+	}
+}
+
+// mustReadCloseFrame ensures that we can read a close frame from the given
+// reader and optionally ensures that the close frame includes a specific
+// status code and message.
+func mustReadCloseFrame(t *testing.T, r io.Reader, wantCode websocket.StatusCode, wantErr error) {
+	t.Helper()
+
+	// All control frames MUST have a payload length of 125 bytes or less
+	// and MUST NOT be fragmented.
+	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.5
+	//
+	// This is already enforced in validateFrame, called by ReadFrame, but we
+	// must pass in a max payload size here.
+	frame := mustReadFrame(t, r, 125)
+	assert.Equal(t, frame.Opcode, websocket.OpcodeClose, "opcode")
+
+	// nothing else to validate
+	if wantCode == 0 {
+		return
+	}
+
+	assert.Equal(t, len(frame.Payload) >= 2, true, "expected close frame payload to be at least 2 bytes, got %v", frame.Payload)
+	gotCode := websocket.StatusCode(binary.BigEndian.Uint16(frame.Payload[:2]))
+	gotReason := string(frame.Payload[2:])
+	t.Logf("got close frame: code=%v msg=%q", gotCode, gotReason)
+	assert.Equal(t, int(gotCode), int(wantCode), "incorrect close status code")
+	if wantErr != nil {
+		assert.Contains(t, gotReason, wantErr.Error(), "reason")
+	}
+}
+
+// setupRawConn starts an websocket echo server with the given options, does
+// the client handshake, and returns the underlying TCP connection ready for
+// sending/receiving websocket messages.
+func setupRawConn(t testing.TB, opts websocket.Options) net.Conn {
+	return setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// unset any hooks to avoid reliable but flaky data race somewhere in
+		// the bowels of t.Logf that only triggers when newTestHooks are
+		// passed to both a server and a client.
+		//
+		// basic attempts like manually locking around t.Logf calls were
+		// unsuccessful.
+		//
+		// FIXME: for now, we just disable server side hooks until we can
+		// find a fix.
+		opts.Hooks = websocket.Hooks{}
+
+		ws, err := websocket.Accept(w, r, opts)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ws.Serve(r.Context(), websocket.EchoHandler)
+	}))
+}
+
+// setupRawConnWithHandler starts a server with the given handler (which
+// must be a websocket echo server), does the client handshake, and returns
+// the underlying TCP connection ready for sending/receiving.
+//
+// Prefer setupRawConn for simple use cases, use this only when a test
+// requires custom behavior (e.g. coordination via waitgroups).
+func setupRawConnWithHandler(t testing.TB, handler http.Handler) net.Conn {
 	t.Helper()
 
 	srv := httptest.NewServer(handler)
 	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
 	assert.NilError(t, err)
-
 	t.Cleanup(func() {
 		conn.Close()
 		srv.Close()
@@ -386,7 +899,7 @@ func setupRawConn(t testing.TB, handler http.Handler) (*httptest.Server, net.Con
 	for k, v := range map[string]string{
 		"Connection":            "upgrade",
 		"Upgrade":               "websocket",
-		"Sec-WebSocket-Key":     makeClientKey(),
+		"Sec-WebSocket-Key":     string(websocket.NewClientKey()),
 		"Sec-WebSocket-Version": "13",
 	} {
 		handshakeReq.Header.Set(k, v)
@@ -398,54 +911,14 @@ func setupRawConn(t testing.TB, handler http.Handler) (*httptest.Server, net.Con
 	assert.NilError(t, err)
 	assert.StatusCode(t, resp, http.StatusSwitchingProtocols)
 
-	return srv, conn
+	return conn
 }
 
-func makeClientKey() string {
-	b := make([]byte, 16)
-	_, err := rand.Read(b)
-	if err != nil {
-		panic(fmt.Sprintf("failed to read random bytes: %s", err))
-	}
-	return base64.StdEncoding.EncodeToString(b)
-}
-
-func makeMaskingKey() [4]byte {
-	var key [4]byte
-	_, err := rand.Read(key[:]) // Fill the key with 4 random bytes
-	if err != nil {
-		panic(fmt.Sprintf("failed to read random bytes for masking key: %s", err))
-	}
-	return key
-}
-
-// validateCloseFrame ensures that we can read a close frame from the given
-// reader and optionally ensures that the close frame includes a specific
-// status code and message.
-func validateCloseFrame(t *testing.T, r io.Reader, wantStatus websocket.StatusCode, wantMsg string) {
+// setupWebsocketClient wraps the given conn in a websocket client. The handshake and
+// upgrade process must already be complete (see setupRawConn).
+func setupWebsocketClient(t testing.TB, conn net.Conn, opts websocket.Options) *websocket.Websocket {
 	t.Helper()
-
-	// All control frames MUST have a payload length of 125 bytes or less
-	// and MUST NOT be fragmented.
-	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.5
-	//
-	// This is already enforced in validateFrame, called by ReadFrame, but we
-	// must pass in a max payload size here.
-	frame, err := websocket.ReadFrame(r, 125)
-	assert.NilError(t, err)
-	assert.Equal(t, frame.Opcode, websocket.OpcodeClose, "expected close frame")
-
-	if wantStatus == 0 {
-		// nothing else to validate
-		return
-	}
-
-	assert.Equal(t, len(frame.Payload) >= 2, true, "expected close frame payload to be at least 2 bytes, got %v", frame.Payload)
-	statusCode := websocket.StatusCode(binary.BigEndian.Uint16(frame.Payload[:2]))
-	closeMsg := string(frame.Payload[2:])
-	t.Logf("got close frame: code=%v msg=%q", statusCode, closeMsg)
-	assert.Equal(t, int(statusCode), int(wantStatus), "got incorrect close status code")
-	assert.Contains(t, closeMsg, wantMsg, "got incorrect close message")
+	return websocket.New(conn, websocket.ClientKey("test-client"), websocket.ClientMode, opts)
 }
 
 // brokenHijackResponseWriter implements just enough to satisfy the
@@ -477,25 +950,25 @@ func newTestHooks(t testing.TB) websocket.Hooks {
 	t.Helper()
 	return websocket.Hooks{
 		OnClose: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
-			t.Logf("client=%s OnClose code=%v err=%v", key, code, err)
+			t.Logf("HOOK: client=%s OnClose code=%v err=%v", key, code, err)
 		},
 		OnReadError: func(key websocket.ClientKey, err error) {
-			t.Logf("client=%s OnReadError err=%v", key, err)
+			t.Logf("HOOK: client=%s OnReadError err=%v", key, err)
 		},
 		OnReadFrame: func(key websocket.ClientKey, frame *websocket.Frame) {
-			t.Logf("client=%s OnReadFrame frame=%v", key, frame)
+			t.Logf("HOOK: client=%s OnReadFrame frame=%v", key, frame)
 		},
 		OnReadMessage: func(key websocket.ClientKey, msg *websocket.Message) {
-			t.Logf("client=%s OnReadMessage msg=%v", key, msg)
+			t.Logf("HOOK: client=%s OnReadMessage msg=%v", key, msg)
 		},
 		OnWriteError: func(key websocket.ClientKey, err error) {
-			t.Logf("client=%s OnWriteError err=%v", key, err)
+			t.Logf("HOOK: client=%s OnWriteError err=%v", key, err)
 		},
 		OnWriteFrame: func(key websocket.ClientKey, frame *websocket.Frame) {
-			t.Logf("client=%s OnWriteFrame frame=%v", key, frame)
+			t.Logf("HOOK: client=%s OnWriteFrame frame=%v", key, frame)
 		},
 		OnWriteMessage: func(key websocket.ClientKey, msg *websocket.Message) {
-			t.Logf("client=%s OnWriteMessage msg=%v", key, msg)
+			t.Logf("HOOK: client=%s OnWriteMessage msg=%v", key, msg)
 		},
 	}
 }
