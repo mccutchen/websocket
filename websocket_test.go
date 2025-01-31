@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -773,6 +774,102 @@ func TestCloseFrames(t *testing.T) {
 	}
 }
 
+func TestNetworkErrors(t *testing.T) {
+	t.Run("a write error should cause the server to close the connection", func(t *testing.T) {
+		// the error we will inject into the wrapped writer, which will be
+		// verified in the close frame
+		writeErr := errors.New("simulated write failure")
+
+		conn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Manually re-implement websocket.Accept in order to wrap the
+			// actual conn with one that will let us inject errors
+			clientKey, err := websocket.Handshake(w, r)
+			assert.NilError(t, err)
+
+			hj := w.(http.Hijacker)
+			realConn, _, err := hj.Hijack()
+			assert.NilError(t, err)
+
+			// Our wrapped conn will fail on the first write and succeed on
+			// any subsequent writes, so echoing the incoming frame will fail
+			// but writing the subsequent close frame will succeed.
+			//
+			// Note: I'm not sure it actually makes sense to try writing the
+			// close frame after an initial write error, but that's what we
+			// do for now!
+			var writeCount atomic.Int64
+			fakeConn := &wrappedConn{
+				conn: realConn,
+				write: func(b []byte) (int, error) {
+					count := writeCount.Add(1)
+					// return an error on first write
+					if count == 1 {
+						return 0, writeErr
+					}
+					// otherwise pass thru to underlying conn
+					return realConn.Write(b)
+				},
+			}
+
+			ws := websocket.New(fakeConn, clientKey, websocket.ServerMode, websocket.Options{})
+			ws.Serve(r.Context(), websocket.EchoHandler)
+		}))
+
+		// We write a frame, but the server's attempt to write the echo
+		// response should fail via fakeConn above.
+		//
+		// The _second_ write, writing the close frame before closing the
+		// underlying conn, should succceed.
+		mustWriteFrame(t, conn, true, &websocket.Frame{
+			Opcode:  websocket.OpcodeText,
+			Fin:     true,
+			Payload: []byte("hello"),
+		})
+		mustReadCloseFrame(t, conn, websocket.StatusServerError, writeErr)
+	})
+}
+
+func TestServeLoop(t *testing.T) {
+	t.Run("serve should close the connection when handler returns an error", func(t *testing.T) {
+		// the error our websocket.Handler will return in response to a
+		// specially crafted "fail" frame
+		wantErr := errors.New("fail")
+
+		conn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ws, err := websocket.Accept(w, r, websocket.Options{})
+			assert.NilError(t, err)
+			ws.Serve(r.Context(), func(ctx context.Context, msg *websocket.Message) (*websocket.Message, error) {
+				if bytes.Equal(msg.Payload, []byte("fail")) {
+					return nil, wantErr
+				}
+				return msg, nil
+			})
+		}))
+
+		mustWriteFrames(t, conn, true, []*websocket.Frame{
+			{
+				Opcode:  websocket.OpcodeText,
+				Fin:     true,
+				Payload: []byte("ok"),
+			},
+			{
+				Opcode:  websocket.OpcodeText,
+				Fin:     true,
+				Payload: []byte("fail"),
+			},
+		})
+
+		// first frame should be echoed as expected
+		frame := mustReadFrame(t, conn, 128)
+		assert.DeepEqual(t, frame.Payload, []byte("ok"), "incorrect payload")
+
+		// second frame should cause the websocket.Handler used by the server
+		// to return an error, which should cause the server to close the
+		// connection
+		mustReadCloseFrame(t, conn, websocket.StatusServerError, wantErr)
+	})
+}
+
 func TestNew(t *testing.T) {
 	t.Run("timeouts allowed only if deadline can be set", func(t *testing.T) {
 		defer func() {
@@ -921,31 +1018,6 @@ func setupWebsocketClient(t testing.TB, conn net.Conn, opts websocket.Options) *
 	return websocket.New(conn, websocket.ClientKey("test-client"), websocket.ClientMode, opts)
 }
 
-// brokenHijackResponseWriter implements just enough to satisfy the
-// http.ResponseWriter and http.Hijacker interfaces and get through the
-// handshake before failing to actually hijack the connection.
-type brokenHijackResponseWriter struct {
-	http.ResponseWriter
-	Code int
-}
-
-func (w *brokenHijackResponseWriter) WriteHeader(code int) {
-	w.Code = code
-}
-
-func (w *brokenHijackResponseWriter) Header() http.Header {
-	return http.Header{}
-}
-
-func (brokenHijackResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return nil, nil, fmt.Errorf("error hijacking connection")
-}
-
-var (
-	_ http.ResponseWriter = &brokenHijackResponseWriter{}
-	_ http.Hijacker       = &brokenHijackResponseWriter{}
-)
-
 func newTestHooks(t testing.TB) websocket.Hooks {
 	t.Helper()
 	return websocket.Hooks{
@@ -972,3 +1044,61 @@ func newTestHooks(t testing.TB) websocket.Hooks {
 		},
 	}
 }
+
+// wrappedConn is a minimal wrapper around a net.Conn that allows tests to
+// inject faults during Read, Write, and/or Close. Unless overridden, each
+// method is proxied directly to the wrapped conn.
+type wrappedConn struct {
+	conn  net.Conn
+	read  func([]byte) (int, error)
+	write func([]byte) (int, error)
+	close func() error
+}
+
+func (c *wrappedConn) Read(b []byte) (int, error) {
+	if c.read != nil {
+		return c.read(b)
+	}
+	return c.conn.Read(b)
+}
+
+func (c *wrappedConn) Write(b []byte) (int, error) {
+	if c.write != nil {
+		return c.write(b)
+	}
+	return c.conn.Write(b)
+}
+
+func (c *wrappedConn) Close() error {
+	if c.close != nil {
+		return c.close()
+	}
+	return c.conn.Close()
+}
+
+var _ io.ReadWriteCloser = &wrappedConn{}
+
+// brokenHijackResponseWriter implements just enough to satisfy the
+// http.ResponseWriter and http.Hijacker interfaces and get through the
+// handshake before failing to actually hijack the connection.
+type brokenHijackResponseWriter struct {
+	http.ResponseWriter
+	Code int
+}
+
+func (w *brokenHijackResponseWriter) WriteHeader(code int) {
+	w.Code = code
+}
+
+func (w *brokenHijackResponseWriter) Header() http.Header {
+	return http.Header{}
+}
+
+func (brokenHijackResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return nil, nil, fmt.Errorf("error hijacking connection")
+}
+
+var (
+	_ http.ResponseWriter = &brokenHijackResponseWriter{}
+	_ http.Hijacker       = &brokenHijackResponseWriter{}
+)
