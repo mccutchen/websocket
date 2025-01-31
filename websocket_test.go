@@ -235,7 +235,7 @@ func TestConnectionLimits(t *testing.T) {
 		)
 
 		wg.Add(1)
-		conn := setupRawConnHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer wg.Done()
 			start := time.Now()
 			ws, err := websocket.Accept(w, r, websocket.Options{
@@ -344,7 +344,7 @@ func TestProtocolOkay(t *testing.T) {
 				Hooks:          newTestHooks(t),
 			}
 			conn = setupRawConn(t, opts)
-			ws   = setupClient(t, conn, opts)
+			ws   = setupWebsocketClient(t, conn, opts)
 		)
 
 		msgPayload := make([]byte, 0, opts.MaxMessageSize)
@@ -372,7 +372,7 @@ func TestProtocolOkay(t *testing.T) {
 		var (
 			opts = newOpts(t)
 			conn = setupRawConn(t, opts)
-			ws   = setupClient(t, conn, opts)
+			ws   = setupWebsocketClient(t, conn, opts)
 		)
 
 		// valid UTF-8 accepted and echoed back
@@ -438,7 +438,7 @@ func TestProtocolOkay(t *testing.T) {
 		var (
 			opts = newOpts(t)
 			conn = setupRawConn(t, opts)
-			ws   = setupClient(t, conn, opts)
+			ws   = setupWebsocketClient(t, conn, opts)
 		)
 		frame := &websocket.Frame{
 			Opcode:  websocket.OpcodeBinary,
@@ -474,7 +474,7 @@ func TestProtocolOkay(t *testing.T) {
 		var (
 			opts = newOpts(t)
 			conn = setupRawConn(t, opts)
-			ws   = setupClient(t, conn, opts)
+			ws   = setupWebsocketClient(t, conn, opts)
 		)
 		// write two fragmented frames with a ping control frame in between
 		mustWriteFrames(t, conn, true, []*websocket.Frame{
@@ -774,6 +774,24 @@ func TestCloseFrames(t *testing.T) {
 	}
 }
 
+func TestNew(t *testing.T) {
+	t.Run("timeouts allowed only if deadline can be set", func(t *testing.T) {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatalf("expected panic did not occur")
+			}
+			assert.Equal(t, fmt.Sprint(r), "ReadTimeout and WriteTimeout may only be used when input source supports setting read/write deadlines", "incorrect panic message")
+		}()
+		websocket.New(&dummyConn{}, websocket.ClientKey("test-client-key"), websocket.ServerMode, websocket.Options{
+			// setting either read or write timeout will cause a panic if the
+			// given src doesn't support setting deadlines
+			ReadTimeout:  time.Second,
+			WriteTimeout: time.Second,
+		})
+	})
+}
+
 func mustReadFrame(t testing.TB, src io.Reader, maxPayloadLen int) *websocket.Frame {
 	t.Helper()
 	frame, err := websocket.ReadFrame(src, maxPayloadLen)
@@ -836,8 +854,11 @@ func mustReadCloseFrame(t *testing.T, r io.Reader, wantCode websocket.StatusCode
 	}
 }
 
+// setupRawConn starts an websocket echo server with the given options, does
+// the client handshake, and returns the underlying TCP connection ready for
+// sending/receiving websocket messages.
 func setupRawConn(t testing.TB, opts websocket.Options) net.Conn {
-	return setupRawConnHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := websocket.Accept(w, r, opts)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -847,15 +868,21 @@ func setupRawConn(t testing.TB, opts websocket.Options) net.Conn {
 	}))
 }
 
-func setupRawConnHandler(t testing.TB, handler http.Handler) net.Conn {
+// setupRawConnWithHandler starts a server with the given handler (which
+// must be a websocket echo server), does the client handshake, and returns
+// the underlying TCP connection ready for sending/receiving.
+//
+// Prefer setupRawConn for simple use cases, use this only when a test
+// requires custom behavior (e.g. coordination via waitgroups).
+func setupRawConnWithHandler(t testing.TB, handler http.Handler) net.Conn {
 	t.Helper()
 
 	srv := httptest.NewServer(handler)
 	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
 	assert.NilError(t, err)
 	t.Cleanup(func() {
-		conn.Close()
 		srv.Close()
+		conn.Close()
 	})
 
 	handshakeReq := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -877,7 +904,9 @@ func setupRawConnHandler(t testing.TB, handler http.Handler) net.Conn {
 	return conn
 }
 
-func setupClient(t testing.TB, conn net.Conn, opts websocket.Options) *websocket.Websocket {
+// setupWebsocketClient wraps the given conn in a websocket client. The handshake and
+// upgrade process must already be complete (see setupRawConn).
+func setupWebsocketClient(t testing.TB, conn net.Conn, opts websocket.Options) *websocket.Websocket {
 	t.Helper()
 	return websocket.New(conn, websocket.ClientKey("test-client"), websocket.ClientMode, opts)
 }
