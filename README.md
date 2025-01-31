@@ -37,6 +37,7 @@ coverage of the implementation:
 
 ```bash
 make test
+make testcover
 ```
 
 Or generate code coverage:
