@@ -36,22 +36,26 @@ var defaultExcludedTestCases = []string{
 func TestAutobahn(t *testing.T) {
 	t.Parallel()
 
-	// TODO: document AUTOBAHN_* env vars that control test functionality
-	if os.Getenv("AUTOBAHN_TESTS") == "" {
-		t.Skipf("set AUTOBAHN_TESTS=1 to run autobahn integration tests")
+	// TODO: document env vars that control test functionality
+	if os.Getenv("AUTOBAHN") == "" {
+		t.Skipf("set AUTOBAHN=1 to run autobahn integration tests")
 	}
 
 	includedTestCases := defaultIncludedTestCases
 	excludedTestCases := defaultExcludedTestCases
-	var hooks websocket.Hooks
-	if userTestCases := os.Getenv("AUTOBAHN_CASES"); userTestCases != "" {
-		t.Logf("using AUTOBAHN_CASES=%q", userTestCases)
+	if userTestCases := os.Getenv("CASES"); userTestCases != "" {
+		t.Logf("using CASES=%q", userTestCases)
 		includedTestCases = strings.Split(userTestCases, ",")
 		excludedTestCases = []string{}
+	}
+
+	// Hooks can be expensive, so only enable them if necessary for debugging
+	var hooks websocket.Hooks
+	if debug := os.Getenv("DEBUG"); debug == "1" {
 		hooks = newTestHooks(t)
 	}
 
-	targetURL := os.Getenv("AUTOBAHN_TARGET")
+	targetURL := os.Getenv("TARGET")
 	if targetURL == "" {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ws, err := websocket.Accept(w, r, websocket.Options{
@@ -133,7 +137,7 @@ func TestAutobahn(t *testing.T) {
 	}
 
 	t.Logf("autobahn test report: file://%s", path.Join(testDir, "report/index.html"))
-	if os.Getenv("AUTOBAHN_REPORT") == "1" {
+	if os.Getenv("REPORT") == "1" {
 		runCmd(t, exec.Command("open", path.Join(testDir, "report/index.html")))
 	}
 }
@@ -141,7 +145,7 @@ func TestAutobahn(t *testing.T) {
 // newAutobahnTargetURL returns the URL that the autobahn test client should
 // use to connect to the given target URL, which may be an ephemeral httptest
 // server URL listening on localhost and a random port or some external URL
-// provided by the AUTOBAHN_TARGET env var.
+// provided by the TARGET env var.
 //
 // Note that the autobahn client will be running inside a container using
 // --net=host, so localhost inside the container *should* map to localhost
