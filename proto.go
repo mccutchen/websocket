@@ -15,19 +15,19 @@ const requiredVersion = "13"
 
 // Protocol-level errors.
 var (
+	ErrClientFrameUnmasked    = errors.New("client frame must be masked")
+	ErrClosePayloadInvalid    = errors.New("close frame payload must be at least 2 bytes")
 	ErrCloseStatusInvalid     = errors.New("close status code out of range")
 	ErrCloseStatusReserved    = errors.New("close status code is reserved")
-	ErrContinuationExpected   = errors.New("expected continuation frame")
+	ErrContinuationExpected   = errors.New("continuation frame expected")
+	ErrContinuationUnexpected = errors.New("continuation frame unexpected")
 	ErrControlFrameFragmented = errors.New("control frame must not be fragmented")
 	ErrControlFrameTooLarge   = errors.New("control frame payload exceeds 125 bytes")
+	ErrEncodingInvalid        = errors.New("payload must be valid UTF-8")
 	ErrFrameTooLarge          = errors.New("frame payload too large")
 	ErrMessageTooLarge        = errors.New("message paylaod too large")
-	ErrInvalidClosePayload    = errors.New("close frame payload must be at least 2 bytes")
-	ErrInvalidContinuation    = errors.New("unexpected continuation frame")
-	ErrInvalidUTF8            = errors.New("invalid UTF-8")
-	ErrUnknownOpcode          = errors.New("unknown opcode")
-	ErrUnmaskedClientFrame    = errors.New("received unmasked client frame")
-	ErrUnsupportedRSVBits     = errors.New("frame has unsupported RSV bits set")
+	ErrOpcodeUnknown          = errors.New("opcode unknown")
+	ErrRSVBitsUnsupported     = errors.New("RSV bits not supported")
 )
 
 // Opcode is a websocket OPCODE.
@@ -326,13 +326,13 @@ func validateFrame(frame *Frame, mode Mode) error {
 	// We do not support any extensions, per the spec all RSV bits must be 0:
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
 	if frame.RSV1 || frame.RSV2 || frame.RSV3 {
-		return ErrUnsupportedRSVBits
+		return ErrRSVBitsUnsupported
 	}
 
 	// If the data is being sent by the client, the frame(s) MUST be masked
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-6.1
 	if mode == ServerMode && !frame.Masked {
-		return ErrUnmaskedClientFrame
+		return ErrClientFrameUnmasked
 	}
 
 	payloadLen := len(frame.Payload)
@@ -355,7 +355,7 @@ func validateFrame(frame *Frame, mode Mode) error {
 			return nil
 		}
 		if payloadLen == 1 {
-			return ErrInvalidClosePayload
+			return ErrClosePayloadInvalid
 		}
 
 		code := binary.BigEndian.Uint16(frame.Payload[:2])
@@ -366,7 +366,7 @@ func validateFrame(frame *Frame, mode Mode) error {
 			return ErrCloseStatusReserved
 		}
 		if payloadLen > 2 && !utf8.Valid(frame.Payload[2:]) {
-			return ErrInvalidUTF8
+			return ErrEncodingInvalid
 		}
 	}
 

@@ -195,7 +195,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 		case OpcodeContinuation:
 			if msg == nil {
-				return nil, ws.closeOnReadError(StatusProtocolError, ErrInvalidContinuation)
+				return nil, ws.closeOnReadError(StatusProtocolError, ErrContinuationUnexpected)
 			}
 			if len(msg.Payload)+len(frame.Payload) > ws.maxMessageSize {
 				return nil, ws.closeOnReadError(StatusTooLarge, ErrMessageTooLarge)
@@ -214,12 +214,12 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		case OpcodePong:
 			continue // no-op
 		default:
-			return nil, ws.closeOnReadError(StatusProtocolError, fmt.Errorf("unsupported opcode: %v", frame.Opcode))
+			return nil, ws.closeOnReadError(StatusProtocolError, ErrOpcodeUnknown)
 		}
 
 		if frame.Fin {
 			if !msg.Binary && !utf8.Valid(msg.Payload) {
-				return nil, ws.closeOnReadError(StatusUnsupportedPayload, ErrInvalidUTF8)
+				return nil, ws.closeOnReadError(StatusUnsupportedPayload, ErrEncodingInvalid)
 			}
 			ws.hooks.OnReadMessage(ws.clientKey, msg)
 			return msg, nil

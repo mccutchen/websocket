@@ -562,7 +562,7 @@ func TestProtocolErrors(t *testing.T) {
 				},
 			},
 			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrInvalidContinuation,
+			wantCloseReason: websocket.ErrContinuationUnexpected,
 		},
 		"max frame size": {
 			frames: []*websocket.Frame{
@@ -608,7 +608,7 @@ func TestProtocolErrors(t *testing.T) {
 			},
 			unmasked:        true,
 			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrUnmaskedClientFrame,
+			wantCloseReason: websocket.ErrClientFrameUnmasked,
 		},
 		"server rejects RSV bits": {
 			frames: []*websocket.Frame{
@@ -620,7 +620,7 @@ func TestProtocolErrors(t *testing.T) {
 				},
 			},
 			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrUnsupportedRSVBits,
+			wantCloseReason: websocket.ErrRSVBitsUnsupported,
 		},
 		"control frames must not be fragmented": {
 			frames: []*websocket.Frame{
@@ -652,7 +652,7 @@ func TestProtocolErrors(t *testing.T) {
 				},
 			},
 			wantCloseCode:   websocket.StatusUnsupportedPayload,
-			wantCloseReason: websocket.ErrInvalidUTF8,
+			wantCloseReason: websocket.ErrEncodingInvalid,
 		},
 		"missing continuation frame": {
 			frames: []*websocket.Frame{
@@ -678,7 +678,7 @@ func TestProtocolErrors(t *testing.T) {
 				},
 			},
 			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrUnknownOpcode,
+			wantCloseReason: websocket.ErrOpcodeUnknown,
 		},
 	}
 	for name, tc := range testCases {
@@ -735,27 +735,27 @@ func TestCloseFrames(t *testing.T) {
 				Payload: []byte("X"),
 			},
 			wantCode:   websocket.StatusProtocolError,
-			wantReason: "close frame payload must be at least 2 bytes",
+			wantReason: websocket.ErrClosePayloadInvalid.Error(),
 		},
 		"invalid close code (too low)": {
 			frame:      websocket.NewCloseFrame(websocket.StatusCode(999), ""),
 			wantCode:   websocket.StatusProtocolError,
-			wantReason: "close status code out of range",
+			wantReason: websocket.ErrCloseStatusInvalid.Error(),
 		},
 		"invalid close code (too high))": {
 			frame:      websocket.NewCloseFrame(websocket.StatusCode(5001), ""),
 			wantCode:   websocket.StatusProtocolError,
-			wantReason: "close status code out of range",
+			wantReason: websocket.ErrCloseStatusInvalid.Error(),
 		},
 		"reserved close code": {
 			frame:      websocket.NewCloseFrame(websocket.StatusCode(1015), ""),
 			wantCode:   websocket.StatusProtocolError,
-			wantReason: "close status code is reserved",
+			wantReason: websocket.ErrCloseStatusReserved.Error(),
 		},
 		"invalid utf8 in close reason": {
 			frame:      frameWithInvalidUTF8Reason(),
 			wantCode:   websocket.StatusProtocolError,
-			wantReason: "invalid UTF-8",
+			wantReason: websocket.ErrEncodingInvalid.Error(),
 		},
 	}
 
