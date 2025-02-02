@@ -15,19 +15,19 @@ const requiredVersion = "13"
 
 // Protocol-level errors.
 var (
+	ErrClientFrameUnmasked    = errors.New("client frame must be masked")
+	ErrClosePayloadInvalid    = errors.New("close frame payload must be at least 2 bytes")
 	ErrCloseStatusInvalid     = errors.New("close status code out of range")
 	ErrCloseStatusReserved    = errors.New("close status code is reserved")
-	ErrContinuationExpected   = errors.New("expected continuation frame")
+	ErrContinuationExpected   = errors.New("continuation frame expected")
+	ErrContinuationUnexpected = errors.New("continuation frame unexpected")
 	ErrControlFrameFragmented = errors.New("control frame must not be fragmented")
 	ErrControlFrameTooLarge   = errors.New("control frame payload exceeds 125 bytes")
+	ErrEncodingInvalid        = errors.New("payload must be valid UTF-8")
 	ErrFrameTooLarge          = errors.New("frame payload too large")
 	ErrMessageTooLarge        = errors.New("message paylaod too large")
-	ErrInvalidClosePayload    = errors.New("close frame payload must be at least 2 bytes")
-	ErrInvalidContinuation    = errors.New("unexpected continuation frame")
-	ErrInvalidUTF8            = errors.New("invalid UTF-8")
-	ErrUnknownOpcode          = errors.New("unknown opcode")
-	ErrUnmaskedClientFrame    = errors.New("received unmasked client frame")
-	ErrUnsupportedRSVBits     = errors.New("frame has unsupported RSV bits set")
+	ErrOpcodeUnknown          = errors.New("opcode unknown")
+	ErrRSVBitsUnsupported     = errors.New("RSV bits not supported")
 )
 
 // Opcode is a websocket OPCODE.
@@ -141,17 +141,20 @@ func ReadFrame(buf io.Reader, maxPayloadLen int) (*Frame, error) {
 		payloadLen = uint64(b1 & 0b01111111)
 	)
 
-	// figure out if we need to read an "extended" payload length
+	// Payload lengths 0 to 125 encoded directly in last 7 bits of payload
+	// field, but we may need to read an "extended" payload length.
 	switch payloadLen {
 	case 126:
-		// Payload length is represented in the next 2 bytes (16-bit unsigned integer)
+		// Payload lengths 126 to 65535 are represented in the next 2 bytes
+		// (16-bit unsigned integer)
 		var l uint16
 		if err := binary.Read(buf, binary.BigEndian, &l); err != nil {
 			return nil, fmt.Errorf("error reading 2-byte extended payload length: %w", err)
 		}
 		payloadLen = uint64(l)
 	case 127:
-		// Payload length is represented in the next 8 bytes (64-bit unsigned integer)
+		// Payload lengths >= 65536 are represented in the next 8 bytes
+		// (64-bit unsigned integer)
 		if err := binary.Read(buf, binary.BigEndian, &payloadLen); err != nil {
 			return nil, fmt.Errorf("error reading 8-byte extended payload length: %w", err)
 		}
@@ -192,18 +195,21 @@ func ReadFrame(buf io.Reader, maxPayloadLen int) (*Frame, error) {
 	}, nil
 }
 
-// WriteFrame writes an unmasked (i.e. server-side) websocket frame to the
-// wire.
-func WriteFrame(dst io.Writer, frame *Frame) error {
-	return WriteFrameMasked(dst, frame, zeroMask)
+// WriteFrame writes a masked websocket frame to the wire.
+func WriteFrame(dst io.Writer, mask MaskingKey, frame *Frame) error {
+	_, err := dst.Write(MarshalFrame(frame, mask))
+	if err != nil {
+		return fmt.Errorf("error writing frame: %w", err)
+	}
+	return nil
 }
 
-// WriteFrameMasked writes a masked websocket frame to the wire.
-func WriteFrameMasked(dst io.Writer, frame *Frame, mask MaskingKey) error {
+// MarshalFrame marshals a frame into bytes for transmission.
+func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 	// worst case payload size is 13 header bytes + payload size, where 13 is
 	// (1 byte header) + (1-8 byte length) + (0-4 byte mask key)
 	buf := make([]byte, 0, 13+len(frame.Payload))
-	masked := mask != zeroMask
+	masked := mask != Unmasked
 
 	// FIN, RSV1-3, OPCODE
 	var b0 byte
@@ -249,19 +255,11 @@ func WriteFrameMasked(dst io.Writer, frame *Frame, mask MaskingKey) error {
 	} else {
 		buf = append(buf, frame.Payload...)
 	}
-
-	n, err := dst.Write(buf)
-	if err != nil {
-		return fmt.Errorf("error writing frame: %w", err)
-	}
-	if n != len(buf) {
-		return fmt.Errorf("short write: %d != %d", n, len(buf))
-	}
-	return nil
+	return buf
 }
 
-// CloseFrame creates a close frame with an optional error message.
-func CloseFrame(code StatusCode, reason string) *Frame {
+// NewCloseFrame creates a close frame with an optional error message.
+func NewCloseFrame(code StatusCode, reason string) *Frame {
 	var payload []byte
 	if code > 0 {
 		payload = make([]byte, 0, 2+len(reason))
@@ -331,13 +329,13 @@ func validateFrame(frame *Frame, mode Mode) error {
 	// We do not support any extensions, per the spec all RSV bits must be 0:
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
 	if frame.RSV1 || frame.RSV2 || frame.RSV3 {
-		return ErrUnsupportedRSVBits
+		return ErrRSVBitsUnsupported
 	}
 
 	// If the data is being sent by the client, the frame(s) MUST be masked
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-6.1
 	if mode == ServerMode && !frame.Masked {
-		return ErrUnmaskedClientFrame
+		return ErrClientFrameUnmasked
 	}
 
 	payloadLen := len(frame.Payload)
@@ -360,7 +358,7 @@ func validateFrame(frame *Frame, mode Mode) error {
 			return nil
 		}
 		if payloadLen == 1 {
-			return ErrInvalidClosePayload
+			return ErrClosePayloadInvalid
 		}
 
 		code := binary.BigEndian.Uint16(frame.Payload[:2])
@@ -371,7 +369,7 @@ func validateFrame(frame *Frame, mode Mode) error {
 			return ErrCloseStatusReserved
 		}
 		if payloadLen > 2 && !utf8.Valid(frame.Payload[2:]) {
-			return ErrInvalidUTF8
+			return ErrEncodingInvalid
 		}
 	}
 
@@ -403,7 +401,9 @@ func NewClientKey() ClientKey {
 // MaskingKey masks client frames.
 type MaskingKey [4]byte
 
-var zeroMask = MaskingKey([4]byte{})
+// Unmasked is the zero masking key, indicating that a marshaled frame should
+// not be masked.
+var Unmasked = MaskingKey([4]byte{})
 
 // NewMaskingKey returns a randomly generated making key for client frames.
 // Panics on insufficient randomness.

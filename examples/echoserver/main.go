@@ -45,8 +45,8 @@ func main() {
 			// the autobahn websocket test suite.
 			//
 			// Prefer much lower limits when your application allows it.
-			MaxFrameSize:   1024 * 1024 * 16,
-			MaxMessageSize: 1024 * 1024 * 16,
+			MaxFrameSize:   16 << 20, // 16 MiB
+			MaxMessageSize: 16 << 20,
 		})
 		if err != nil {
 			logger.ErrorContext(r.Context(), "websocket handshake failed", "error", err.Error())

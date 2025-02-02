@@ -59,7 +59,7 @@ To run the autobahn fuzzing client in its default configuration, use:
 make testautobahn
 ```
 
-There are a variety of options that can be enabled individually or altogether,
+There are a variety of options that can be enabled individually or together,
 which are useful for viewing the generated HTML test report, narrowing the
 set of test cases to debug a particular issue, or to enable more detailed
 debug logging.

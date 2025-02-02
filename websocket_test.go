@@ -321,7 +321,7 @@ func TestProtocolOkay(t *testing.T) {
 		assert.DeepEqual(t, serverFrame, clientFrame, "matching frames")
 
 		// ensure closing handshake is completed when initiated by client
-		clientClose := websocket.CloseFrame(websocket.StatusNormalClosure, "")
+		clientClose := websocket.NewCloseFrame(websocket.StatusNormalClosure, "")
 		mustWriteFrame(t, conn, true, clientClose)
 		mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
 
@@ -454,7 +454,11 @@ func TestProtocolOkay(t *testing.T) {
 
 	t.Run("jumbo frames okay", func(t *testing.T) {
 		t.Parallel()
-		jumboSize := 64 * 1024 // payloads of length 65536 or more must be encoded as 8 bytes
+
+		// Ensure we're exercising extended payload length parsing, where
+		// payloads of length 65536 (64 KiB) or more must be encoded as 8
+		// bytes
+		jumboSize := 64 << 10 // == 64 KiB == 65536
 		conn := setupRawConn(t, websocket.Options{
 			MaxFrameSize:   jumboSize,
 			MaxMessageSize: jumboSize,
@@ -562,7 +566,7 @@ func TestProtocolErrors(t *testing.T) {
 				},
 			},
 			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrInvalidContinuation,
+			wantCloseReason: websocket.ErrContinuationUnexpected,
 		},
 		"max frame size": {
 			frames: []*websocket.Frame{
@@ -608,7 +612,7 @@ func TestProtocolErrors(t *testing.T) {
 			},
 			unmasked:        true,
 			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrUnmaskedClientFrame,
+			wantCloseReason: websocket.ErrClientFrameUnmasked,
 		},
 		"server rejects RSV bits": {
 			frames: []*websocket.Frame{
@@ -620,7 +624,7 @@ func TestProtocolErrors(t *testing.T) {
 				},
 			},
 			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrUnsupportedRSVBits,
+			wantCloseReason: websocket.ErrRSVBitsUnsupported,
 		},
 		"control frames must not be fragmented": {
 			frames: []*websocket.Frame{
@@ -652,7 +656,7 @@ func TestProtocolErrors(t *testing.T) {
 				},
 			},
 			wantCloseCode:   websocket.StatusUnsupportedPayload,
-			wantCloseReason: websocket.ErrInvalidUTF8,
+			wantCloseReason: websocket.ErrEncodingInvalid,
 		},
 		"missing continuation frame": {
 			frames: []*websocket.Frame{
@@ -678,7 +682,7 @@ func TestProtocolErrors(t *testing.T) {
 				},
 			},
 			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrUnknownOpcode,
+			wantCloseReason: websocket.ErrOpcodeUnknown,
 		},
 	}
 	for name, tc := range testCases {
@@ -735,27 +739,27 @@ func TestCloseFrames(t *testing.T) {
 				Payload: []byte("X"),
 			},
 			wantCode:   websocket.StatusProtocolError,
-			wantReason: "close frame payload must be at least 2 bytes",
+			wantReason: websocket.ErrClosePayloadInvalid.Error(),
 		},
 		"invalid close code (too low)": {
-			frame:      websocket.CloseFrame(websocket.StatusCode(999), ""),
+			frame:      websocket.NewCloseFrame(websocket.StatusCode(999), ""),
 			wantCode:   websocket.StatusProtocolError,
-			wantReason: "close status code out of range",
+			wantReason: websocket.ErrCloseStatusInvalid.Error(),
 		},
 		"invalid close code (too high))": {
-			frame:      websocket.CloseFrame(websocket.StatusCode(5001), ""),
+			frame:      websocket.NewCloseFrame(websocket.StatusCode(5001), ""),
 			wantCode:   websocket.StatusProtocolError,
-			wantReason: "close status code out of range",
+			wantReason: websocket.ErrCloseStatusInvalid.Error(),
 		},
 		"reserved close code": {
-			frame:      websocket.CloseFrame(websocket.StatusCode(1015), ""),
+			frame:      websocket.NewCloseFrame(websocket.StatusCode(1015), ""),
 			wantCode:   websocket.StatusProtocolError,
-			wantReason: "close status code is reserved",
+			wantReason: websocket.ErrCloseStatusReserved.Error(),
 		},
 		"invalid utf8 in close reason": {
 			frame:      frameWithInvalidUTF8Reason(),
 			wantCode:   websocket.StatusProtocolError,
-			wantReason: "invalid UTF-8",
+			wantReason: websocket.ErrEncodingInvalid.Error(),
 		},
 	}
 
@@ -764,7 +768,7 @@ func TestCloseFrames(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			conn := setupRawConn(t, websocket.Options{})
 			t.Logf("sending close frame %v", tc.frame)
-			assert.NilError(t, websocket.WriteFrameMasked(conn, tc.frame, websocket.NewMaskingKey()))
+			assert.NilError(t, websocket.WriteFrame(conn, websocket.NewMaskingKey(), tc.frame))
 			var wantErr error
 			if tc.wantReason != "" {
 				wantErr = errors.New(tc.wantReason)
@@ -904,13 +908,11 @@ func mustReadMessage(t testing.TB, ws *websocket.Websocket) *websocket.Message {
 
 func mustWriteFrame(t testing.TB, dst io.Writer, masked bool, frame *websocket.Frame) {
 	t.Helper()
-	var err error
+	mask := websocket.Unmasked
 	if masked {
-		err = websocket.WriteFrameMasked(dst, frame, websocket.NewMaskingKey())
-	} else {
-		err = websocket.WriteFrame(dst, frame)
+		mask = websocket.NewMaskingKey()
 	}
-	assert.NilError(t, err)
+	assert.NilError(t, websocket.WriteFrame(dst, mask, frame))
 }
 
 func mustWriteFrames(t testing.TB, dst io.Writer, masked bool, frames []*websocket.Frame) {

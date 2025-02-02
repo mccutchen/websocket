@@ -195,7 +195,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 		case OpcodeContinuation:
 			if msg == nil {
-				return nil, ws.closeOnReadError(StatusProtocolError, ErrInvalidContinuation)
+				return nil, ws.closeOnReadError(StatusProtocolError, ErrContinuationUnexpected)
 			}
 			if len(msg.Payload)+len(frame.Payload) > ws.maxMessageSize {
 				return nil, ws.closeOnReadError(StatusTooLarge, ErrMessageTooLarge)
@@ -207,19 +207,19 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		case OpcodePing:
 			frame.Opcode = OpcodePong
 			ws.hooks.OnWriteFrame(ws.clientKey, frame)
-			if err := WriteFrame(ws.conn, frame); err != nil {
+			if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
 				return nil, err
 			}
 			continue
 		case OpcodePong:
 			continue // no-op
 		default:
-			return nil, ws.closeOnReadError(StatusProtocolError, fmt.Errorf("unsupported opcode: %v", frame.Opcode))
+			return nil, ws.closeOnReadError(StatusProtocolError, ErrOpcodeUnknown)
 		}
 
 		if frame.Fin {
 			if !msg.Binary && !utf8.Valid(msg.Payload) {
-				return nil, ws.closeOnReadError(StatusUnsupportedPayload, ErrInvalidUTF8)
+				return nil, ws.closeOnReadError(StatusUnsupportedPayload, ErrEncodingInvalid)
 			}
 			ws.hooks.OnReadMessage(ws.clientKey, msg)
 			return msg, nil
@@ -242,7 +242,7 @@ func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 		default:
 			ws.resetWriteDeadline()
 		}
-		if err := WriteFrame(ws.conn, frame); err != nil {
+		if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
 			return ws.closeOnWriteError(StatusServerError, err)
 		}
 	}
@@ -274,6 +274,15 @@ func (ws *Websocket) Serve(ctx context.Context, handler Handler) {
 	}
 }
 
+// mask returns an appropriate masking key for use when writing a message's
+// frames.
+func (ws *Websocket) mask() MaskingKey {
+	if ws.mode == ServerMode {
+		return Unmasked
+	}
+	return NewMaskingKey()
+}
+
 // Close closes a websocket connection.
 func (ws *Websocket) Close() error {
 	return ws.closeWithError(StatusNormalClosure, nil)
@@ -286,7 +295,7 @@ func (ws *Websocket) closeWithError(code StatusCode, err error) error {
 	if err != nil {
 		reason = err.Error()
 	}
-	if err := WriteFrame(ws.conn, CloseFrame(code, reason)); err != nil {
+	if err := WriteFrame(ws.conn, ws.mask(), NewCloseFrame(code, reason)); err != nil {
 		return fmt.Errorf("websocket: failed to write close frame: %w", err)
 	}
 	if err := ws.conn.Close(); err != nil {

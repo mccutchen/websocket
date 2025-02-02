@@ -65,9 +65,9 @@ func TestAutobahn(t *testing.T) {
 				ReadTimeout:  5000 * time.Millisecond,
 				WriteTimeout: 500 * time.Millisecond,
 				// some autobahn test cases send large frames, so we need to
-				// support large frames and messages
-				MaxFrameSize:   1024 * 1024 * 16,
-				MaxMessageSize: 1024 * 1024 * 16,
+				// support frames and messages up to 16 MiB
+				MaxFrameSize:   16 << 20,
+				MaxMessageSize: 16 << 20,
 			})
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
