@@ -192,18 +192,21 @@ func ReadFrame(buf io.Reader, maxPayloadLen int) (*Frame, error) {
 	}, nil
 }
 
-// WriteFrame writes an unmasked (i.e. server-side) websocket frame to the
-// wire.
-func WriteFrame(dst io.Writer, frame *Frame) error {
-	return WriteFrameMasked(dst, frame, zeroMask)
+// WriteFrame writes a masked websocket frame to the wire.
+func WriteFrame(dst io.Writer, mask MaskingKey, frame *Frame) error {
+	_, err := dst.Write(MarshalFrame(frame, mask))
+	if err != nil {
+		return fmt.Errorf("error writing frame: %w", err)
+	}
+	return nil
 }
 
-// WriteFrameMasked writes a masked websocket frame to the wire.
-func WriteFrameMasked(dst io.Writer, frame *Frame, mask MaskingKey) error {
+// MarshalFrame marshals a frame into bytes for transmission.
+func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 	// worst case payload size is 13 header bytes + payload size, where 13 is
 	// (1 byte header) + (1-8 byte length) + (0-4 byte mask key)
 	buf := make([]byte, 0, 13+len(frame.Payload))
-	masked := mask != zeroMask
+	masked := mask != Unmasked
 
 	// FIN, RSV1-3, OPCODE
 	var b0 byte
@@ -249,19 +252,11 @@ func WriteFrameMasked(dst io.Writer, frame *Frame, mask MaskingKey) error {
 	} else {
 		buf = append(buf, frame.Payload...)
 	}
-
-	n, err := dst.Write(buf)
-	if err != nil {
-		return fmt.Errorf("error writing frame: %w", err)
-	}
-	if n != len(buf) {
-		return fmt.Errorf("short write: %d != %d", n, len(buf))
-	}
-	return nil
+	return buf
 }
 
-// CloseFrame creates a close frame with an optional error message.
-func CloseFrame(code StatusCode, reason string) *Frame {
+// NewCloseFrame creates a close frame with an optional error message.
+func NewCloseFrame(code StatusCode, reason string) *Frame {
 	var payload []byte
 	if code > 0 {
 		payload = make([]byte, 0, 2+len(reason))
@@ -403,7 +398,9 @@ func NewClientKey() ClientKey {
 // MaskingKey masks client frames.
 type MaskingKey [4]byte
 
-var zeroMask = MaskingKey([4]byte{})
+// Unmasked is the zero masking key, indicating that a marshaled frame should
+// not be masked.
+var Unmasked = MaskingKey([4]byte{})
 
 // NewMaskingKey returns a randomly generated making key for client frames.
 // Panics on insufficient randomness.

@@ -37,10 +37,8 @@ func BenchmarkReadFrame(b *testing.B) {
 
 	for _, size := range frameSizes {
 		frame := makeFrame(websocket.OpcodeText, true, size)
-		mask := [4]byte{1, 2, 3, 4}
-
 		buf := &bytes.Buffer{}
-		assert.NilError(b, websocket.WriteFrameMasked(buf, frame, mask))
+		assert.NilError(b, websocket.WriteFrame(buf, websocket.NewMaskingKey(), frame))
 
 		// Run sub-benchmarks for each payload size
 		b.Run(formatSize(size), func(b *testing.B) {
@@ -93,7 +91,7 @@ func BenchmarkReadMessage(b *testing.B) {
 			fin := i == frameCount-1
 			b.Logf("frame=%d frameCount=%d fin=%v", i, frameCount, fin)
 			frame := makeFrame(opcode, fin, frameSize)
-			assert.NilError(b, websocket.WriteFrameMasked(buf, frame, websocket.NewMaskingKey()))
+			assert.NilError(b, websocket.WriteFrame(buf, websocket.NewMaskingKey(), frame))
 		}
 
 		payload := buf.Bytes()

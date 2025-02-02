@@ -321,7 +321,7 @@ func TestProtocolOkay(t *testing.T) {
 		assert.DeepEqual(t, serverFrame, clientFrame, "matching frames")
 
 		// ensure closing handshake is completed when initiated by client
-		clientClose := websocket.CloseFrame(websocket.StatusNormalClosure, "")
+		clientClose := websocket.NewCloseFrame(websocket.StatusNormalClosure, "")
 		mustWriteFrame(t, conn, true, clientClose)
 		mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
 
@@ -738,17 +738,17 @@ func TestCloseFrames(t *testing.T) {
 			wantReason: "close frame payload must be at least 2 bytes",
 		},
 		"invalid close code (too low)": {
-			frame:      websocket.CloseFrame(websocket.StatusCode(999), ""),
+			frame:      websocket.NewCloseFrame(websocket.StatusCode(999), ""),
 			wantCode:   websocket.StatusProtocolError,
 			wantReason: "close status code out of range",
 		},
 		"invalid close code (too high))": {
-			frame:      websocket.CloseFrame(websocket.StatusCode(5001), ""),
+			frame:      websocket.NewCloseFrame(websocket.StatusCode(5001), ""),
 			wantCode:   websocket.StatusProtocolError,
 			wantReason: "close status code out of range",
 		},
 		"reserved close code": {
-			frame:      websocket.CloseFrame(websocket.StatusCode(1015), ""),
+			frame:      websocket.NewCloseFrame(websocket.StatusCode(1015), ""),
 			wantCode:   websocket.StatusProtocolError,
 			wantReason: "close status code is reserved",
 		},
@@ -764,7 +764,7 @@ func TestCloseFrames(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			conn := setupRawConn(t, websocket.Options{})
 			t.Logf("sending close frame %v", tc.frame)
-			assert.NilError(t, websocket.WriteFrameMasked(conn, tc.frame, websocket.NewMaskingKey()))
+			assert.NilError(t, websocket.WriteFrame(conn, websocket.NewMaskingKey(), tc.frame))
 			var wantErr error
 			if tc.wantReason != "" {
 				wantErr = errors.New(tc.wantReason)
@@ -904,13 +904,11 @@ func mustReadMessage(t testing.TB, ws *websocket.Websocket) *websocket.Message {
 
 func mustWriteFrame(t testing.TB, dst io.Writer, masked bool, frame *websocket.Frame) {
 	t.Helper()
-	var err error
+	mask := websocket.Unmasked
 	if masked {
-		err = websocket.WriteFrameMasked(dst, frame, websocket.NewMaskingKey())
-	} else {
-		err = websocket.WriteFrame(dst, frame)
+		mask = websocket.NewMaskingKey()
 	}
-	assert.NilError(t, err)
+	assert.NilError(t, websocket.WriteFrame(dst, mask, frame))
 }
 
 func mustWriteFrames(t testing.TB, dst io.Writer, masked bool, frames []*websocket.Frame) {

@@ -207,7 +207,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		case OpcodePing:
 			frame.Opcode = OpcodePong
 			ws.hooks.OnWriteFrame(ws.clientKey, frame)
-			if err := WriteFrame(ws.conn, frame); err != nil {
+			if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
 				return nil, err
 			}
 			continue
@@ -242,7 +242,7 @@ func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 		default:
 			ws.resetWriteDeadline()
 		}
-		if err := WriteFrame(ws.conn, frame); err != nil {
+		if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
 			return ws.closeOnWriteError(StatusServerError, err)
 		}
 	}
@@ -274,6 +274,15 @@ func (ws *Websocket) Serve(ctx context.Context, handler Handler) {
 	}
 }
 
+// mask returns an appropriate masking key for use when writing a message's
+// frames.
+func (ws *Websocket) mask() MaskingKey {
+	if ws.mode == ServerMode {
+		return Unmasked
+	}
+	return NewMaskingKey()
+}
+
 // Close closes a websocket connection.
 func (ws *Websocket) Close() error {
 	return ws.closeWithError(StatusNormalClosure, nil)
@@ -286,7 +295,7 @@ func (ws *Websocket) closeWithError(code StatusCode, err error) error {
 	if err != nil {
 		reason = err.Error()
 	}
-	if err := WriteFrame(ws.conn, CloseFrame(code, reason)); err != nil {
+	if err := WriteFrame(ws.conn, ws.mask(), NewCloseFrame(code, reason)); err != nil {
 		return fmt.Errorf("websocket: failed to write close frame: %w", err)
 	}
 	if err := ws.conn.Close(); err != nil {
