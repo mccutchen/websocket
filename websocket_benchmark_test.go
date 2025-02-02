@@ -28,11 +28,10 @@ func makeFrame(opcode websocket.Opcode, fin bool, payloadLen int) *websocket.Fra
 
 func BenchmarkReadFrame(b *testing.B) {
 	frameSizes := []int{
-		1024,
-		1024 * 1024,
-		// largest cases from the autobahn test suite
-		8 * 1024 * 1024,
-		16 * 1024 * 1024,
+		1 << 10,  // 1 KiB
+		1 << 20,  // 1 MiB
+		8 << 20,  // 8 MiB
+		16 << 20, // 16 MiB
 	}
 
 	for _, size := range frameSizes {
@@ -61,19 +60,19 @@ func BenchmarkReadMessage(b *testing.B) {
 		frameCount int
 	}{
 		// 1 frame per message
-		{1024 * 1024, 1},
-		{8 * 1024 * 1024, 1},
-		{16 * 1024 * 1024, 1},
+		{1 << 10, 1},
+		{8 << 20, 1},
+		{16 << 20, 1},
 
 		// 4 frames per message
-		{1024 * 1024, 4},
-		{8 * 1024 * 1024, 4},
-		{16 * 1024 * 1024, 4},
+		{1 << 10, 4},
+		{8 << 20, 4},
+		{16 << 20, 4},
 
 		// 16 frames per message
-		{1024 * 1024, 16},
-		{8 * 1024 * 1024, 16},
-		{16 * 1024 * 1024, 16},
+		{1 << 10, 16},
+		{8 << 20, 16},
+		{16 << 20, 16},
 	}
 
 	for _, tc := range testCases {

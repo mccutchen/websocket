@@ -454,7 +454,11 @@ func TestProtocolOkay(t *testing.T) {
 
 	t.Run("jumbo frames okay", func(t *testing.T) {
 		t.Parallel()
-		jumboSize := 64 * 1024 // payloads of length 65536 or more must be encoded as 8 bytes
+
+		// Ensure we're exercising extended payload length parsing, where
+		// payloads of length 65536 (64 KiB) or more must be encoded as 8
+		// bytes
+		jumboSize := 64 << 10 // == 64 KiB == 65536
 		conn := setupRawConn(t, websocket.Options{
 			MaxFrameSize:   jumboSize,
 			MaxMessageSize: jumboSize,

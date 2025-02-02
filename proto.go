@@ -141,17 +141,20 @@ func ReadFrame(buf io.Reader, maxPayloadLen int) (*Frame, error) {
 		payloadLen = uint64(b1 & 0b01111111)
 	)
 
-	// figure out if we need to read an "extended" payload length
+	// Payload lengths 0 to 125 encoded directly in last 7 bits of payload
+	// field, but we may need to read an "extended" payload length.
 	switch payloadLen {
 	case 126:
-		// Payload length is represented in the next 2 bytes (16-bit unsigned integer)
+		// Payload lengths 126 to 65535 are represented in the next 2 bytes
+		// (16-bit unsigned integer)
 		var l uint16
 		if err := binary.Read(buf, binary.BigEndian, &l); err != nil {
 			return nil, fmt.Errorf("error reading 2-byte extended payload length: %w", err)
 		}
 		payloadLen = uint64(l)
 	case 127:
-		// Payload length is represented in the next 8 bytes (64-bit unsigned integer)
+		// Payload lengths >= 65536 are represented in the next 8 bytes
+		// (64-bit unsigned integer)
 		if err := binary.Read(buf, binary.BigEndian, &payloadLen); err != nil {
 			return nil, fmt.Errorf("error reading 8-byte extended payload length: %w", err)
 		}
