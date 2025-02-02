@@ -618,7 +618,7 @@ func TestProtocolErrors(t *testing.T) {
 			frames: []*websocket.Frame{
 				{
 					Opcode:  websocket.OpcodeText,
-					RSV1:    true,
+					RSV:     0b100,
 					Fin:     true,
 					Payload: []byte("hello"),
 				},

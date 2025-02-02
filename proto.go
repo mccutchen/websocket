@@ -82,16 +82,30 @@ const (
 	StatusServerError        StatusCode = 1011
 )
 
+// RSV bit masks
+const (
+	rsv1mask = 0b100
+	rsv2mask = 0b010
+	rsv3mask = 0b001
+)
+
 // Frame is a websocket protocol frame.
 type Frame struct {
 	Fin     bool
-	RSV1    bool
-	RSV3    bool
-	RSV2    bool
+	RSV     byte // Bits 0-2 represent RSV1-3
 	Opcode  Opcode
 	Payload []byte
 	Masked  bool
 }
+
+// RSV1 returns true if the frame's RSV1 bit is set
+func (f *Frame) RSV1() bool { return f.RSV&rsv1mask != 0 }
+
+// RSV2 returns true if the frame's RSV2 bit is set
+func (f *Frame) RSV2() bool { return f.RSV&rsv2mask != 0 }
+
+// RSV3 returns true if the frame's RSV3 bit is set
+func (f *Frame) RSV3() bool { return f.RSV&rsv3mask != 0 }
 
 func (f Frame) String() string {
 	return fmt.Sprintf("Frame{Fin: %v, Opcode: %v, Payload: %s}", f.Fin, f.Opcode, formatPayload(f.Payload))
@@ -127,18 +141,16 @@ func ReadFrame(buf io.Reader, maxPayloadLen int) (*Frame, error) {
 	// parse first header byte
 	var (
 		b0     = bb[0]
-		fin    = b0&0b10000000 != 0
-		rsv1   = b0&0b01000000 != 0
-		rsv2   = b0&0b00100000 != 0
-		rsv3   = b0&0b00010000 != 0
-		opcode = Opcode(b0 & 0b00001111)
+		fin    = b0&0b1000_0000 != 0
+		rsv    = (b0 >> 4) & 0b0111
+		opcode = Opcode(b0 & 0b0000_1111)
 	)
 
 	// parse second header byte
 	var (
 		b1         = bb[1]
-		masked     = b1&0b10000000 != 0
-		payloadLen = uint64(b1 & 0b01111111)
+		masked     = b1&0b1000_0000 != 0
+		payloadLen = uint64(b1 & 0b0111_1111)
 	)
 
 	// Payload lengths 0 to 125 encoded directly in last 7 bits of payload
@@ -186,9 +198,7 @@ func ReadFrame(buf io.Reader, maxPayloadLen int) (*Frame, error) {
 
 	return &Frame{
 		Fin:     fin,
-		RSV1:    rsv1,
-		RSV2:    rsv2,
-		RSV3:    rsv3,
+		RSV:     rsv,
 		Opcode:  opcode,
 		Payload: payload,
 		Masked:  masked,
@@ -214,24 +224,16 @@ func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 	// FIN, RSV1-3, OPCODE
 	var b0 byte
 	if frame.Fin {
-		b0 |= 0b10000000
+		b0 |= 0b1000_0000
 	}
-	if frame.RSV1 {
-		b0 |= 0b01000000
-	}
-	if frame.RSV2 {
-		b0 |= 0b00100000
-	}
-	if frame.RSV3 {
-		b0 |= 0b00010000
-	}
-	b0 |= uint8(frame.Opcode) & 0b00001111
+	b0 |= (frame.RSV & 0b111) << 4
+	b0 |= uint8(frame.Opcode) & 0b0000_1111
 	buf = append(buf, b0)
 
 	// Masked bit, payload length
 	var b1 byte
 	if masked {
-		b1 |= 0b10000000
+		b1 |= 0b1000_0000
 	}
 
 	payloadLen := int64(len(frame.Payload))
@@ -328,7 +330,7 @@ var reservedStatusCodes = map[uint16]bool{
 func validateFrame(frame *Frame, mode Mode) error {
 	// We do not support any extensions, per the spec all RSV bits must be 0:
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
-	if frame.RSV1 || frame.RSV2 || frame.RSV3 {
+	if frame.RSV != 0 {
 		return ErrRSVBitsUnsupported
 	}
 
