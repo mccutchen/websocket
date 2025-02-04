@@ -49,7 +49,7 @@ func NilError(t testing.TB, err error) {
 func Error(t testing.TB, got, expected error) {
 	t.Helper()
 	if !errorsMatch(t, got, expected) {
-		t.Fatalf("expected error %q, got %v (%T vs %T)", expected, got, expected, got)
+		t.Fatalf("expected error %q, got %q (%T vs %T)", expected, got, expected, got)
 	}
 }
 
