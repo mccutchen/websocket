@@ -20,7 +20,7 @@ func TestFrameRoundTrip(t *testing.T) {
 	assert.NilError(t, websocket.WriteFrame(buf, websocket.NewMaskingKey(), clientFrame))
 
 	// read "server" frame from buffer.
-	serverFrame, err := websocket.ReadFrame(buf, websocket.ServerMode, len(clientFrame.Payload()))
+	serverFrame, err := websocket.ReadFrame(buf, websocket.ServerMode, len(clientFrame.Payload))
 	assert.NilError(t, err)
 
 	// ensure client and server frame match
@@ -38,7 +38,7 @@ func TestMaxFrameSize(t *testing.T) {
 	assert.NilError(t, websocket.WriteFrame(buf, websocket.NewMaskingKey(), clientFrame))
 
 	// read "server" frame from buffer.
-	serverFrame, err := websocket.ReadFrame(buf, websocket.ServerMode, len(clientFrame.Payload())-1)
+	serverFrame, err := websocket.ReadFrame(buf, websocket.ServerMode, len(clientFrame.Payload)-1)
 	assert.Error(t, err, websocket.ErrFrameTooLarge)
 	assert.Equal(t, serverFrame, nil, "expected nil frame on error")
 }

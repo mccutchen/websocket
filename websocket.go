@@ -193,21 +193,21 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 			msg = &Message{
 				Binary:  frame.Opcode() == OpcodeBinary,
-				Payload: frame.Payload(),
+				Payload: frame.Payload,
 			}
 		case OpcodeContinuation:
 			if msg == nil {
 				return nil, ws.closeOnReadError(StatusProtocolError, ErrContinuationUnexpected)
 			}
-			if len(msg.Payload)+len(frame.Payload()) > ws.maxMessageSize {
+			if len(msg.Payload)+len(frame.Payload) > ws.maxMessageSize {
 				return nil, ws.closeOnReadError(StatusTooLarge, ErrMessageTooLarge)
 			}
-			msg.Payload = append(msg.Payload, frame.Payload()...)
+			msg.Payload = append(msg.Payload, frame.Payload...)
 		case OpcodeClose:
 			_ = ws.Close()
 			return nil, io.EOF
 		case OpcodePing:
-			frame = NewFrame(OpcodePong, true, frame.Payload())
+			frame = NewFrame(OpcodePong, true, frame.Payload)
 			ws.hooks.OnWriteFrame(ws.clientKey, frame)
 			if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
 				return nil, err

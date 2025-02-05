@@ -369,7 +369,7 @@ func TestProtocolOkay(t *testing.T) {
 			frame := websocket.NewFrame(websocket.OpcodeText, true, []byte("Iñtërnâtiônàlizætiøn"))
 			mustWriteFrame(t, conn, true, frame)
 			msg := mustReadMessage(t, ws)
-			assert.DeepEqual(t, msg.Payload, frame.Payload(), "incorrect message payloady")
+			assert.DeepEqual(t, msg.Payload, frame.Payload, "incorrect message payloady")
 		}
 
 		// valid UTF-8 fragmented on codepoint boundaries is okay
@@ -409,7 +409,7 @@ func TestProtocolOkay(t *testing.T) {
 		mustWriteFrame(t, conn, true, frame)
 		msg := mustReadMessage(t, ws)
 		assert.Equal(t, msg.Binary, true, "binary message")
-		assert.DeepEqual(t, msg.Payload, frame.Payload(), "binary payload")
+		assert.DeepEqual(t, msg.Payload, frame.Payload, "binary payload")
 	})
 
 	t.Run("jumbo frames okay", func(t *testing.T) {
@@ -427,7 +427,7 @@ func TestProtocolOkay(t *testing.T) {
 		clientFrame := websocket.NewFrame(websocket.OpcodeText, true, bytes.Repeat([]byte("*"), jumboSize))
 		mustWriteFrame(t, conn, true, clientFrame)
 		respFrame := mustReadFrame(t, conn, jumboSize)
-		assert.DeepEqual(t, respFrame.Payload(), clientFrame.Payload(), "payload")
+		assert.DeepEqual(t, respFrame.Payload, clientFrame.Payload, "payload")
 	})
 
 	t.Run("ping frames handled between fragments", func(t *testing.T) {
@@ -465,7 +465,7 @@ func TestProtocolOkay(t *testing.T) {
 			websocket.NewFrame(websocket.OpcodeText, true, []byte("0")),
 		})
 		respFrame := mustReadFrame(t, conn, 10)
-		assert.DeepEqual(t, respFrame.Payload(), []byte("0"), "payload")
+		assert.DeepEqual(t, respFrame.Payload, []byte("0"), "payload")
 	})
 }
 
@@ -727,7 +727,7 @@ func TestServeLoop(t *testing.T) {
 
 		// first frame should be echoed as expected
 		frame := mustReadFrame(t, conn, 128)
-		assert.DeepEqual(t, frame.Payload(), []byte("ok"), "incorrect payload")
+		assert.DeepEqual(t, frame.Payload, []byte("ok"), "incorrect payload")
 
 		// second frame should cause the websocket.Handler used by the server
 		// to return an error, which should cause the server to close the
@@ -805,9 +805,9 @@ func mustReadCloseFrame(t *testing.T, r io.Reader, wantCode websocket.StatusCode
 		return
 	}
 
-	assert.Equal(t, len(frame.Payload()) >= 2, true, "expected close frame payload to be at least 2 bytes, got %v", frame.Payload())
-	gotCode := websocket.StatusCode(binary.BigEndian.Uint16(frame.Payload()[:2]))
-	gotReason := string(frame.Payload()[2:])
+	assert.Equal(t, len(frame.Payload) >= 2, true, "expected close frame payload to be at least 2 bytes, got %v", frame.Payload)
+	gotCode := websocket.StatusCode(binary.BigEndian.Uint16(frame.Payload[:2]))
+	gotReason := string(frame.Payload[2:])
 	t.Logf("got close frame: code=%v msg=%q", gotCode, gotReason)
 	assert.Equal(t, int(gotCode), int(wantCode), "incorrect close status code")
 	if wantErr != nil {

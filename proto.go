@@ -106,7 +106,7 @@ const (
 // payload.
 func NewFrame(opcode Opcode, fin bool, payload []byte, rsv ...RSVBit) *Frame {
 	f := &Frame{
-		payload: payload,
+		Payload: payload,
 	}
 	// Encode FIN, RSV1-3, and OPCODE.
 	//
@@ -138,7 +138,7 @@ func NewCloseFrame(code StatusCode, reason string) *Frame {
 // Frame is a websocket protocol frame.
 type Frame struct {
 	header  byte
-	payload []byte
+	Payload []byte
 }
 
 // Fin returns a bool indicating whether the frame's FIN bit is set.
@@ -160,13 +160,8 @@ func (f *Frame) RSV2() bool { return f.header&byte(RSV2) != 0 }
 // RSV3 returns true if the frame's RSV3 bit is set
 func (f *Frame) RSV3() bool { return f.header&byte(RSV3) != 0 }
 
-// Payload returns the frame's payload.
-func (f *Frame) Payload() []byte {
-	return f.payload
-}
-
 func (f Frame) String() string {
-	return fmt.Sprintf("Frame{Fin: %v, Opcode: %v, Payload: %s}", f.Fin(), f.Opcode(), formatPayload(f.Payload()))
+	return fmt.Sprintf("Frame{Fin: %v, Opcode: %v, Payload: %s}", f.Fin(), f.Opcode(), formatPayload(f.Payload))
 }
 
 // Message is an application-level message from the client, which may be
@@ -245,13 +240,13 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 	}
 
 	// read & optionally unmask payload
-	frame.payload = make([]byte, payloadLen)
-	if _, err := io.ReadFull(buf, frame.Payload()); err != nil {
+	frame.Payload = make([]byte, payloadLen)
+	if _, err := io.ReadFull(buf, frame.Payload); err != nil {
 		return nil, fmt.Errorf("error reading %d byte payload: %w", payloadLen, err)
 	}
 	if masked {
-		for i, b := range frame.Payload() {
-			frame.Payload()[i] = b ^ mask[i%4]
+		for i, b := range frame.Payload {
+			frame.Payload[i] = b ^ mask[i%4]
 		}
 	}
 	return frame, nil
@@ -281,7 +276,7 @@ func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 		b1 |= 0b1000_0000
 	}
 
-	payloadLen := int64(len(frame.Payload()))
+	payloadLen := int64(len(frame.Payload))
 	switch {
 	case payloadLen <= 125:
 		buf = append(buf, b1|byte(payloadLen))
@@ -296,18 +291,18 @@ func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 	// Optional masking key and actual payload
 	if masked {
 		buf = append(buf, mask[:]...)
-		for i, b := range frame.Payload() {
+		for i, b := range frame.Payload {
 			buf = append(buf, b^mask[i%4])
 		}
 	} else {
-		buf = append(buf, frame.Payload()...)
+		buf = append(buf, frame.Payload...)
 	}
 	return buf
 }
 
 // marshaledSize returns the number of bytes required to marshal a frame.
 func marshaledSize(f *Frame, mask MaskingKey) int {
-	payloadLen := len(f.Payload())
+	payloadLen := len(f.Payload)
 	size := 2 + payloadLen
 	switch {
 	case payloadLen >= 64<<10:
@@ -376,7 +371,7 @@ func validateFrame(frame *Frame) error {
 		return ErrRSVBitsUnsupported
 	}
 
-	payloadLen := len(frame.Payload())
+	payloadLen := len(frame.Payload)
 	switch frame.Opcode() {
 	case OpcodeClose, OpcodePing, OpcodePong:
 		// All control frames MUST have a payload length of 125 bytes or less
@@ -398,14 +393,14 @@ func validateFrame(frame *Frame) error {
 			return ErrClosePayloadInvalid
 		}
 
-		code := binary.BigEndian.Uint16(frame.Payload()[:2])
+		code := binary.BigEndian.Uint16(frame.Payload[:2])
 		if code < 1000 || code >= 5000 {
 			return ErrCloseStatusInvalid
 		}
 		if reservedStatusCodes[code] {
 			return ErrCloseStatusReserved
 		}
-		if payloadLen > 2 && !utf8.Valid(frame.Payload()[2:]) {
+		if payloadLen > 2 && !utf8.Valid(frame.Payload[2:]) {
 			return ErrEncodingInvalid
 		}
 	}
