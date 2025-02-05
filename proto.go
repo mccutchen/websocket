@@ -191,10 +191,6 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 		return nil, fmt.Errorf("error reading frame header: %w", err)
 	}
 
-	frame := &Frame{
-		header: header[0],
-	}
-
 	// figure out how to parse payload
 	var (
 		masked     = header[1]&maskedMask != 0
@@ -240,16 +236,19 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 	}
 
 	// read & optionally unmask payload
-	frame.Payload = make([]byte, payloadLen)
-	if _, err := io.ReadFull(buf, frame.Payload); err != nil {
+	payload := make([]byte, payloadLen)
+	if _, err := io.ReadFull(buf, payload); err != nil {
 		return nil, fmt.Errorf("error reading %d byte payload: %w", payloadLen, err)
 	}
 	if masked {
-		for i, b := range frame.Payload {
-			frame.Payload[i] = b ^ mask[i%4]
+		for i, b := range payload {
+			payload[i] = b ^ mask[i%4]
 		}
 	}
-	return frame, nil
+	return &Frame{
+		header:  header[0],
+		Payload: payload,
+	}, nil
 }
 
 // WriteFrame writes a masked websocket frame to the wire.
