@@ -36,12 +36,12 @@ type Opcode uint8
 // See the RFC for the set of defined opcodes:
 // https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
 const (
-	OpcodeContinuation Opcode = 0b0000_0000
-	OpcodeText         Opcode = 0b0000_0001
-	OpcodeBinary       Opcode = 0b0000_0010
-	OpcodeClose        Opcode = 0b0000_1000
-	OpcodePing         Opcode = 0b0000_1001
-	OpcodePong         Opcode = 0b0000_1010
+	OpcodeContinuation Opcode = 0b0000_0000 // 0x0
+	OpcodeText         Opcode = 0b0000_0001 // 0x1
+	OpcodeBinary       Opcode = 0b0000_0010 // 0x2
+	OpcodeClose        Opcode = 0b0000_1000 // 0x8
+	OpcodePing         Opcode = 0b0000_1001 // 0x9
+	OpcodePong         Opcode = 0b0000_1010 // 0xA
 )
 
 func (c Opcode) String() string {
