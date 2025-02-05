@@ -363,6 +363,9 @@ var reservedStatusCodes = map[uint16]bool{
 	2999: true,
 }
 
+// validateFrame ensures that the frame is valid.
+//
+// TODO: validate in ReadFrame instead of ReadMessage.
 func validateFrame(frame *Frame) error {
 	// We do not support any extensions, per the spec all RSV bits must be 0:
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
@@ -370,8 +373,11 @@ func validateFrame(frame *Frame) error {
 		return ErrRSVBitsUnsupported
 	}
 
-	payloadLen := len(frame.Payload)
-	switch frame.Opcode() {
+	var (
+		opcode     = frame.Opcode()
+		payloadLen = len(frame.Payload)
+	)
+	switch opcode {
 	case OpcodeClose, OpcodePing, OpcodePong:
 		// All control frames MUST have a payload length of 125 bytes or less
 		// and MUST NOT be fragmented.
@@ -384,10 +390,12 @@ func validateFrame(frame *Frame) error {
 		}
 	}
 
-	if frame.Opcode() == OpcodeClose {
+	if opcode == OpcodeClose {
 		if payloadLen == 0 {
 			return nil
 		}
+		// if a close frame has a payload, the first two bytes must encode a
+		// closing status code.
 		if payloadLen == 1 {
 			return ErrClosePayloadInvalid
 		}

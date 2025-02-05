@@ -186,13 +186,14 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		}
 		ws.hooks.OnReadFrame(ws.clientKey, frame)
 
-		switch frame.Opcode() {
+		opcode := frame.Opcode()
+		switch opcode {
 		case OpcodeBinary, OpcodeText:
 			if msg != nil {
 				return nil, ws.closeOnReadError(StatusProtocolError, ErrContinuationExpected)
 			}
 			msg = &Message{
-				Binary:  frame.Opcode() == OpcodeBinary,
+				Binary:  opcode == OpcodeBinary,
 				Payload: frame.Payload,
 			}
 		case OpcodeContinuation:
