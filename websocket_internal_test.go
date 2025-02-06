@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"bufio"
 	"net"
 	"testing"
 
@@ -11,10 +12,11 @@ func TestDefaults(t *testing.T) {
 	t.Parallel()
 
 	var (
-		conn net.Conn
-		key  = ClientKey("test-client-key")
-		opts = Options{}
-		ws   = New(conn, key, ServerMode, opts)
+		conn    net.Conn
+		connBuf *bufio.ReadWriter
+		key     = ClientKey("test-client-key")
+		opts    = Options{}
+		ws      = New(conn, connBuf, key, ServerMode, opts)
 	)
 
 	assert.Equal(t, ws.ClientKey(), key, "incorrect client key")

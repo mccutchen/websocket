@@ -2,6 +2,7 @@
 package websocket
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -54,8 +55,12 @@ type deadliner interface {
 
 // Websocket is a websocket connection.
 type Websocket struct {
+	// in practice, conn will be a net.Conn but constraining it to io.Closer
+	// lets us force all reads/writes through connBuf to minimize syscalls
+	conn    io.Closer
+	connBuf *bufio.ReadWriter
+
 	// connection state
-	conn     io.ReadWriteCloser
 	closedCh chan struct{}
 	mode     Mode
 
@@ -83,12 +88,12 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Websocket, e
 		panic("websocket: accept: server does not support hijacking")
 	}
 
-	conn, _, err := hj.Hijack()
+	conn, connBuf, err := hj.Hijack()
 	if err != nil {
 		panic(fmt.Errorf("websocket: accept: hijack failed: %s", err))
 	}
 
-	return New(conn, clientKey, ServerMode, opts), nil
+	return New(conn, connBuf, clientKey, ServerMode, opts), nil
 }
 
 // New is a low-level API that manually creates a new websocket connection.
@@ -96,15 +101,16 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Websocket, e
 // websocket connection.
 //
 // Prefer the higher-level Accept() API when possible. See also Handshake().
-func New(src io.ReadWriteCloser, clientKey ClientKey, mode Mode, opts Options) *Websocket {
+func New(conn io.Closer, connBuf *bufio.ReadWriter, clientKey ClientKey, mode Mode, opts Options) *Websocket {
 	setDefaults(&opts)
 	if opts.ReadTimeout != 0 || opts.WriteTimeout != 0 {
-		if _, ok := src.(deadliner); !ok {
+		if _, ok := conn.(deadliner); !ok {
 			panic("ReadTimeout and WriteTimeout may only be used when input source supports setting read/write deadlines")
 		}
 	}
 	return &Websocket{
-		conn:           src,
+		conn:           conn,
+		connBuf:        connBuf,
 		closedCh:       make(chan struct{}),
 		mode:           mode,
 		clientKey:      clientKey,
@@ -168,7 +174,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			ws.resetReadDeadline()
 		}
 
-		frame, err := ReadFrame(ws.conn, ws.mode, ws.maxFrameSize)
+		frame, err := ReadFrame(ws.connBuf, ws.mode, ws.maxFrameSize)
 		if err != nil {
 			code := StatusServerError
 			switch {
@@ -210,7 +216,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		case OpcodePing:
 			frame = NewFrame(OpcodePong, true, frame.Payload)
 			ws.hooks.OnWriteFrame(ws.clientKey, frame)
-			if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
+			if err := WriteFrame(ws.connBuf, ws.mask(), frame); err != nil {
 				return nil, err
 			}
 			continue
@@ -245,9 +251,12 @@ func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 		default:
 			ws.resetWriteDeadline()
 		}
-		if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
+		if err := WriteFrame(ws.connBuf, ws.mask(), frame); err != nil {
 			return ws.closeOnWriteError(StatusServerError, err)
 		}
+	}
+	if err := ws.connBuf.Flush(); err != nil {
+		return ws.closeOnWriteError(StatusServerError, fmt.Errorf("websocket: failed to flush after write: %w", err))
 	}
 	return nil
 }
@@ -298,8 +307,11 @@ func (ws *Websocket) closeWithError(code StatusCode, err error) error {
 	if err != nil {
 		reason = err.Error()
 	}
-	if err := WriteFrame(ws.conn, ws.mask(), NewCloseFrame(code, reason)); err != nil {
+	if err := WriteFrame(ws.connBuf, ws.mask(), NewCloseFrame(code, reason)); err != nil {
 		return fmt.Errorf("websocket: failed to write close frame: %w", err)
+	}
+	if err := ws.connBuf.Flush(); err != nil {
+		return fmt.Errorf("websocket: failed to flush buffer after writing close frame: %w", err)
 	}
 	if err := ws.conn.Close(); err != nil {
 		return fmt.Errorf("websocket: failed to close connection: %s", err)
