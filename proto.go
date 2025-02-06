@@ -394,8 +394,9 @@ func validateFrame(frame *Frame) error {
 		if payloadLen == 0 {
 			return nil
 		}
-		// if a close frame has a payload, the first two bytes must encode a
+		// if a close frame has a payload, the first two bytes MUST encode a
 		// closing status code.
+		// https://datatracker.ietf.org/doc/html/rfc6455#section-5.5.1
 		if payloadLen == 1 {
 			return ErrClosePayloadInvalid
 		}
