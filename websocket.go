@@ -168,7 +168,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			ws.resetReadDeadline()
 		}
 
-		frame, err := ReadFrame(ws.conn, ws.maxFrameSize)
+		frame, err := ReadFrame(ws.conn, ws.mode, ws.maxFrameSize)
 		if err != nil {
 			code := StatusServerError
 			switch {
@@ -176,21 +176,24 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 				code = StatusNormalClosure
 			case errors.Is(err, ErrFrameTooLarge):
 				code = StatusTooLarge
+			case errors.Is(err, ErrClientFrameUnmasked):
+				code = StatusProtocolError
 			}
 			return nil, ws.closeOnReadError(code, err)
 		}
-		if err := validateFrame(frame, ws.mode); err != nil {
+		if err := validateFrame(frame); err != nil {
 			return nil, ws.closeOnReadError(StatusProtocolError, err)
 		}
 		ws.hooks.OnReadFrame(ws.clientKey, frame)
 
-		switch frame.Opcode {
+		opcode := frame.Opcode()
+		switch opcode {
 		case OpcodeBinary, OpcodeText:
 			if msg != nil {
 				return nil, ws.closeOnReadError(StatusProtocolError, ErrContinuationExpected)
 			}
 			msg = &Message{
-				Binary:  frame.Opcode == OpcodeBinary,
+				Binary:  opcode == OpcodeBinary,
 				Payload: frame.Payload,
 			}
 		case OpcodeContinuation:
@@ -205,7 +208,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			_ = ws.Close()
 			return nil, io.EOF
 		case OpcodePing:
-			frame.Opcode = OpcodePong
+			frame = NewFrame(OpcodePong, true, frame.Payload)
 			ws.hooks.OnWriteFrame(ws.clientKey, frame)
 			if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
 				return nil, err
@@ -217,7 +220,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			return nil, ws.closeOnReadError(StatusProtocolError, ErrOpcodeUnknown)
 		}
 
-		if frame.Fin {
+		if frame.Fin() {
 			if !msg.Binary && !utf8.Valid(msg.Payload) {
 				return nil, ws.closeOnReadError(StatusUnsupportedPayload, ErrEncodingInvalid)
 			}
@@ -232,7 +235,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 // on any error.
 func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 	ws.hooks.OnWriteMessage(ws.clientKey, msg)
-	for _, frame := range messageFrames(msg, ws.maxFrameSize) {
+	for _, frame := range FrameMessage(msg, ws.maxFrameSize) {
 		ws.hooks.OnWriteFrame(ws.clientKey, frame)
 		select {
 		case <-ctx.Done():

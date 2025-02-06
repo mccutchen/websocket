@@ -18,12 +18,7 @@ func makeFrame(opcode websocket.Opcode, fin bool, payloadLen int) *websocket.Fra
 	for i := range payload {
 		payload[i] = 0x20 + byte(i%95) // Map to range 0x20 (space) to 0x7E (~)
 	}
-
-	return &websocket.Frame{
-		Opcode:  opcode,
-		Fin:     fin,
-		Payload: payload,
-	}
+	return websocket.NewFrame(opcode, fin, payload)
 }
 
 func BenchmarkReadFrame(b *testing.B) {
@@ -45,7 +40,7 @@ func BenchmarkReadFrame(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_, _ = src.Seek(0, 0)
-				_, err := websocket.ReadFrame(src, size)
+				_, err := websocket.ReadFrame(src, websocket.ServerMode, size)
 				if err != nil {
 					b.Fatalf("unexpected error: %v", err)
 				}
