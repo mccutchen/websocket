@@ -354,17 +354,15 @@ func (ws *Websocket) closeOnWriteError(err error) error {
 
 // chooseDeadline returns an appropriate deadline by choosing the sooner of
 // the context's deadline (if it has one) and the timeout.
-func chooseDeadline(ctx context.Context, timeout time.Duration, nowSource func() time.Time) time.Time {
-	timeoutDeadline := nowSource().Add(timeout)
-	ctxDeadline, ok := ctx.Deadline()
-	if ok && timeoutDeadline.After(ctxDeadline) {
+func chooseDeadline(ctx context.Context, deadline time.Time) time.Time {
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		return ctxDeadline
 	}
-	return timeoutDeadline
+	return deadline
 }
 
 func (ws *Websocket) resetReadDeadline(ctx context.Context) {
-	deadline := chooseDeadline(ctx, ws.readTimeout, time.Now)
+	deadline := chooseDeadline(ctx, time.Now().Add(ws.readTimeout))
 	if deadline.IsZero() {
 		return
 	}
@@ -374,7 +372,7 @@ func (ws *Websocket) resetReadDeadline(ctx context.Context) {
 }
 
 func (ws *Websocket) resetWriteDeadline(ctx context.Context) {
-	deadline := chooseDeadline(ctx, ws.writeTimeout, time.Now)
+	deadline := chooseDeadline(ctx, time.Now().Add(ws.readTimeout))
 	if deadline.IsZero() {
 		return
 	}
