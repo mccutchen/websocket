@@ -5,30 +5,12 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"unicode/utf8"
 )
 
 const requiredVersion = "13"
-
-// Protocol-level errors.
-var (
-	ErrClientFrameUnmasked    = errors.New("client frame must be masked")
-	ErrClosePayloadInvalid    = errors.New("close frame payload must be at least 2 bytes")
-	ErrCloseStatusInvalid     = errors.New("close status code out of range")
-	ErrCloseStatusReserved    = errors.New("close status code is reserved")
-	ErrContinuationExpected   = errors.New("continuation frame expected")
-	ErrContinuationUnexpected = errors.New("continuation frame unexpected")
-	ErrControlFrameFragmented = errors.New("control frame must not be fragmented")
-	ErrControlFrameTooLarge   = errors.New("control frame payload exceeds 125 bytes")
-	ErrEncodingInvalid        = errors.New("payload must be valid UTF-8")
-	ErrFrameTooLarge          = errors.New("frame payload too large")
-	ErrMessageTooLarge        = errors.New("message paylaod too large")
-	ErrOpcodeUnknown          = errors.New("opcode unknown")
-	ErrRSVBitsUnsupported     = errors.New("RSV bits not supported")
-)
 
 // Opcode is a websocket OPCODE.
 type Opcode uint8
@@ -63,24 +45,65 @@ func (c Opcode) String() string {
 	}
 }
 
-// StatusCode is a websocket status code.
+// StatusCode is a websocket close status code.
 type StatusCode uint16
 
-// See the RFC for the set of defined status codes:
+// Close status codes, as defined in RFC 6455 and the IANA registry.
+//
 // https://datatracker.ietf.org/doc/html/rfc6455#section-7.4.1
+// https://www.iana.org/assignments/websocket/websocket.xhtml#close-code-number
 const (
-	StatusNormalClosure      StatusCode = 1000
-	StatusGoingAway          StatusCode = 1001
-	StatusProtocolError      StatusCode = 1002
-	StatusUnsupported        StatusCode = 1003
-	StatusNoStatusRcvd       StatusCode = 1005
-	StatusAbnormalClose      StatusCode = 1006
-	StatusUnsupportedPayload StatusCode = 1007
-	StatusPolicyViolation    StatusCode = 1008
-	StatusTooLarge           StatusCode = 1009
-	StatusTlSHandshake       StatusCode = 1015
-	StatusServerError        StatusCode = 1011
+	StatusNormalClosure       StatusCode = 1000
+	StatusGoingAway           StatusCode = 1001
+	StatusProtocolError       StatusCode = 1002
+	StatusUnsupportedData     StatusCode = 1003
+	StatusNoStatusRcvd        StatusCode = 1005
+	StatusAbnormalClose       StatusCode = 1006
+	StatusInvalidFramePayload StatusCode = 1007
+	StatusPolicyViolation     StatusCode = 1008
+	StatusTooLarge            StatusCode = 1009
+	StatusMandatoryExtension  StatusCode = 1010
+	StatusInternalError       StatusCode = 1011
+	StatusServiceRestart      StatusCode = 1012
+	StatusTryAgainLater       StatusCode = 1013
+	StatusGatewayError        StatusCode = 1014
+	StatusTlSHandshake        StatusCode = 1015
 )
+
+// Protocol-level errors.
+var (
+	ErrClientFrameUnmasked    = newError(StatusProtocolError, "client frame must be masked")
+	ErrClosePayloadInvalid    = newError(StatusProtocolError, "close frame payload must be at least 2 bytes")
+	ErrCloseStatusInvalid     = newError(StatusProtocolError, "close status code out of range")
+	ErrCloseStatusReserved    = newError(StatusProtocolError, "close status code is reserved")
+	ErrContinuationExpected   = newError(StatusProtocolError, "continuation frame expected")
+	ErrContinuationUnexpected = newError(StatusProtocolError, "continuation frame unexpected")
+	ErrControlFrameFragmented = newError(StatusProtocolError, "control frame must not be fragmented")
+	ErrControlFrameTooLarge   = newError(StatusProtocolError, "control frame payload exceeds 125 bytes")
+	ErrInvalidFramePayload    = newError(StatusInvalidFramePayload, "payload must be valid UTF-8")
+	ErrFrameTooLarge          = newError(StatusTooLarge, "frame payload too large")
+	ErrMessageTooLarge        = newError(StatusTooLarge, "message paylaod too large")
+	ErrOpcodeUnknown          = newError(StatusProtocolError, "opcode unknown")
+	ErrRSVBitsUnsupported     = newError(StatusProtocolError, "RSV bits not supported")
+)
+
+// Error is a websocket error with an associated status code.
+type Error struct {
+	code StatusCode
+	err  error
+}
+
+func (e *Error) Error() string {
+	return e.err.Error()
+}
+
+func (e *Error) Unwrap() error {
+	return e.err
+}
+
+func newError(code StatusCode, msg string, args ...any) *Error {
+	return &Error{code, fmt.Errorf(msg, args...)}
+}
 
 const (
 	// first header byte
@@ -188,7 +211,7 @@ var formatPayload = func(p []byte) string {
 func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 	header := make([]byte, 2)
 	if _, err := io.ReadFull(buf, header); err != nil {
-		return nil, fmt.Errorf("error reading frame header: %w", err)
+		return nil, newError(StatusAbnormalClose, "error reading frame header: %w", err)
 	}
 
 	// figure out how to parse payload
@@ -211,14 +234,14 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 		// (16-bit unsigned integer)
 		var l uint16
 		if err := binary.Read(buf, binary.BigEndian, &l); err != nil {
-			return nil, fmt.Errorf("error reading 2-byte extended payload length: %w", err)
+			return nil, newError(StatusAbnormalClose, "error reading 2-byte extended payload length: %w", err)
 		}
 		payloadLen = uint64(l)
 	case 127:
 		// Payload lengths >= 65536 are represented in the next 8 bytes
 		// (64-bit unsigned integer)
 		if err := binary.Read(buf, binary.BigEndian, &payloadLen); err != nil {
-			return nil, fmt.Errorf("error reading 8-byte extended payload length: %w", err)
+			return nil, newError(StatusAbnormalClose, "error reading 8-byte extended payload length: %w", err)
 		}
 	}
 
@@ -231,14 +254,14 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 	if masked {
 		mask = make([]byte, 4)
 		if _, err := io.ReadFull(buf, mask); err != nil {
-			return nil, fmt.Errorf("error reading mask key: %w", err)
+			return nil, newError(StatusAbnormalClose, "error reading mask key: %w", err)
 		}
 	}
 
 	// read & optionally unmask payload
 	payload := make([]byte, payloadLen)
 	if _, err := io.ReadFull(buf, payload); err != nil {
-		return nil, fmt.Errorf("error reading %d byte payload: %w", payloadLen, err)
+		return nil, newError(StatusAbnormalClose, "error reading %d byte payload: %w", payloadLen, err)
 	}
 	if masked {
 		for i, b := range payload {
@@ -255,7 +278,7 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 func WriteFrame(dst io.Writer, mask MaskingKey, frame *Frame) error {
 	_, err := dst.Write(MarshalFrame(frame, mask))
 	if err != nil {
-		return fmt.Errorf("error writing frame: %w", err)
+		return newError(StatusAbnormalClose, "error writing frame: %w", err)
 	}
 	return nil
 }
@@ -409,7 +432,7 @@ func validateFrame(frame *Frame) error {
 			return ErrCloseStatusReserved
 		}
 		if payloadLen > 2 && !utf8.Valid(frame.Payload[2:]) {
-			return ErrEncodingInvalid
+			return ErrInvalidFramePayload
 		}
 	}
 
