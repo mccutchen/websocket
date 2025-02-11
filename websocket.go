@@ -168,11 +168,11 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 	for {
 		select {
 		case <-ctx.Done():
-			// If context is canceled due to deadline, treat it as a read error and
-			// initiate server closure.
+			// If context is canceled due to deadline, treat it as a read error
+			// and initiate server closure.
 			//
-			// Otherwise, assume the client closed the connection and there's nothing
-			// for us to do besides close our end.
+			// Otherwise, assume the client closed the connection and there's
+			// nothing for us to do besides close our end.
 			//
 			// TODO: hook for context cancellation/timeout/early closure?
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -180,7 +180,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 			return nil, ws.Close()
 		default:
-			ws.resetReadDeadline(ctx)
+			ws.resetReadDeadline()
 		}
 
 		frame, err := ReadFrame(ws.conn, ws.mode, ws.maxFrameSize)
@@ -275,7 +275,7 @@ func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 		case <-ctx.Done():
 			return ws.Close()
 		default:
-			ws.resetWriteDeadline(ctx)
+			ws.resetWriteDeadline()
 		}
 		if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
 			return ws.closeOnWriteError(err)
@@ -352,31 +352,20 @@ func (ws *Websocket) closeOnWriteError(err error) error {
 	return err
 }
 
-// chooseDeadline returns an appropriate deadline by choosing the sooner of
-// the context's deadline (if it has one) and the timeout.
-func chooseDeadline(ctx context.Context, deadline time.Time) time.Time {
-	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
-		return ctxDeadline
-	}
-	return deadline
-}
-
-func (ws *Websocket) resetReadDeadline(ctx context.Context) {
-	deadline := chooseDeadline(ctx, time.Now().Add(ws.readTimeout))
-	if deadline.IsZero() {
+func (ws *Websocket) resetReadDeadline() {
+	if ws.readTimeout == 0 {
 		return
 	}
-	if err := ws.conn.(deadliner).SetReadDeadline(deadline); err != nil {
+	if err := ws.conn.(deadliner).SetReadDeadline(time.Now().Add(ws.readTimeout)); err != nil {
 		panic(fmt.Sprintf("websocket: failed to set read deadline: %s", err))
 	}
 }
 
-func (ws *Websocket) resetWriteDeadline(ctx context.Context) {
-	deadline := chooseDeadline(ctx, time.Now().Add(ws.readTimeout))
-	if deadline.IsZero() {
+func (ws *Websocket) resetWriteDeadline() {
+	if ws.writeTimeout == 0 {
 		return
 	}
-	if err := ws.conn.(deadliner).SetWriteDeadline(deadline); err != nil {
+	if err := ws.conn.(deadliner).SetWriteDeadline(time.Now().Add(ws.writeTimeout)); err != nil {
 		panic(fmt.Sprintf("websocket: failed to set write deadline: %s", err))
 	}
 }

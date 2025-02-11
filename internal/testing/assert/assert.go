@@ -166,3 +166,12 @@ func RoughlyEqual[T number](t testing.TB, got, want T, epsilon T) {
 		t.Fatalf("expected value between %v and %v, got %v", want-epsilon, want+epsilon, got)
 	}
 }
+
+// RoughlyTime asserts that a time value is within a certain tolerance.
+func RoughTime(t testing.TB, got, want time.Time, epsilon time.Duration) {
+	t.Helper()
+	delta := want.Sub(got).Abs()
+	if delta > epsilon {
+		t.Fatalf("got time value %v away from expected value (acceptable tolerance: %v)\ngot:  %v\nwant: %v", delta, epsilon, got, want)
+	}
+}
