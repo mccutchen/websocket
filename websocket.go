@@ -170,19 +170,10 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 
 		frame, err := ReadFrame(ws.conn, ws.mode, ws.maxFrameSize)
 		if err != nil {
-			code := StatusServerError
-			switch {
-			case errors.Is(err, io.EOF):
-				code = StatusNormalClosure
-			case errors.Is(err, ErrFrameTooLarge):
-				code = StatusTooLarge
-			case errors.Is(err, ErrClientFrameUnmasked):
-				code = StatusProtocolError
-			}
-			return nil, ws.closeOnReadError(code, err)
+			return nil, ws.closeOnReadError(err)
 		}
 		if err := validateFrame(frame); err != nil {
-			return nil, ws.closeOnReadError(StatusProtocolError, err)
+			return nil, ws.closeOnReadError(err)
 		}
 		ws.hooks.OnReadFrame(ws.clientKey, frame)
 
@@ -190,7 +181,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		switch opcode {
 		case OpcodeBinary, OpcodeText:
 			if msg != nil {
-				return nil, ws.closeOnReadError(StatusProtocolError, ErrContinuationExpected)
+				return nil, ws.closeOnReadError(ErrContinuationExpected)
 			}
 			msg = &Message{
 				Binary:  opcode == OpcodeBinary,
@@ -198,10 +189,10 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 		case OpcodeContinuation:
 			if msg == nil {
-				return nil, ws.closeOnReadError(StatusProtocolError, ErrContinuationUnexpected)
+				return nil, ws.closeOnReadError(ErrContinuationUnexpected)
 			}
 			if len(msg.Payload)+len(frame.Payload) > ws.maxMessageSize {
-				return nil, ws.closeOnReadError(StatusTooLarge, ErrMessageTooLarge)
+				return nil, ws.closeOnReadError(ErrMessageTooLarge)
 			}
 			msg.Payload = append(msg.Payload, frame.Payload...)
 		case OpcodeClose:
@@ -217,12 +208,12 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		case OpcodePong:
 			continue // no-op
 		default:
-			return nil, ws.closeOnReadError(StatusProtocolError, ErrOpcodeUnknown)
+			return nil, ws.closeOnReadError(ErrOpcodeUnknown)
 		}
 
 		if frame.Fin() {
 			if !msg.Binary && !utf8.Valid(msg.Payload) {
-				return nil, ws.closeOnReadError(StatusUnsupportedPayload, ErrEncodingInvalid)
+				return nil, ws.closeOnReadError(ErrInvalidFramePayload)
 			}
 			ws.hooks.OnReadMessage(ws.clientKey, msg)
 			return msg, nil
@@ -246,7 +237,7 @@ func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 			ws.resetWriteDeadline()
 		}
 		if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
-			return ws.closeOnWriteError(StatusServerError, err)
+			return ws.closeOnWriteError(err)
 		}
 	}
 	return nil
@@ -265,7 +256,7 @@ func (ws *Websocket) Serve(ctx context.Context, handler Handler) {
 
 		resp, err := handler(ctx, msg)
 		if err != nil {
-			_ = ws.closeWithError(StatusServerError, err)
+			_ = ws.closeWithError(err)
 			return
 		}
 		if resp != nil {
@@ -288,16 +279,13 @@ func (ws *Websocket) mask() MaskingKey {
 
 // Close closes a websocket connection.
 func (ws *Websocket) Close() error {
-	return ws.closeWithError(StatusNormalClosure, nil)
+	return ws.closeWithError(nil)
 }
 
-func (ws *Websocket) closeWithError(code StatusCode, err error) error {
+func (ws *Websocket) closeWithError(err error) error {
+	code, reason := statusCodeForError(err)
 	ws.hooks.OnClose(ws.clientKey, code, err)
 	close(ws.closedCh)
-	var reason string
-	if err != nil {
-		reason = err.Error()
-	}
 	if err := WriteFrame(ws.conn, ws.mask(), NewCloseFrame(code, reason)); err != nil {
 		return fmt.Errorf("websocket: failed to write close frame: %w", err)
 	}
@@ -307,15 +295,15 @@ func (ws *Websocket) closeWithError(code StatusCode, err error) error {
 	return nil
 }
 
-func (ws *Websocket) closeOnReadError(code StatusCode, err error) error {
+func (ws *Websocket) closeOnReadError(err error) error {
 	ws.hooks.OnReadError(ws.clientKey, err)
-	_ = ws.closeWithError(code, err)
+	_ = ws.closeWithError(err)
 	return err
 }
 
-func (ws *Websocket) closeOnWriteError(code StatusCode, err error) error {
+func (ws *Websocket) closeOnWriteError(err error) error {
 	ws.hooks.OnWriteError(ws.clientKey, err)
-	_ = ws.closeWithError(code, err)
+	_ = ws.closeWithError(err)
 	return err
 }
 
@@ -340,4 +328,25 @@ func (ws *Websocket) resetWriteDeadline() {
 // ClientKey returns the client key for a connection.
 func (ws *Websocket) ClientKey() ClientKey {
 	return ws.clientKey
+}
+
+// statusCodeForError returns an appropriate close frame status code and reason
+// for the given error. If error is nil, returns a normal closure status code.
+func statusCodeForError(err error) (StatusCode, string) {
+	if err == nil {
+		return StatusNormalClosure, ""
+	}
+	var protoErr *Error
+	if errors.As(err, &protoErr) {
+		return protoErr.code, protoErr.Error()
+	}
+	var (
+		code   = StatusInternalError
+		reason = err.Error()
+	)
+	switch {
+	case errors.Is(err, io.EOF):
+		code = StatusNormalClosure
+	}
+	return code, reason
 }

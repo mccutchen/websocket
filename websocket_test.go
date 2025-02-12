@@ -209,7 +209,7 @@ func TestConnectionLimits(t *testing.T) {
 		elapsed := time.Since(start)
 		assert.NilError(t, err)
 		assert.RoughlyEqual(t, elapsed, maxDuration, 25*time.Millisecond)
-		mustReadCloseFrame(t, bytes.NewBuffer(resp), websocket.StatusServerError, errors.New("error reading frame header"))
+		mustReadCloseFrame(t, bytes.NewBuffer(resp), websocket.StatusAbnormalClose, errors.New("error reading frame header"))
 
 		// connection should be closed, so we should get EOF when trying to
 		// read from it again
@@ -552,8 +552,8 @@ func TestProtocolErrors(t *testing.T) {
 			frames: []*websocket.Frame{
 				websocket.NewFrame(websocket.OpcodeText, true, []byte{0xc3}),
 			},
-			wantCloseCode:   websocket.StatusUnsupportedPayload,
-			wantCloseReason: websocket.ErrEncodingInvalid,
+			wantCloseCode:   websocket.StatusInvalidFramePayload,
+			wantCloseReason: websocket.ErrInvalidFramePayload,
 		},
 		"missing continuation frame": {
 			frames: []*websocket.Frame{
@@ -632,8 +632,8 @@ func TestCloseFrames(t *testing.T) {
 		},
 		"invalid utf8 in close reason": {
 			frame:      frameWithInvalidUTF8Reason(),
-			wantCode:   websocket.StatusProtocolError,
-			wantReason: websocket.ErrEncodingInvalid.Error(),
+			wantCode:   websocket.StatusInvalidFramePayload,
+			wantReason: websocket.ErrInvalidFramePayload.Error(),
 		},
 	}
 
@@ -699,7 +699,7 @@ func TestNetworkErrors(t *testing.T) {
 		// The _second_ write, writing the close frame before closing the
 		// underlying conn, should succceed.
 		mustWriteFrame(t, conn, true, websocket.NewFrame(websocket.OpcodeText, true, []byte("hello")))
-		mustReadCloseFrame(t, conn, websocket.StatusServerError, writeErr)
+		mustReadCloseFrame(t, conn, websocket.StatusAbnormalClose, writeErr)
 	})
 }
 
@@ -732,7 +732,7 @@ func TestServeLoop(t *testing.T) {
 		// second frame should cause the websocket.Handler used by the server
 		// to return an error, which should cause the server to close the
 		// connection
-		mustReadCloseFrame(t, conn, websocket.StatusServerError, wantErr)
+		mustReadCloseFrame(t, conn, websocket.StatusInternalError, wantErr)
 	})
 }
 
