@@ -87,7 +87,7 @@ var (
 	ErrRSVBitsUnsupported     = newError(StatusProtocolError, "RSV bits not supported")
 )
 
-// Error is a websocket error with an associated status code.
+// Error is a websocket error with an associated [StatusCode].
 type Error struct {
 	code StatusCode
 	err  error
@@ -125,7 +125,7 @@ const (
 	RSV3 RSVBit = 0b0001_0000
 )
 
-// NewFrame creates a new websocket frame with the given opcode, fin bit, and
+// NewFrame creates a new [Frame] with the given [Opcode], fin bit, and
 // payload.
 func NewFrame(opcode Opcode, fin bool, payload []byte, rsv ...RSVBit) *Frame {
 	f := &Frame{
@@ -147,7 +147,8 @@ func NewFrame(opcode Opcode, fin bool, payload []byte, rsv ...RSVBit) *Frame {
 	return f
 }
 
-// NewCloseFrame creates a close frame with an optional error message.
+// NewCloseFrame creates a close [Frame]. If the given [StatusCode] is 0, the
+// close frame will not have a payload.
 func NewCloseFrame(code StatusCode, reason string) *Frame {
 	var payload []byte
 	if code > 0 {
@@ -158,7 +159,7 @@ func NewCloseFrame(code StatusCode, reason string) *Frame {
 	return NewFrame(OpcodeClose, true, payload)
 }
 
-// Frame is a websocket protocol frame.
+// Frame is a websocket frame.
 type Frame struct {
 	header  byte
 	Payload []byte
@@ -169,7 +170,7 @@ func (f *Frame) Fin() bool {
 	return f.header&finMask != 0
 }
 
-// Opcode returns the the frame's OPCODE.
+// Opcode returns the the frame's [Opcode].
 func (f *Frame) Opcode() Opcode {
 	return Opcode(f.header & opcodeMask)
 }
@@ -188,7 +189,7 @@ func (f Frame) String() string {
 }
 
 // Message is an application-level message from the client, which may be
-// constructed from one or more individual protocol frames.
+// constructed from one or more individual frames.
 type Message struct {
 	Binary  bool
 	Payload []byte
@@ -207,7 +208,7 @@ var formatPayload = func(p []byte) string {
 	return fmt.Sprintf("[%d bytes]", len(p))
 }
 
-// ReadFrame reads a websocket frame from the wire.
+// ReadFrame reads a [Frame] from the wire.
 func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 	header := make([]byte, 2)
 	if _, err := io.ReadFull(buf, header); err != nil {
@@ -274,7 +275,8 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 	}, nil
 }
 
-// WriteFrame writes a masked websocket frame to the wire.
+// WriteFrame writes a [Frame] to dst with the given masking key. To write an
+// unmasked frame, use the special [Unmasked] key.
 func WriteFrame(dst io.Writer, mask MaskingKey, frame *Frame) error {
 	_, err := dst.Write(MarshalFrame(frame, mask))
 	if err != nil {
@@ -283,10 +285,8 @@ func WriteFrame(dst io.Writer, mask MaskingKey, frame *Frame) error {
 	return nil
 }
 
-// MarshalFrame marshals a frame into bytes for transmission.
+// MarshalFrame marshals a [Frame] into bytes for transmission.
 func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
-	// worst case payload size is 13 header bytes + payload size, where 13 is
-	// (1 byte header) + (1-8 byte length) + (0-4 byte mask key)
 	buf := make([]byte, 0, marshaledSize(frame, mask))
 	masked := mask != Unmasked
 
@@ -450,7 +450,7 @@ func acceptKey(clientKey string) string {
 // ClientKey identifies the client in the websocket handshake.
 type ClientKey string
 
-// NewClientKey returns a randomly-generated ClientKey for client handshake.
+// NewClientKey returns a randomly-generated [ClientKey] for client handshake.
 // Panics on insufficient randomness.
 func NewClientKey() ClientKey {
 	b := make([]byte, 16)
@@ -461,14 +461,14 @@ func NewClientKey() ClientKey {
 	return ClientKey(base64.StdEncoding.EncodeToString(b))
 }
 
-// MaskingKey masks client frames.
+// MaskingKey masks a client [Frame].
 type MaskingKey [4]byte
 
-// Unmasked is the zero masking key, indicating that a marshaled frame should
+// Unmasked is the zero [MaskingKey], indicating that a marshaled frame should
 // not be masked.
 var Unmasked = MaskingKey([4]byte{})
 
-// NewMaskingKey returns a randomly generated making key for client frames.
+// NewMaskingKey returns a randomly generated [MaskingKey] for client frames.
 // Panics on insufficient randomness.
 func NewMaskingKey() MaskingKey {
 	var key [4]byte
