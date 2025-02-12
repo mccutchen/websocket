@@ -12,21 +12,10 @@ import (
 	"unicode/utf8"
 )
 
-// Handler handles a single websocket message. If the returned message is
-// non-nil, it will be sent to the client. If an error is returned, the
-// connection will be closed.
-type Handler func(ctx context.Context, msg *Message) (*Message, error)
-
-// EchoHandler is a Handler that echoes each incoming message back to the
-// client.
-var EchoHandler Handler = func(_ context.Context, msg *Message) (*Message, error) {
-	return msg, nil
-}
-
 // Default options.
 const (
-	DefaultMaxFrameSize   int = 1024 * 16  // 16KiB
-	DefaultMaxMessageSize int = 1024 * 256 // 256KiB
+	DefaultMaxFrameSize   int = 16 << 10  // 16KiB
+	DefaultMaxMessageSize int = 256 << 10 // 256KiB
 )
 
 // Mode enalbes server or client behavior
@@ -95,7 +84,8 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Websocket, e
 // Caller is responsible for completing initial handshake before creating a
 // websocket connection.
 //
-// Prefer the higher-level Accept() API when possible. See also Handshake().
+// Prefer the higher-level [Accept] API when possible. See also [Handshake] if
+// using New directly.
 func New(src io.ReadWriteCloser, clientKey ClientKey, mode Mode, opts Options) *Websocket {
 	setDefaults(&opts)
 	if opts.ReadTimeout != 0 || opts.WriteTimeout != 0 {
@@ -131,7 +121,7 @@ func setDefaults(opts *Options) {
 // the WebSocket Handshake, after which only websocket frames should be
 // written to the underlying connection.
 //
-// Prefer the higher-level Accept() API when possible.
+// Prefer the higher-level [Accept] API when possible.
 func Handshake(w http.ResponseWriter, r *http.Request) (ClientKey, error) {
 	if strings.ToLower(r.Header.Get("Upgrade")) != "websocket" {
 		return "", fmt.Errorf("missing required `Upgrade: websocket` header")
@@ -152,9 +142,9 @@ func Handshake(w http.ResponseWriter, r *http.Request) (ClientKey, error) {
 	return ClientKey(clientKey), nil
 }
 
-// ReadMessage reads a single websocket message from the connection,
-// handling fragments and control frames automatically. frames are handled
-// automatically. The connection will be closed on any error.
+// ReadMessage reads a single [Message] from the connection, handling
+// fragments and control frames automatically. The connection will be closed
+// on any error.
 func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 	var msg *Message
 	for {
@@ -221,9 +211,9 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 	}
 }
 
-// WriteMessage writes a single websocket message to the connection, after
-// splitting it into fragments (if necessary). The connection will be closed
-// on any error.
+// WriteMessage writes a single [Message] to the connection, after splitting
+// it into fragments (if necessary). The connection will be closed on any
+// error.
 func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 	ws.hooks.OnWriteMessage(ws.clientKey, msg)
 	for _, frame := range FrameMessage(msg, ws.maxFrameSize) {
@@ -244,8 +234,10 @@ func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 }
 
 // Serve is a high-level convienience method for request-response style
-// websocket connections, where handler is called for each incoming message
-// and its return value is sent back to the client.
+// websocket connections, where the given [Handler] is called for each
+// incoming message and its return value is sent back to the client.
+//
+// See also [EchoHandler].
 func (ws *Websocket) Serve(ctx context.Context, handler Handler) {
 	for {
 		msg, err := ws.ReadMessage(ctx)
@@ -325,9 +317,22 @@ func (ws *Websocket) resetWriteDeadline() {
 	}
 }
 
-// ClientKey returns the client key for a connection.
+// ClientKey returns the [ClientKey] for a connection.
 func (ws *Websocket) ClientKey() ClientKey {
 	return ws.clientKey
+}
+
+// Handler handles a single websocket [Message] as part of the high level
+// [Serve] request-response API.
+//
+// If the returned message is non-nil, it will be sent to the client. If an
+// error is returned, the connection will be closed.
+type Handler func(ctx context.Context, msg *Message) (*Message, error)
+
+// EchoHandler is a [Handler] that echoes each incoming [Message] back to the
+// client.
+var EchoHandler Handler = func(_ context.Context, msg *Message) (*Message, error) {
+	return msg, nil
 }
 
 // statusCodeForError returns an appropriate close frame status code and reason
