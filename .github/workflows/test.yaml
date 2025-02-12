@@ -56,3 +56,18 @@ jobs:
 
     - name: run autobahn tests
       run: make testautobahn
+
+  examples:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: setup
+      uses: actions/setup-go@v5
+      with:
+        go-version: stable
+
+    - name: checkout
+      uses: actions/checkout@v4
+
+    - name: build examples
+      run: make examples
