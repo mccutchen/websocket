@@ -1,5 +1,27 @@
 package websocket_test
 
+// ============================================================================
+// Autobahn Test Suite
+// ============================================================================
+//
+// This test suite runs the 3rd party [Autobahn WebSocket test suite][1]'s
+// "fuzzing client" tests against an echo server implemented using this
+// websocket package.
+//
+// Because these tests are slow (60-90s on my laptop) and require a running
+// docker daemon, they are disabled by default. To run them, set the AUTOBAHN=1
+// environment variable.
+//
+// By default, the fuzzing client is run against an ephemeral httptest server,
+// but it can also be run against an external server by setting the TARGET
+// environment variable to the server's URL.
+//
+// Other customization is possible via the `CASES` and `DEBUG` environment
+// variables. See the [README][2] for more info.
+//
+// [1]: https://github.com/crossbario/autobahn-testsuite
+// [2]: https://github.com/mccutchen/websocket/blob/main/README.md#autobahn-integration-tests
+
 import (
 	"encoding/json"
 	"fmt"

@@ -1,5 +1,18 @@
 package websocket
 
+// ============================================================================
+// "Internal" tests
+// ============================================================================
+//
+// The vast majority of this package's tests are executed against its public
+// API (i.e. they are defined in `package websocket_test` and must import the
+// websocket package).
+//
+// These internal tests have access to the package's internals, used to ensure
+// coverage of details that can't be accessed via its public API.
+//
+// These tests should be minimized in favor of public API tests.
+
 import (
 	"net"
 	"testing"
