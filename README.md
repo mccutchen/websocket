@@ -64,6 +64,9 @@ which are useful for viewing the generated HTML test report, narrowing the
 set of test cases to debug a particular issue, or to enable more detailed
 debug logging.
 
+- `AUTOBAHN=1` is required to enable the Autobahn fuzzing client test suite,
+  set automatically by the `make testautobahn` target.
+
 - `CASES` narrows the set of test cases to execute (note the wildcards):
 
   ```bash
