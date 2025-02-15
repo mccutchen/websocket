@@ -14,7 +14,7 @@ CMD_REVIVE      := go run github.com/mgechev/revive@v1.5.1
 CMD_STATICCHECK := go run honnef.co/go/tools/cmd/staticcheck@2024.1.1
 
 # Find examples to build
-OUT_DIR         ?= bin
+OUT_DIR         ?= out
 OUT_DIR_ABS     := $(abspath $(OUT_DIR))
 EXAMPLE_DIR     := examples
 EXAMPLE_NAMES   := $(shell ls $(EXAMPLE_DIR))
