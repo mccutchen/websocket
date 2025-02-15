@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -967,3 +968,171 @@ var (
 	_ http.ResponseWriter = &brokenHijackResponseWriter{}
 	_ http.Hijacker       = &brokenHijackResponseWriter{}
 )
+
+// ============================================================================
+// Benchmarks
+// ============================================================================
+func BenchmarkReadFrame(b *testing.B) {
+	frameSizes := []int{
+		1 << 10,  // 1 KiB
+		1 << 20,  // 1 MiB
+		8 << 20,  // 8 MiB
+		16 << 20, // 16 MiB
+	}
+
+	for _, size := range frameSizes {
+		frame := makeFrame(websocket.OpcodeText, true, size)
+		buf := &bytes.Buffer{}
+		assert.NilError(b, websocket.WriteFrame(buf, websocket.NewMaskingKey(), frame))
+
+		// Run sub-benchmarks for each payload size
+		b.Run(formatSize(size), func(b *testing.B) {
+			src := bytes.NewReader(buf.Bytes())
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, _ = src.Seek(0, 0)
+				_, err := websocket.ReadFrame(src, websocket.ServerMode, size)
+				if err != nil {
+					b.Fatalf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkReadMessage(b *testing.B) {
+	testCases := []struct {
+		msgSize    int
+		frameCount int
+	}{
+		// 1 frame per message
+		{1 << 10, 1},
+		{8 << 20, 1},
+		{16 << 20, 1},
+
+		// 4 frames per message
+		{1 << 10, 4},
+		{8 << 20, 4},
+		{16 << 20, 4},
+
+		// 16 frames per message
+		{1 << 10, 16},
+		{8 << 20, 16},
+		{16 << 20, 16},
+	}
+
+	for _, tc := range testCases {
+		buf := &bytes.Buffer{}
+		var (
+			msgSize    = tc.msgSize
+			frameCount = tc.frameCount
+			frameSize  = msgSize / frameCount
+		)
+		for i := 0; i < frameCount; i++ {
+			opcode := websocket.OpcodeText
+			if i > 0 {
+				opcode = websocket.OpcodeContinuation
+			}
+			fin := i == frameCount-1
+			b.Logf("frame=%d frameCount=%d fin=%v", i, frameCount, fin)
+			frame := makeFrame(opcode, fin, frameSize)
+			assert.NilError(b, websocket.WriteFrame(buf, websocket.NewMaskingKey(), frame))
+		}
+
+		payload := buf.Bytes()
+		reader := bytes.NewReader(payload)
+		conn := &dummyConn{
+			in:  reader,
+			out: io.Discard,
+		}
+		ws := websocket.New(conn, websocket.NewClientKey(), websocket.ServerMode, websocket.Options{
+			MaxFrameSize:   frameSize,
+			MaxMessageSize: msgSize,
+			// Hooks:           newTestHooks(b),
+		})
+
+		name := fmt.Sprintf("%s/%d", formatSize(msgSize), frameCount)
+		b.Run(name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_, _ = reader.Seek(0, 0)
+				msg, err := ws.ReadMessage(context.Background())
+				assert.NilError(b, err)
+				assert.Equal(b, len(msg.Payload), msgSize, "expected message payload")
+			}
+		})
+	}
+}
+
+func makeFrame(opcode websocket.Opcode, fin bool, payloadLen int) *websocket.Frame {
+	payload := make([]byte, payloadLen)
+	for i := range payload {
+		payload[i] = 0x20 + byte(i%95) // Map to range 0x20 (space) to 0x7E (~)
+	}
+	return websocket.NewFrame(opcode, fin, payload)
+}
+
+func formatSize(b int) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%dB", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.0f%ciB",
+		float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// dummyConn is a minimal implementation of net.Conn that allows tests to
+// provide a separate reader and writer, and ensures that the conn can't be
+// used after it's closed.
+type dummyConn struct {
+	in     io.Reader
+	out    io.Writer
+	closed atomic.Bool
+}
+
+func (c *dummyConn) Read(p []byte) (int, error) {
+	if c.closed.Load() {
+		return 0, errors.New("reader closed")
+	}
+	return c.in.Read(p)
+}
+
+func (c *dummyConn) Write(p []byte) (int, error) {
+	if c.closed.Load() {
+		return 0, errors.New("writer closed")
+	}
+	return c.out.Write(p)
+}
+
+func (c *dummyConn) Close() error {
+	c.closed.Swap(true)
+	return nil
+}
+
+var _ io.ReadWriteCloser = &dummyConn{}
+
+// ============================================================================
+// Examples
+// ============================================================================
+func ExampleServe() {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, websocket.Options{
+			ReadTimeout:    500 * time.Millisecond,
+			WriteTimeout:   500 * time.Millisecond,
+			MaxFrameSize:   16 << 10, // 16KiB
+			MaxMessageSize: 1 << 20,  // 1MiB
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ws.Serve(r.Context(), websocket.EchoHandler)
+	})
+	if err := http.ListenAndServe(":8080", handler); err != nil {
+		log.Fatalf("error starting server: %v", err)
+	}
+}
