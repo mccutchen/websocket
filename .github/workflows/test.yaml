@@ -60,17 +60,86 @@ jobs:
     - name: run autobahn tests
       run: make testautobahn
 
-  examples:
+    - name: upload autobahn report artifact
+      if: github.ref == 'refs/heads/main'
+      uses: actions/upload-artifact@v4
+      with:
+        name: autobahn-report
+        path: ${{ env.REPORT_DIR }}
+        retention-days: 1
+
+  deploy-report:
+    needs: autobahn
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
-    - name: setup
-      uses: actions/setup-go@v5
+    - name: download latest report
+      uses: actions/download-artifact@v4
       with:
-        go-version: stable
+        name: autobahn-report
+        path: latest-report
 
-    - name: checkout
-      uses: actions/checkout@v4
+    - name: download existing reports
+      run: |
+        mkdir -p reports
 
-    - name: build examples
-      run: make examples
+        # Download existing reports from GitHub Pages
+        REPO_NAME="${GITHUB_REPOSITORY#*/}"
+        wget -q -r -np -nH --cut-dirs=2 "https://${{ github.repository_owner }}.github.io/$REPO_NAME/" -P reports/ || true
+
+        # Clean up wget artifacts
+        rm -f reports/robots.txt reports/*.html.*
+
+    - name: prepare reports
+      run: |
+        # Define constants
+        KEEP_REPORTS=10
+        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+        COMMIT_SHA=${GITHUB_SHA::8}
+        REPORT_DIR="reports/${TIMESTAMP}-${COMMIT_SHA}"
+
+        # Copy new report to timestamped directory
+        cp -r latest-report $REPORT_DIR
+
+        # Generate index.html with all reports
+        echo "<!DOCTYPE html><html><head><title>Autobahn Test Reports</title></head><body>" > reports/index.html
+        echo "<h1>Autobahn Test Reports</h1><ul>" >> reports/index.html
+
+        # List all report directories in reverse chronological order
+        REPORT_DIRS=($(ls -rd reports/*/))
+        for dir in "${REPORT_DIRS[@]}"; do
+          if [ -f "${dir}index.html" ]; then
+            dir_name=$(basename $dir)
+            echo "<li><a href=\"${dir_name}/index.html\">Report ${dir_name}</a></li>" >> reports/index.html
+          fi
+        done
+        echo "</ul></body></html>" >> reports/index.html
+
+        # Remove older reports beyond KEEP_REPORTS
+        if [ ${#REPORT_DIRS[@]} -gt $KEEP_REPORTS ]; then
+          for old_dir in "${REPORT_DIRS[@]:$KEEP_REPORTS}"; do
+            echo "Removing old report: $old_dir"
+            rm -rf "$old_dir"
+          done
+        fi
+
+    - name: Setup Pages
+      uses: actions/configure-pages@v4
+
+    - name: Upload Pages artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: reports
+
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
