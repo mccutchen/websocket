@@ -11,8 +11,11 @@ concurrency:
   group: "test-${{ github.ref }}"
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+permissions:
+  contents: read
+
 env:
-  REPORT_DIR: out/autobahn
+  REPORT_DIR: "out/autobahn"
 
 jobs:
   test:
@@ -65,14 +68,15 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: autobahn-report
-        path: ${{ env.REPORT_DIR }}
+        path: ${{ env.REPORT_DIR }}/report
         retention-days: 1
 
   deploy-report:
-    needs: autobahn
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    needs: autobahn
+    # if: github.ref == 'refs/heads/main'
 
+    # Set permissions needed for GitHub Pages deployment
     permissions:
       pages: write
       id-token: write
@@ -82,19 +86,26 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-    - name: download latest report
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for commit timestamps
+
+    - name: setup pages
+      uses: actions/configure-pages@v4
+
+    - name: download latest autobahn report
       uses: actions/download-artifact@v4
       with:
         name: autobahn-report
         path: latest-report
 
-    - name: download existing reports
+    - name: download existing autobahn reports
       run: |
+        # Create reports directory
         mkdir -p reports
 
-        # Download existing reports from GitHub Pages
-        REPO_NAME="${GITHUB_REPOSITORY#*/}"
-        wget -q -r -np -nH --cut-dirs=2 "https://${{ github.repository_owner }}.github.io/$REPO_NAME/" -P reports/ || true
+        # Download existing reports from GitHub Pages using configured URL
+        wget -q -r -np -nH --cut-dirs=1 "$GITHUB_PAGES_URL" -P reports/ || true
 
         # Clean up wget artifacts
         rm -f reports/robots.txt reports/*.html.*
@@ -103,26 +114,46 @@ jobs:
       run: |
         # Define constants
         KEEP_REPORTS=10
-        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-        COMMIT_SHA=${GITHUB_SHA::8}
-        REPORT_DIR="reports/${TIMESTAMP}-${COMMIT_SHA}"
 
-        # Copy new report to timestamped directory
+        # Get commit timestamp and short SHA
+        COMMIT_TIMESTAMP=$(git show -s --format=%cd --date=format:'%Y%m%d-%H%M%S' $GITHUB_SHA)
+        COMMIT_SHA=${GITHUB_SHA::8}
+        REPORT_DIR="reports/${COMMIT_TIMESTAMP}-${COMMIT_SHA}"
+
+        # Copy new report to directory named with commit info
         cp -r latest-report $REPORT_DIR
 
         # Generate index.html with all reports
-        echo "<!DOCTYPE html><html><head><title>Autobahn Test Reports</title></head><body>" > reports/index.html
-        echo "<h1>Autobahn Test Reports</h1><ul>" >> reports/index.html
+        cat > reports/index.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Autobahn Test Reports</title>
+</head>
+<body>
+    <h1>Autobahn Test Reports</h1>
+    <ul>
+EOF
 
         # List all report directories in reverse chronological order
         REPORT_DIRS=($(ls -rd reports/*/))
         for dir in "${REPORT_DIRS[@]}"; do
           if [ -f "${dir}index.html" ]; then
             dir_name=$(basename $dir)
-            echo "<li><a href=\"${dir_name}/index.html\">Report ${dir_name}</a></li>" >> reports/index.html
+            # Extract timestamp and sha from directory name
+            DIR_TIMESTAMP=${dir_name%-*}
+            DIR_SHA=${dir_name##*-}
+            # Format the timestamp more readably
+            FORMATTED_DATE=$(date -d "${DIR_TIMESTAMP:0:8} ${DIR_TIMESTAMP:9:2}:${DIR_TIMESTAMP:11:2}:${DIR_TIMESTAMP:13:2}" '+%Y-%m-%d %H:%M:%S')
+            echo "        <li><a href=\"${dir_name}/index.html\">Report from commit ${DIR_SHA} (${FORMATTED_DATE})</a></li>" >> reports/index.html
           fi
         done
-        echo "</ul></body></html>" >> reports/index.html
+
+        cat >> reports/index.html << 'EOF'
+    </ul>
+</body>
+</html>
+EOF
 
         # Remove older reports beyond KEEP_REPORTS
         if [ ${#REPORT_DIRS[@]} -gt $KEEP_REPORTS ]; then
@@ -132,14 +163,11 @@ jobs:
           done
         fi
 
-    - name: Setup Pages
-      uses: actions/configure-pages@v4
-
-    - name: Upload Pages artifact
+    - name: upload pages artifact
       uses: actions/upload-pages-artifact@v3
       with:
         path: reports
 
-    - name: Deploy to GitHub Pages
+    - name: deploy to github pages
       id: deployment
       uses: actions/deploy-pages@v4
