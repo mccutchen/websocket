@@ -125,15 +125,15 @@ jobs:
 
         # Generate index.html with all reports
         cat > reports/index.html << 'EOF'
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Autobahn Test Reports</title>
-</head>
-<body>
-    <h1>Autobahn Test Reports</h1>
-    <ul>
-EOF
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Autobahn Test Reports</title>
+        </head>
+        <body>
+            <h1>Autobahn Test Reports</h1>
+            <ul>
+        EOF
 
         # List all report directories in reverse chronological order
         REPORT_DIRS=($(ls -rd reports/*/))
@@ -150,10 +150,10 @@ EOF
         done
 
         cat >> reports/index.html << 'EOF'
-    </ul>
-</body>
-</html>
-EOF
+            </ul>
+        </body>
+        </html>
+        EOF
 
         # Remove older reports beyond KEEP_REPORTS
         if [ ${#REPORT_DIRS[@]} -gt $KEEP_REPORTS ]; then
