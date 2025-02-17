@@ -73,6 +73,9 @@ debug logging.
   make testautobahn CASES='5.7,6.12.*,9.*'
   ```
 
+- `REPORT_DIR={path}` specifies the output dir for autobahn test results
+  (defaults to `.ingegrationtests/autobahn-test-${timestamp}`)
+
 - `REPORT=1` automatically opens the resulting HTML test resport:
 
   ```bash
