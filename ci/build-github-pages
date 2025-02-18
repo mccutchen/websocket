@@ -45,17 +45,21 @@ cat > ${INDEX_PATH} <<EOF
 <head>
     <title>mccutchen/websocket: Autobahn Fuzzing Client Test Reports</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
 </head>
 <body>
-    <h1><a href="https://github.com/mccutchen/websocket">mccutchen/websocket</a>: Autobahn Fuzzing Client Test Reports</h1>
-    <p>The ${KEEP_REPORTS} most recent <a href="https://github.com/crossbario/autobahn-testsuite">Autobahn fuzzing client</a>
-    test reports against the main branch of <a href="https://github.com/mccutchen/websocket">mccutchen/websocket</a>
-    library.</p>
-    <table>
-        <tr>
-            <th>Report</th>
-            <th>Commit</th>
-        </tr>
+    <main class="container">
+        <h1><a href="https://github.com/mccutchen/websocket">mccutchen/websocket</a>: Autobahn Fuzzing Client Test Reports</h1>
+        <p>The ${KEEP_REPORTS} most recent <a href="https://github.com/crossbario/autobahn-testsuite">Autobahn fuzzing client</a>
+        test reports against the main branch of <a href="https://github.com/mccutchen/websocket">mccutchen/websocket</a>
+        library.</p>
+        <table>
+            <tr>
+                <th>Report</th>
+                <th>Commit</th>
+            </tr>
 EOF
 
 # List all report directories in reverse chronological order
@@ -79,7 +83,8 @@ EOF
 done
 
 cat >> ${INDEX_PATH} << 'EOF'
-    </table>
+        </table>
+    </main>
 </body>
 </html>
 EOF

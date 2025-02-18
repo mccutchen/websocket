@@ -70,7 +70,7 @@ jobs:
         path: ${{ env.REPORT_DIR }}/report
         retention-days: 1
 
-  publish-autobahn-reports:
+  publish-github-pages:
     runs-on: ubuntu-latest
     needs: autobahn
     # if: github.ref == 'refs/heads/main'
