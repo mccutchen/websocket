@@ -16,8 +16,8 @@ particularly optimized and many breaking API changes are likely for the
 forseeable future.
 
 Consider one of these libraries instead:
+- https://github.com/coder/websocket
 - https://github.com/gobwas/ws
-- https://github.com/gorilla/websocket
 - https://github.com/lxzan/gws
 
 ## Usage
@@ -50,6 +50,9 @@ make testcover
 The [crossbario/autobahn-testsuite][autobahn] project's "fuzzing client" is
 also used for integration/conformance/fuzz testing.
 
+> [!NOTE]
+> The most recent Autobahn test reports may be viewed at https://mccutchen.github.io/websocket/
+
 Because these tests a) require docker and b) take 40-60s to run, they are
 disabled by default.
 
@@ -72,6 +75,9 @@ debug logging.
   ```bash
   make testautobahn CASES='5.7,6.12.*,9.*'
   ```
+
+- `REPORT_DIR={path}` specifies the output dir for autobahn test results
+  (defaults to `.ingegrationtests/autobahn-test-${timestamp}`)
 
 - `REPORT=1` automatically opens the resulting HTML test resport:
 

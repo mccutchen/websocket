@@ -226,9 +226,13 @@ func runCmd(t *testing.T, cmd *exec.Cmd) {
 
 func newTestDir(t *testing.T) string {
 	t.Helper()
-	testDir, err := filepath.Abs(path.Join(
-		".integrationtests", fmt.Sprintf("autobahn-test-%d", time.Now().Unix()),
-	))
+	reportDir := os.Getenv("REPORT_DIR")
+	if reportDir == "" {
+		reportDir = path.Join(
+			".integrationtests", fmt.Sprintf("autobahn-test-%d", time.Now().Unix()),
+		)
+	}
+	testDir, err := filepath.Abs(reportDir)
 	assert.NilError(t, err)
 	assert.NilError(t, os.MkdirAll(testDir, 0o755))
 	return testDir

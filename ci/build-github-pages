@@ -1,0 +1,136 @@
+#!/bin/bash
+
+# build-github-pages
+#
+# This script is responsible for building the static GitHub Pages site for this
+# repo, which provides access to the most recent N Autobahn test suite reports.
+#
+# It is meant to be run via our GitHub Actions test workflow, but we can use
+# reasonable defaults for local testing (see GITHUB_SHA and GITHUB_PAGES_URL
+# below.)
+
+set -euo pipefail
+set -x
+
+# We expect our GitHub Actions CI steps to provide these values, but we can
+# offer reasonable defaults for local testing.
+GITHUB_SHA="${GITHUB_SHA:-$(git rev-parse HEAD)}"
+GITHUB_PAGES_URL="${GITHUB_PAGES_URL:-https://mccutchen.github.io/websocket/}"
+
+# Figure out timestamp of the newest report
+COMMIT_TIMESTAMP=$(git show -s --format=%cd --date=format:'%Y%m%d-%H%M%S' "$GITHUB_SHA")
+COMMIT_SHA=${GITHUB_SHA::8}
+
+KEEP_REPORTS=10
+REPORTS_ROOT="reports"
+REPORT_DIR="${REPORTS_ROOT}/${COMMIT_TIMESTAMP}-${COMMIT_SHA}"
+INDEX_PATH="${REPORTS_ROOT}/index.html"
+
+mkdir -p "${REPORTS_ROOT}"
+
+# Download existing reports from GitHub Pages using configured URL
+wget -q -r -np -nH --cut-dirs=1 "$GITHUB_PAGES_URL" -P "${REPORTS_ROOT}/" || true
+
+# Clean up wget artifacts
+rm -f "${REPORTS_ROOT}"/robots.txt "${REPORTS_ROOT}"/*.html.*
+
+# Copy new report downloaded from test artifcats to its location in the reports
+# site.
+cp -r latest-report "$REPORT_DIR"
+
+# Generate index.html with $KEEP_REPORTS most recent reports
+cat > ${INDEX_PATH} <<EOF
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>mccutchen/websocket</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+</head>
+
+<body>
+    <main class="container">
+        <header>
+            <h1><a href="https://github.com/mccutchen/websocket">mccutchen/websocket</a></h1>
+        </header>
+        <section class="container">
+            <!-- badges copied from rendered README.md -->
+            <p>
+                <a href="https://pkg.go.dev/github.com/mccutchen/websocket">
+                    <img src="https://camo.githubusercontent.com/e93270d235c8c09c3f464419eda31724926dfb8dd4785b57fa8935269f036c9c/68747470733a2f2f706b672e676f2e6465762f62616467652f6769746875622e636f6d2f6d636375746368656e2f776562736f636b6574"
+                        alt="Documentation" data-canonical-src="https://pkg.go.dev/badge/github.com/mccutchen/websocket"
+                        style="max-width: 100%;">
+                </a>
+                <a href="https://github.com/mccutchen/websocket/actions/workflows/test.yaml">
+                    <img src="https://github.com/mccutchen/websocket/actions/workflows/test.yaml/badge.svg"
+                        alt="Build status" style="max-width: 100%;">
+                </a>
+                <a href="https://codecov.io/gh/mccutchen/websocket">
+                    <img src="https://camo.githubusercontent.com/24712b1a07b036a8a498372c8218df3e8f429f16e754075ad65ff599a630ab56/68747470733a2f2f636f6465636f762e696f2f67682f6d636375746368656e2f776562736f636b65742f6272616e63682f6d61696e2f67726170682f62616467652e737667"
+                        alt="Code coverage"
+                        data-canonical-src="https://codecov.io/gh/mccutchen/websocket/branch/main/graph/badge.svg"
+                        style="max-width: 100%;">
+                </a>
+                <a href="https://goreportcard.com/report/github.com/mccutchen/websocket">
+                    <img src="https://camo.githubusercontent.com/61be14e86b92a085c387a1c557cab530bfc2ee5964af785b1e9d643e2a3dc372/687474703a2f2f676f7265706f7274636172642e636f6d2f62616467652f6769746875622e636f6d2f6d636375746368656e2f776562736f636b6574"
+                        alt="Go report card"
+                        data-canonical-src="http://goreportcard.com/badge/github.com/mccutchen/websocket"
+                        style="max-width: 100%;">
+                </a>
+            </p>
+            <p>A zero-dependency Golang implementation of the WebSocket protocol (<a
+                    href="https://datatracker.ietf.org/doc/html/rfc6455">RFC 6455</a>),
+                originally extracted from <a href="https://github.com/mccutchen/go-httpbin">mccutchen/go-httpbin</a>.
+            </p>
+        </section>
+        <section class="container">
+            <h2>Autobahn fuzzing client reports</h2>
+            <p>The ${KEEP_REPORTS} most recent <a href="https://github.com/crossbario/autobahn-testsuite">Autobahn fuzzing
+                    client</a>
+                test reports against the <code>main</code> branch of <a
+                    href="https://github.com/mccutchen/websocket">mccutchen/websocket</a>:</p>
+            <table>
+                <tr>
+                    <th>Report</th>
+                    <th>Commit</th>
+                </tr>
+EOF
+
+# List all report directories in reverse chronological order
+REPORT_DIRS=($(ls -rd ${REPORTS_ROOT}/*/))
+for dir in "${REPORT_DIRS[@]}"; do
+    if [ -f "${dir}index.html" ]; then
+    dir_name=$(basename "$dir")
+    # Extract timestamp and sha from directory name
+    DIR_TIMESTAMP=${dir_name%-*}
+    DIR_SHA=${dir_name##*-}
+    # Format the timestamp more readably
+    FORMATTED_DATE=$(date -d "${DIR_TIMESTAMP:0:8} ${DIR_TIMESTAMP:9:2}:${DIR_TIMESTAMP:11:2}:${DIR_TIMESTAMP:13:2}" '+%Y-%m-%d %H:%M:%S')
+
+    cat >> ${INDEX_PATH} <<EOF
+    <tr>
+        <td><a href="${dir_name}/">${FORMATTED_DATE}</a></td>
+        <td><a href="https://github.com/mccutchen/websocket/commit/${DIR_SHA}">${DIR_SHA}</a></td>
+    </tr>
+EOF
+    fi
+done
+
+cat >> ${INDEX_PATH} << 'EOF'
+            </table>
+        </section>
+    </main>
+</body>
+</html>
+EOF
+
+# Remove older reports beyond KEEP_REPORTS
+if [ ${#REPORT_DIRS[@]} -gt $KEEP_REPORTS ]; then
+    for old_dir in "${REPORT_DIRS[@]:$KEEP_REPORTS}"; do
+    echo "Removing old report: $old_dir"
+    rm -rf "$old_dir"
+    done
+fi

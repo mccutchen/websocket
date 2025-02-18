@@ -2,3 +2,7 @@
 *.out
 *.test
 /out
+
+# left behind during local testing of ci/build-github-pages
+/reports/
+/latest-report/
