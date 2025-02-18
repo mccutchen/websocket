@@ -98,88 +98,14 @@ jobs:
         name: autobahn-report
         path: latest-report
 
-    - name: download existing autobahn reports
-      run: |
-        # Create reports directory
-        mkdir -p reports
+    - name: build github pages
+      run: ./ci/build-github-pages
 
-        # Download existing reports from GitHub Pages using configured URL
-        wget -q -r -np -nH --cut-dirs=1 "$GITHUB_PAGES_URL" -P reports/ || true
-
-        # Clean up wget artifacts
-        rm -f reports/robots.txt reports/*.html.*
-
-    - name: prepare reports
-      run: |
-        # Define constants
-        KEEP_REPORTS=10
-
-        # Get commit timestamp and short SHA
-        COMMIT_TIMESTAMP=$(git show -s --format=%cd --date=format:'%Y%m%d-%H%M%S' $GITHUB_SHA)
-        COMMIT_SHA=${GITHUB_SHA::8}
-        REPORT_DIR="reports/${COMMIT_TIMESTAMP}-${COMMIT_SHA}"
-
-        # Copy new report to directory named with commit info
-        cp -r latest-report $REPORT_DIR
-
-        # Generate index.html with all reports
-        cat > reports/index.html << 'EOF'
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>mccutchen/websocket: Autobahn Fuzzing Client Test Reports</title>
-        </head>
-        <body>
-            <h1><a href="https://github.com/mccutchen/websocket">mccutchen/websocket</a>: Autobahn Fuzzing Client Test Reports</h1>
-            <p>The ${KEEP_REPORTS} most recent <a href="https://github.com/crossbario/autobahn-testsuite">Autobahn fuzzing client</a>
-            test reports against the main branch of <a href="https://github.com/mccutchen/websocket">mccutchen/websocket</a>
-            library.</p>
-            <table>
-                <tr>
-                    <th>Report</th>
-                    <th>Commit</th>
-                </tr>
-        EOF
-
-        # List all report directories in reverse chronological order
-        REPORT_DIRS=($(ls -rd reports/*/))
-        for dir in "${REPORT_DIRS[@]}"; do
-          if [ -f "${dir}index.html" ]; then
-            dir_name=$(basename $dir)
-            # Extract timestamp and sha from directory name
-            DIR_TIMESTAMP=${dir_name%-*}
-            DIR_SHA=${dir_name##*-}
-            # Format the timestamp more readably
-            FORMATTED_DATE=$(date -d "${DIR_TIMESTAMP:0:8} ${DIR_TIMESTAMP:9:2}:${DIR_TIMESTAMP:11:2}:${DIR_TIMESTAMP:13:2}" '+%Y-%m-%d %H:%M:%S')
-
-            cat >> reports/index.html << 'EOF'
-            <tr>
-                <td><a href="${dir_name}/">${FORMATTED_DATE}</a></td>
-                <td><a href="https://github.com/mccutchen/websocket/commit/${DIR_SHA}">${DIR_SHA}</a></td>
-            </tr>
-            EOF
-          fi
-        done
-
-        cat >> reports/index.html << 'EOF'
-            </table>
-        </body>
-        </html>
-        EOF
-
-        # Remove older reports beyond KEEP_REPORTS
-        if [ ${#REPORT_DIRS[@]} -gt $KEEP_REPORTS ]; then
-          for old_dir in "${REPORT_DIRS[@]:$KEEP_REPORTS}"; do
-            echo "Removing old report: $old_dir"
-            rm -rf "$old_dir"
-          done
-        fi
-
-    - name: upload pages artifact
+    - name: upload github pages artifact
       uses: actions/upload-pages-artifact@v3
       with:
         path: reports
 
-    - name: deploy to github pages
+    - name: deploy github pages
       id: deployment
       uses: actions/deploy-pages@v4

@@ -1,0 +1,93 @@
+#!/bin/bash
+
+# build-github-pages
+#
+# This script is responsible for building the static GitHub Pages site for this
+# repo, which provides access to the most recent N Autobahn test suite reports.
+#
+# It is meant to be run via our GitHub Actions test workflow, but we can use
+# reasonable defaults for local testing (see GITHUB_SHA and GITHUB_PAGES_URL
+# below.)
+
+set -euo pipefail
+set -x
+
+# We expect our GitHub Actions CI steps to provide these values, but we can
+# offer reasonable defaults for local testing.
+GITHUB_SHA="${GITHUB_SHA:-$(git rev-parse HEAD)}"
+GITHUB_PAGES_URL="${GITHUB_PAGES_URL:-https://mccutchen.github.io/websocket/}"
+
+# Figure out timestamp of the newest report
+COMMIT_TIMESTAMP=$(git show -s --format=%cd --date=format:'%Y%m%d-%H%M%S' "$GITHUB_SHA")
+COMMIT_SHA=${GITHUB_SHA::8}
+
+KEEP_REPORTS=10
+REPORTS_ROOT="reports"
+REPORT_DIR="${REPORTS_ROOT}/${COMMIT_TIMESTAMP}-${COMMIT_SHA}"
+INDEX_PATH="${REPORTS_ROOT}/index.html"
+
+mkdir -p "${REPORTS_ROOT}"
+
+# Download existing reports from GitHub Pages using configured URL
+wget -q -r -np -nH --cut-dirs=1 "$GITHUB_PAGES_URL" -P "${REPORTS_ROOT}/" || true
+
+# Clean up wget artifacts
+rm -f "${REPORTS_ROOT}"/robots.txt "${REPORTS_ROOT}"/*.html.*
+
+# Copy new report downloaded from test artifcats to its location in the reports
+# site.
+cp -r latest-report "$REPORT_DIR"
+
+# Generate index.html with $KEEP_REPORTS most recent reports
+cat > ${INDEX_PATH} <<EOF
+<!DOCTYPE html>
+<html>
+<head>
+    <title>mccutchen/websocket: Autobahn Fuzzing Client Test Reports</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+</head>
+<body>
+    <h1><a href="https://github.com/mccutchen/websocket">mccutchen/websocket</a>: Autobahn Fuzzing Client Test Reports</h1>
+    <p>The ${KEEP_REPORTS} most recent <a href="https://github.com/crossbario/autobahn-testsuite">Autobahn fuzzing client</a>
+    test reports against the main branch of <a href="https://github.com/mccutchen/websocket">mccutchen/websocket</a>
+    library.</p>
+    <table>
+        <tr>
+            <th>Report</th>
+            <th>Commit</th>
+        </tr>
+EOF
+
+# List all report directories in reverse chronological order
+REPORT_DIRS=($(ls -rd ${REPORTS_ROOT}/*/))
+for dir in "${REPORT_DIRS[@]}"; do
+    if [ -f "${dir}index.html" ]; then
+    dir_name=$(basename "$dir")
+    # Extract timestamp and sha from directory name
+    DIR_TIMESTAMP=${dir_name%-*}
+    DIR_SHA=${dir_name##*-}
+    # Format the timestamp more readably
+    FORMATTED_DATE=$(date -d "${DIR_TIMESTAMP:0:8} ${DIR_TIMESTAMP:9:2}:${DIR_TIMESTAMP:11:2}:${DIR_TIMESTAMP:13:2}" '+%Y-%m-%d %H:%M:%S')
+
+    cat >> ${INDEX_PATH} <<EOF
+    <tr>
+        <td><a href="${dir_name}/">${FORMATTED_DATE}</a></td>
+        <td><a href="https://github.com/mccutchen/websocket/commit/${DIR_SHA}">${DIR_SHA}</a></td>
+    </tr>
+EOF
+    fi
+done
+
+cat >> ${INDEX_PATH} << 'EOF'
+    </table>
+</body>
+</html>
+EOF
+
+# Remove older reports beyond KEEP_REPORTS
+if [ ${#REPORT_DIRS[@]} -gt $KEEP_REPORTS ]; then
+    for old_dir in "${REPORT_DIRS[@]:$KEEP_REPORTS}"; do
+    echo "Removing old report: $old_dir"
+    rm -rf "$old_dir"
+    done
+fi
