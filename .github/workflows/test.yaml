@@ -70,7 +70,7 @@ jobs:
         path: ${{ env.REPORT_DIR }}/report
         retention-days: 1
 
-  deploy-report:
+  publish-autobahn-reports:
     runs-on: ubuntu-latest
     needs: autobahn
     # if: github.ref == 'refs/heads/main'
@@ -127,11 +127,18 @@ jobs:
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Autobahn Test Reports</title>
+            <title>mccutchen/websocket: Autobahn Fuzzing Client Test Reports</title>
         </head>
         <body>
-            <h1>Autobahn Test Reports</h1>
-            <ul>
+            <h1><a href="https://github.com/mccutchen/websocket">mccutchen/websocket</a>: Autobahn Fuzzing Client Test Reports</h1>
+            <p>The ${KEEP_REPORTS} most recent <a href="https://github.com/crossbario/autobahn-testsuite">Autobahn fuzzing client</a>
+            test reports against the main branch of <a href="https://github.com/mccutchen/websocket">mccutchen/websocket</a>
+            library.</p>
+            <table>
+                <tr>
+                    <th>Report</th>
+                    <th>Commit</th>
+                </tr>
         EOF
 
         # List all report directories in reverse chronological order
@@ -144,12 +151,18 @@ jobs:
             DIR_SHA=${dir_name##*-}
             # Format the timestamp more readably
             FORMATTED_DATE=$(date -d "${DIR_TIMESTAMP:0:8} ${DIR_TIMESTAMP:9:2}:${DIR_TIMESTAMP:11:2}:${DIR_TIMESTAMP:13:2}" '+%Y-%m-%d %H:%M:%S')
-            echo "        <li><a href=\"${dir_name}/index.html\">Report from commit ${DIR_SHA} (${FORMATTED_DATE})</a></li>" >> reports/index.html
+
+            cat >> reports/index.html << 'EOF'
+            <tr>
+                <td><a href="${dir_name}/">${FORMATTED_DATE}</a></td>
+                <td><a href="https://github.com/mccutchen/websocket/commit/${DIR_SHA}">${DIR_SHA}</a></td>
+            </tr>
+            EOF
           fi
         done
 
         cat >> reports/index.html << 'EOF'
-            </ul>
+            </table>
         </body>
         </html>
         EOF
