@@ -42,6 +42,7 @@ cp -r latest-report "$REPORT_DIR"
 cat > ${INDEX_PATH} <<EOF
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>mccutchen/websocket: Autobahn Fuzzing Client Test Reports</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
@@ -49,17 +50,54 @@ cat > ${INDEX_PATH} <<EOF
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
 </head>
+
 <body>
     <main class="container">
-        <h1><a href="https://github.com/mccutchen/websocket">mccutchen/websocket</a>: Autobahn Fuzzing Client Test Reports</h1>
-        <p>The ${KEEP_REPORTS} most recent <a href="https://github.com/crossbario/autobahn-testsuite">Autobahn fuzzing client</a>
-        test reports against the main branch of <a href="https://github.com/mccutchen/websocket">mccutchen/websocket</a>
-        library.</p>
-        <table>
-            <tr>
-                <th>Report</th>
-                <th>Commit</th>
-            </tr>
+        <header>
+            <h1><a href="https://github.com/mccutchen/websocket">mccutchen/websocket</a></h1>
+        </header>
+        <section class="container">
+            <!-- badges copied from rendered README.md -->
+            <p>
+                <a href="https://pkg.go.dev/github.com/mccutchen/websocket">
+                    <img src="https://camo.githubusercontent.com/e93270d235c8c09c3f464419eda31724926dfb8dd4785b57fa8935269f036c9c/68747470733a2f2f706b672e676f2e6465762f62616467652f6769746875622e636f6d2f6d636375746368656e2f776562736f636b6574"
+                        alt="Documentation" data-canonical-src="https://pkg.go.dev/badge/github.com/mccutchen/websocket"
+                        style="max-width: 100%;">
+                </a>
+                <a href="https://github.com/mccutchen/websocket/actions/workflows/test.yaml">
+                    <img src="https://github.com/mccutchen/websocket/actions/workflows/test.yaml/badge.svg"
+                        alt="Build status" style="max-width: 100%;">
+                </a>
+                <a href="https://codecov.io/gh/mccutchen/websocket">
+                    <img src="https://camo.githubusercontent.com/24712b1a07b036a8a498372c8218df3e8f429f16e754075ad65ff599a630ab56/68747470733a2f2f636f6465636f762e696f2f67682f6d636375746368656e2f776562736f636b65742f6272616e63682f6d61696e2f67726170682f62616467652e737667"
+                        alt="Code coverage"
+                        data-canonical-src="https://codecov.io/gh/mccutchen/websocket/branch/main/graph/badge.svg"
+                        style="max-width: 100%;">
+                </a>
+                <a href="https://goreportcard.com/report/github.com/mccutchen/websocket">
+                    <img src="https://camo.githubusercontent.com/61be14e86b92a085c387a1c557cab530bfc2ee5964af785b1e9d643e2a3dc372/687474703a2f2f676f7265706f7274636172642e636f6d2f62616467652f6769746875622e636f6d2f6d636375746368656e2f776562736f636b6574"
+                        alt="Go report card"
+                        data-canonical-src="http://goreportcard.com/badge/github.com/mccutchen/websocket"
+                        style="max-width: 100%;">
+                </a>
+            </p>
+            <p>A zero-dependency Golang implementation of the WebSocket protocol (<a
+                    href="https://datatracker.ietf.org/doc/html/rfc6455">RFC 6455</a>),
+                originally extracted from <a href="https://github.com/mccutchen/go-httpbin">mccutchen/go-httpbin</a>.
+            </p>
+        </section>
+        <section class="container">
+            <h2>Autobahn fuzzing client reports</h2>
+            <p>The ${KEEP_REPORTS} most recent <a href="https://github.com/crossbario/autobahn-testsuite">Autobahn fuzzing
+                    client</a>
+                test reports against the <code>main</code> branch of <a
+                    href="https://github.com/mccutchen/websocket">mccutchen/websocket</a>
+                library.</p>
+            <table>
+                <tr>
+                    <th>Report</th>
+                    <th>Commit</th>
+                </tr>
 EOF
 
 # List all report directories in reverse chronological order
@@ -83,7 +121,8 @@ EOF
 done
 
 cat >> ${INDEX_PATH} << 'EOF'
-        </table>
+            </table>
+        </section>
     </main>
 </body>
 </html>
