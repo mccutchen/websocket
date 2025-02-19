@@ -6,7 +6,7 @@
 # repo, which provides access to the most recent N Autobahn test suite reports.
 #
 # It is meant to be run via our GitHub Actions test workflow, but we can use
-# reasonable defaults for local testing (see GITHUB_SHA and GITHUB_PAGES_URL
+# reasonable defaults for local testing (see COMMIT_SHA and GITHUB_PAGES_URL
 # below.)
 
 set -euo pipefail
@@ -14,16 +14,23 @@ set -x
 
 # We expect our GitHub Actions CI steps to provide these values, but we can
 # offer reasonable defaults for local testing.
-GITHUB_SHA="${GITHUB_SHA:-$(git rev-parse HEAD)}"
+if [ "${GITHUB_EVENT_PATH:-}" != "" ]; then
+    # on pushes to main, we want to take the .after SHA, which is the commit
+    # that will arrive in the main branch. On PRs, during testing, we want to
+    # take the .head SHA.
+    COMMIT_SHA=$(jq -r '.after // .pull_request.head.sha' "$GITHUB_EVENT_PATH")
+else
+    COMMIT_SHA=$(git rev-parse HEAD)
+fi
 GITHUB_PAGES_URL="${GITHUB_PAGES_URL:-https://mccutchen.github.io/websocket/}"
 
 # Figure out timestamp of the newest report
-COMMIT_TIMESTAMP=$(git show -s --format=%cd --date=format:'%Y%m%d-%H%M%S' "$GITHUB_SHA")
-COMMIT_SHA=${GITHUB_SHA::8}
+COMMIT_TIMESTAMP=$(git show -s --format=%cd --date=format:'%Y%m%d-%H%M%S' "$COMMIT_SHA")
+COMMIT_SHA_SHORT=${COMMIT_SHA::8}
 
 KEEP_REPORTS=10
 REPORTS_ROOT="reports"
-REPORT_DIR="${REPORTS_ROOT}/${COMMIT_TIMESTAMP}-${COMMIT_SHA}"
+REPORT_DIR="${REPORTS_ROOT}/${COMMIT_TIMESTAMP}-${COMMIT_SHA_SHORT}"
 INDEX_PATH="${REPORTS_ROOT}/index.html"
 
 mkdir -p "${REPORTS_ROOT}"
