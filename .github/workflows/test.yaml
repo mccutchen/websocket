@@ -62,7 +62,13 @@ jobs:
       uses: actions/checkout@v4
 
     - name: run autobahn tests
-      run: make testautobahn
+      run: |
+        # this will write the report to $REPORT_DIR
+        make testautobahn
+
+        # claen up unneded structured json report data from autobahn before
+        # uploading the artifact
+        find "${OUT_DIR}" -type f -name '*.json' -delete
 
     - name: upload autobahn report artifact
       uses: actions/upload-artifact@v4
