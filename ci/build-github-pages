@@ -46,9 +46,6 @@ rm -f "${REPORTS_ROOT}"/robots.txt "${REPORTS_ROOT}"/*.html.*
 # site.
 cp -r "${OUT_DIR}/latest-report" "$REPORT_DIR"
 
-# claen up unneded structured json report data from autobahn
-find "${OUT_DIR}" -type f -name '*.json' -delete
-
 # Generate index.html with $KEEP_REPORTS most recent reports
 cat > "${INDEX_PATH}" <<EOF
 <!DOCTYPE html>
