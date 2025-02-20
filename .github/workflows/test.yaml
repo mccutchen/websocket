@@ -66,6 +66,9 @@ jobs:
         # this will write the report to $REPORT_DIR
         make testautobahn
 
+        echo "whoami:  $(whoami)"
+        echo "ls -lah: $(ls -lah out/autobahn/report/go_httpbin_case_5_4.json)"
+
         # claen up unneded structured json report data from autobahn before
         # uploading the artifact
         find "${OUT_DIR}" -type f -name '*.json' -delete
