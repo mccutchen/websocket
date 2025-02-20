@@ -31,6 +31,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/user"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -127,11 +128,15 @@ func TestAutobahn(t *testing.T) {
 	pullCmd := exec.Command("docker", "pull", autobahnImage)
 	runCmd(t, pullCmd)
 
+	localUser, err := user.Current()
+	assert.NilError(t, err)
+
 	testCmd := exec.Command(
 		"docker",
 		"run",
 		"--net=host",
 		"--rm",
+		"--user", fmt.Sprintf("%s:%s", localUser.Uid, localUser.Gid),
 		"-v", testDir+":/testdir:rw",
 		autobahnImage,
 		"wstest", "-m", "fuzzingclient", "--spec", "/testdir/autobahn.json",
