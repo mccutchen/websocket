@@ -211,11 +211,8 @@ func TestConnectionLimits(t *testing.T) {
 		assert.NilError(t, err)
 		assert.RoughlyEqual(t, elapsed, maxDuration, 25*time.Millisecond)
 		mustReadCloseFrame(t, bytes.NewBuffer(resp), websocket.StatusAbnormalClose, errors.New("error reading frame header"))
-
-		// connection should be closed, so we should get EOF when trying to
-		// read from it again
-		_, err = conn.Read(make([]byte, 1))
-		assert.Error(t, err, io.EOF)
+		// server should close connection after writing its close frame
+		assertConnClosed(t, conn)
 	})
 
 	t.Run("client closing connection", func(t *testing.T) {
@@ -274,7 +271,7 @@ func TestConnectionLimits(t *testing.T) {
 		// close client connection, which should interrupt the server's
 		// blocking read call on the connection
 		conn.Close()
-		t.Logf("client connection closed")
+		assertConnClosed(t, conn)
 
 		assert.Equal(t, os.IsTimeout(clientReadErr), true, "expected timeout error")
 		assert.RoughlyEqual(t, elapsedClientTime, clientTimeout, 10*time.Millisecond)
@@ -321,14 +318,7 @@ func TestProtocolOkay(t *testing.T) {
 		clientClose := websocket.NewCloseFrame(websocket.StatusNormalClosure, "")
 		mustWriteFrame(t, conn, true, clientClose)
 		mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
-
-		// FIXME: this write should fail, but the connection doesn't seem to
-		// get closed. for now we skip.
-		if false {
-			wn, err := conn.Write([]byte("foo"))
-			assert.Equal(t, wn, 0, "expected to write 0 bytes")
-			assert.Error(t, err, net.ErrClosed)
-		}
+		assertConnClosed(t, conn)
 	})
 
 	t.Run("fragmented echo okay", func(t *testing.T) {
@@ -798,7 +788,6 @@ func mustReadCloseFrame(t *testing.T, r io.Reader, wantCode websocket.StatusCode
 	// This is already enforced in validateFrame, called by ReadFrame, but we
 	// must pass in a max payload size here.
 	frame := mustReadFrame(t, r, 125)
-	t.Logf("XXX FRAME: %v", frame)
 	assert.Equal(t, frame.Opcode(), websocket.OpcodeClose, "opcode")
 
 	// nothing else to validate
@@ -814,6 +803,14 @@ func mustReadCloseFrame(t *testing.T, r io.Reader, wantCode websocket.StatusCode
 	if wantErr != nil {
 		assert.Contains(t, gotReason, wantErr.Error(), "reason")
 	}
+}
+
+// assertConnClosed ensures that the given connection is closed by attempting a
+// read and ensuring that it returns an appropriate error.
+func assertConnClosed(t testing.TB, conn net.Conn) {
+	t.Helper()
+	_, err := conn.Read(make([]byte, 1))
+	assert.Error(t, err, io.EOF, net.ErrClosed)
 }
 
 // setupRawConn starts an websocket echo server with the given options, does

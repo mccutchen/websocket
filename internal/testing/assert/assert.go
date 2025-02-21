@@ -45,16 +45,32 @@ func NilError(t testing.TB, err error) {
 	}
 }
 
-// Error asserts that an error is not nil.
-func Error(t testing.TB, got, expected error) {
+// Error asserts that an error matches an expected error or any one of a list
+// of expected errors.
+func Error(t testing.TB, got, expected error, alternates ...error) {
 	t.Helper()
-	if !errorsMatch(t, got, expected) {
-		t.Fatalf("expected error %q, got %q (%T vs %T)", expected, got, expected, got)
+	matched := false
+	wantAny := append([]error{expected}, alternates...)
+	for _, want := range wantAny {
+		if errorsMatch(t, got, want) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		if len(wantAny) == 1 {
+			t.Fatalf("expected error %q, got %q (%T vs %T)", expected, got, expected, got)
+		} else {
+			t.Fatalf("expected one of %v, got %q (%T)", wantAny, got, got)
+		}
 	}
 }
 
 func errorsMatch(t testing.TB, got, expected error) bool {
 	t.Helper()
+	if got == nil {
+		t.Fatalf("got nil error")
+	}
 	switch {
 	case got == expected:
 		return true
