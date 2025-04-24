@@ -500,6 +500,6 @@ func applyMask(payload []byte, mask MaskingKey) {
 		payload[pos+7] ^= mask[3]
 	}
 	for i := chunks * 8; i < n; i++ {
-		payload[i] ^= mask[i%4]
+		payload[i] ^= mask[i&3] // apparently i&3 faster than i%4
 	}
 }
