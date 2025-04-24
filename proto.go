@@ -210,14 +210,20 @@ var formatPayload = func(p []byte) string {
 
 // ReadFrame reads a [Frame] from the wire.
 func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
-	header := make([]byte, 2)
-	if _, err := io.ReadFull(buf, header); err != nil {
+	// Frame header is 2 bytes:
+	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
+	//
+	// First byte contains FIN, RSV1-3, OPCODE bits, but we store that byte
+	// as-is and only extract the bits when needed.
+	//
+	// Second byte contains MASK bit and payload length, which must be
+	// extracted here to read the rest of the payload.
+	var header [2]byte
+	if _, err := io.ReadFull(buf, header[:]); err != nil {
 		return nil, newError(StatusAbnormalClose, "error reading frame header: %w", err)
 	}
-
-	// figure out how to parse payload
 	var (
-		masked     = header[1]&maskedMask != 0
+		masked     = (header[1] & maskedMask) != 0
 		payloadLen = uint64(header[1] & payloadLenMask)
 	)
 
@@ -233,17 +239,19 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 	case 126:
 		// Payload lengths 126 to 65535 are represented in the next 2 bytes
 		// (16-bit unsigned integer)
-		var l uint16
-		if err := binary.Read(buf, binary.BigEndian, &l); err != nil {
+		var extendedLenBuf [2]byte
+		if _, err := io.ReadFull(buf, extendedLenBuf[:]); err != nil {
 			return nil, newError(StatusAbnormalClose, "error reading 2-byte extended payload length: %w", err)
 		}
-		payloadLen = uint64(l)
+		payloadLen = uint64(binary.BigEndian.Uint16(extendedLenBuf[:]))
 	case 127:
 		// Payload lengths >= 65536 are represented in the next 8 bytes
 		// (64-bit unsigned integer)
-		if err := binary.Read(buf, binary.BigEndian, &payloadLen); err != nil {
+		var extendedLenBuf [8]byte
+		if _, err := io.ReadFull(buf, extendedLenBuf[:]); err != nil {
 			return nil, newError(StatusAbnormalClose, "error reading 8-byte extended payload length: %w", err)
 		}
+		payloadLen = binary.BigEndian.Uint64(extendedLenBuf[:])
 	}
 
 	if payloadLen > uint64(maxPayloadLen) {
@@ -251,10 +259,9 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 	}
 
 	// read mask key (if present)
-	var mask []byte
+	var mask MaskingKey
 	if masked {
-		mask = make([]byte, 4)
-		if _, err := io.ReadFull(buf, mask); err != nil {
+		if _, err := io.ReadFull(buf, mask[:]); err != nil {
 			return nil, newError(StatusAbnormalClose, "error reading mask key: %w", err)
 		}
 	}
@@ -265,9 +272,7 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 		return nil, newError(StatusAbnormalClose, "error reading %d byte payload: %w", payloadLen, err)
 	}
 	if masked {
-		for i, b := range payload {
-			payload[i] = b ^ mask[i%4]
-		}
+		applyMask(payload, mask)
 	}
 	return &Frame{
 		header:  header[0],
@@ -477,4 +482,24 @@ func NewMaskingKey() MaskingKey {
 		panic(fmt.Sprintf("NewMaskingKey: failed to read random bytes: %s", err))
 	}
 	return key
+}
+
+// applyMask optimizes payload masking by working 8 bytes at a time.
+func applyMask(payload []byte, mask MaskingKey) {
+	n := len(payload)
+	chunks := n / 8
+	for i := 0; i < chunks; i++ {
+		pos := i * 8
+		payload[pos+0] ^= mask[0]
+		payload[pos+1] ^= mask[1]
+		payload[pos+2] ^= mask[2]
+		payload[pos+3] ^= mask[3]
+		payload[pos+4] ^= mask[0]
+		payload[pos+5] ^= mask[1]
+		payload[pos+6] ^= mask[2]
+		payload[pos+7] ^= mask[3]
+	}
+	for i := chunks * 8; i < n; i++ {
+		payload[i] ^= mask[i&3] // apparently i&3 faster than i%4
+	}
 }
