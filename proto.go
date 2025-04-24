@@ -272,9 +272,7 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 		return nil, newError(StatusAbnormalClose, "error reading %d byte payload: %w", payloadLen, err)
 	}
 	if masked {
-		for i, b := range payload {
-			payload[i] = b ^ mask[i%4]
-		}
+		applyMask(payload, mask)
 	}
 	return &Frame{
 		header:  header[0],
@@ -484,4 +482,24 @@ func NewMaskingKey() MaskingKey {
 		panic(fmt.Sprintf("NewMaskingKey: failed to read random bytes: %s", err))
 	}
 	return key
+}
+
+// applyMask optimizes payload masking by working 8 bytes at a time.
+func applyMask(payload []byte, mask MaskingKey) {
+	n := len(payload)
+	chunks := n / 8
+	for i := 0; i < chunks; i++ {
+		pos := i * 8
+		payload[pos+0] ^= mask[0]
+		payload[pos+1] ^= mask[1]
+		payload[pos+2] ^= mask[2]
+		payload[pos+3] ^= mask[3]
+		payload[pos+4] ^= mask[0]
+		payload[pos+5] ^= mask[1]
+		payload[pos+6] ^= mask[2]
+		payload[pos+7] ^= mask[3]
+	}
+	for i := chunks * 8; i < n; i++ {
+		payload[i] ^= mask[i%4]
+	}
 }
