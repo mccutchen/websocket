@@ -208,8 +208,8 @@ var formatPayload = func(p []byte) string {
 	return fmt.Sprintf("[%d bytes]", len(p))
 }
 
-// ReadFrame reads a [Frame] from the wire.
-func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
+// ReadFrame reads a [Frame].
+func ReadFrame(src io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 	// Frame header is 2 bytes:
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
 	//
@@ -219,7 +219,7 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 	// Second byte contains MASK bit and payload length, which must be
 	// extracted here to read the rest of the payload.
 	var header [2]byte
-	if _, err := io.ReadFull(buf, header[:]); err != nil {
+	if _, err := io.ReadFull(src, header[:]); err != nil {
 		return nil, newError(StatusAbnormalClose, "error reading frame header: %w", err)
 	}
 	var (
@@ -240,7 +240,7 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 		// Payload lengths 126 to 65535 are represented in the next 2 bytes
 		// (16-bit unsigned integer)
 		var extendedLenBuf [2]byte
-		if _, err := io.ReadFull(buf, extendedLenBuf[:]); err != nil {
+		if _, err := io.ReadFull(src, extendedLenBuf[:]); err != nil {
 			return nil, newError(StatusAbnormalClose, "error reading 2-byte extended payload length: %w", err)
 		}
 		payloadLen = uint64(binary.BigEndian.Uint16(extendedLenBuf[:]))
@@ -248,7 +248,7 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 		// Payload lengths >= 65536 are represented in the next 8 bytes
 		// (64-bit unsigned integer)
 		var extendedLenBuf [8]byte
-		if _, err := io.ReadFull(buf, extendedLenBuf[:]); err != nil {
+		if _, err := io.ReadFull(src, extendedLenBuf[:]); err != nil {
 			return nil, newError(StatusAbnormalClose, "error reading 8-byte extended payload length: %w", err)
 		}
 		payloadLen = binary.BigEndian.Uint64(extendedLenBuf[:])
@@ -261,14 +261,14 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 	// read mask key (if present)
 	var mask MaskingKey
 	if masked {
-		if _, err := io.ReadFull(buf, mask[:]); err != nil {
+		if _, err := io.ReadFull(src, mask[:]); err != nil {
 			return nil, newError(StatusAbnormalClose, "error reading mask key: %w", err)
 		}
 	}
 
 	// read & optionally unmask payload
 	payload := make([]byte, payloadLen)
-	if _, err := io.ReadFull(buf, payload); err != nil {
+	if _, err := io.ReadFull(src, payload); err != nil {
 		return nil, newError(StatusAbnormalClose, "error reading %d byte payload: %w", payloadLen, err)
 	}
 	if masked {
