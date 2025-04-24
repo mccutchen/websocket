@@ -210,14 +210,20 @@ var formatPayload = func(p []byte) string {
 
 // ReadFrame reads a [Frame] from the wire.
 func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
-	header := make([]byte, 2)
-	if _, err := io.ReadFull(buf, header); err != nil {
+	// Frame header is 2 bytes:
+	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
+	//
+	// First byte contains FIN, RSV1-3, OPCODE bits, but we store that byte
+	// as-is and only extract the bits when needed.
+	//
+	// Second byte contains MASK bit and payload length, which must be
+	// extracted here to read the rest of the payload.
+	var header [2]byte
+	if _, err := io.ReadFull(buf, header[:]); err != nil {
 		return nil, newError(StatusAbnormalClose, "error reading frame header: %w", err)
 	}
-
-	// figure out how to parse payload
 	var (
-		masked     = header[1]&maskedMask != 0
+		masked     = (header[1] & maskedMask) != 0
 		payloadLen = uint64(header[1] & payloadLenMask)
 	)
 
@@ -251,10 +257,9 @@ func ReadFrame(buf io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 	}
 
 	// read mask key (if present)
-	var mask []byte
+	var mask MaskingKey
 	if masked {
-		mask = make([]byte, 4)
-		if _, err := io.ReadFull(buf, mask); err != nil {
+		if _, err := io.ReadFull(buf, mask[:]); err != nil {
 			return nil, newError(StatusAbnormalClose, "error reading mask key: %w", err)
 		}
 	}
