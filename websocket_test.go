@@ -985,13 +985,15 @@ func BenchmarkReadFrame(b *testing.B) {
 		// Run sub-benchmarks for each payload size
 		b.Run(formatSize(size), func(b *testing.B) {
 			src := bytes.NewReader(buf.Bytes())
+			b.SetBytes(int64(buf.Len()))
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_, _ = src.Seek(0, 0)
-				_, err := websocket.ReadFrame(src, websocket.ServerMode, size)
+				frame2, err := websocket.ReadFrame(src, websocket.ServerMode, size)
 				if err != nil {
 					b.Fatalf("unexpected error: %v", err)
 				}
+				assert.Equal(b, len(frame2.Payload), len(frame.Payload), "payload length")
 			}
 		})
 	}
@@ -1050,6 +1052,7 @@ func BenchmarkReadMessage(b *testing.B) {
 
 		name := fmt.Sprintf("%s/%d", formatSize(msgSize), frameCount)
 		b.Run(name, func(b *testing.B) {
+			b.SetBytes(int64(buf.Len()))
 			for i := 0; i < b.N; i++ {
 				_, _ = reader.Seek(0, 0)
 				msg, err := ws.ReadMessage(context.Background())
