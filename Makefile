@@ -55,6 +55,9 @@ bench:
 	go test $(BENCH_ARGS)
 .PHONY: bench
 
+benchquick:
+	@ $(MAKE) bench BENCH_COUNT=2
+.PHONY: benchquick
 
 # ===========================================================================
 # Linting/formatting

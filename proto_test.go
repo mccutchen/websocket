@@ -3,6 +3,7 @@ package websocket_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/mccutchen/websocket"
@@ -184,4 +185,81 @@ func TestIncompleteFrames(t *testing.T) {
 			assert.Error(t, err, tc.wantErr)
 		})
 	}
+}
+
+// ============================================================================
+// Benchmarks
+// ============================================================================
+var benchMarkFrameSizes = []int{
+	// test odd sizes to cover edge cases (e.g. in applyMask's optimization)
+	(1 << 10) + 1, // ~1 KiB
+	(1 << 20) + 1, // ~1 MiB
+}
+
+func BenchmarkReadFrame(b *testing.B) {
+	for _, size := range benchMarkFrameSizes {
+		frame := makeFrame(websocket.OpcodeText, true, size)
+		buf := &bytes.Buffer{}
+		assert.NilError(b, websocket.WriteFrame(buf, websocket.NewMaskingKey(), frame))
+
+		// Run sub-benchmarks for each payload size
+		b.Run(formatSize(size), func(b *testing.B) {
+			src := bytes.NewReader(buf.Bytes())
+			b.SetBytes(int64(buf.Len()))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, _ = src.Seek(0, 0)
+				frame2, err := websocket.ReadFrame(src, websocket.ServerMode, size)
+				if err != nil {
+					b.Fatalf("unexpected error: %v", err)
+				}
+				assert.Equal(b, len(frame2.Payload), len(frame.Payload), "payload length")
+			}
+		})
+	}
+}
+
+func BenchmarkWriteFrame(b *testing.B) {
+	for _, size := range benchMarkFrameSizes {
+		b.Run(formatSize(size), func(b *testing.B) {
+			frame := makeFrame(websocket.OpcodeText, true, size)
+			mask := websocket.NewMaskingKey()
+			buf := &bytes.Buffer{}
+
+			// Write the frame to the buffer once to get the size.
+			assert.NilError(b, websocket.WriteFrame(buf, mask, frame))
+			expectedSize := len(buf.Bytes())
+			b.SetBytes(int64(expectedSize))
+			buf.Reset()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				buf.Reset()
+				assert.NilError(b, websocket.WriteFrame(buf, mask, frame))
+				assert.Equal(b, len(buf.Bytes()), expectedSize, "payload length")
+			}
+		})
+	}
+}
+
+func makeFrame(opcode websocket.Opcode, fin bool, payloadLen int) *websocket.Frame {
+	payload := make([]byte, payloadLen)
+	for i := range payload {
+		payload[i] = 0x20 + byte(i%95) // Map to range 0x20 (space) to 0x7E (~)
+	}
+	return websocket.NewFrame(opcode, fin, payload)
+}
+
+func formatSize(b int) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%dB", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.0f%ciB",
+		float64(b)/float64(div), "KMGTPE"[exp])
 }
