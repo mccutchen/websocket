@@ -191,8 +191,9 @@ func TestIncompleteFrames(t *testing.T) {
 // Benchmarks
 // ============================================================================
 var benchMarkFrameSizes = []int{
-	1 << 10,       // 1 KiB
-	(1 << 20) + 1, // 1 MiB-ish, odd number to test edge cases
+	// test odd sizes to cover edge cases (e.g. in applyMask's optimization)
+	(1 << 10) + 1, // ~1 KiB
+	(1 << 20) + 1, // ~1 MiB
 }
 
 func BenchmarkReadFrame(b *testing.B) {
