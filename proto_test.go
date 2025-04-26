@@ -221,8 +221,7 @@ func BenchmarkReadFrame(b *testing.B) {
 
 func BenchmarkWriteFrame(b *testing.B) {
 	for _, size := range benchMarkFrameSizes {
-		name := "Masked/" + formatSize(size)
-		b.Run(name, func(b *testing.B) {
+		b.Run(formatSize(size), func(b *testing.B) {
 			frame := makeFrame(websocket.OpcodeText, true, size)
 			mask := websocket.NewMaskingKey()
 			buf := &bytes.Buffer{}
