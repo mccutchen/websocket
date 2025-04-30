@@ -488,18 +488,21 @@ func NewMaskingKey() MaskingKey {
 func applyMask(payload []byte, mask MaskingKey) {
 	n := len(payload)
 	chunks := n / 8
-	for i := 0; i < chunks; i++ {
-		pos := i * 8
-		payload[pos+0] ^= mask[0]
-		payload[pos+1] ^= mask[1]
-		payload[pos+2] ^= mask[2]
-		payload[pos+3] ^= mask[3]
-		payload[pos+4] ^= mask[0]
-		payload[pos+5] ^= mask[1]
-		payload[pos+6] ^= mask[2]
-		payload[pos+7] ^= mask[3]
+	for i := range chunks {
+		// create a slice of exactly 8 bytes that the compiler can verify and
+		// eliminate bounds checks on the 8 xor operations per iteration
+		chunk := payload[i*8 : i*8+8]
+		chunk[0] ^= mask[0]
+		chunk[1] ^= mask[1]
+		chunk[2] ^= mask[2]
+		chunk[3] ^= mask[3]
+		chunk[4] ^= mask[0]
+		chunk[5] ^= mask[1]
+		chunk[6] ^= mask[2]
+		chunk[7] ^= mask[3]
 	}
-	for i := chunks * 8; i < n; i++ {
-		payload[i] ^= mask[i&3] // apparently i&3 faster than i%4
+	remainder := payload[chunks*8:]
+	for i := range len(remainder) {
+		remainder[i] ^= mask[i&3] // i&3 == i%4, but faster
 	}
 }
