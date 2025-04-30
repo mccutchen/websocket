@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
@@ -113,6 +114,12 @@ const (
 	// second header byte
 	maskedMask     = 0b1000_0000
 	payloadLenMask = 0b0111_1111
+
+	// Worst case size for frame metadata, comprising:
+	//   2 byte header
+	// + 8 byte extended payload size (0, 2, or 8 bytes)
+	// + 4 byte mask key (if masked)
+	maxFrameMetadataSize = 14
 )
 
 // RSVBit is a bit mask for RSV bits 1-3
@@ -283,39 +290,33 @@ func ReadFrame(src io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 // WriteFrame writes a [Frame] to dst with the given masking key. To write an
 // unmasked frame, use the special [Unmasked] key.
 func WriteFrame(dst io.Writer, mask MaskingKey, frame *Frame) error {
-	_, err := dst.Write(MarshalFrame(frame, mask))
-	if err != nil {
-		return newError(StatusAbnormalClose, "error writing frame: %w", err)
-	}
-	return nil
-}
+	buf := make([]byte, 0, maxFrameMetadataSize)
 
-// MarshalFrame marshals a [Frame] into bytes for transmission.
-func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
-	buf := make([]byte, 0, marshaledSize(frame, mask))
-	masked := mask != Unmasked
-
+	// first header byte can be written directly
 	buf = append(buf, frame.header)
 
-	// Masked bit, payload length
-	var b1 byte
+	// second header byte depends on mask and payload size
+	var (
+		b2     byte
+		masked = mask != Unmasked
+	)
 	if masked {
-		b1 |= 0b1000_0000
+		b2 |= 0b1000_0000
 	}
 
 	payloadLen := int64(len(frame.Payload))
 	switch {
 	case payloadLen <= 125:
-		buf = append(buf, b1|byte(payloadLen))
+		buf = append(buf, b2|byte(payloadLen))
 	case payloadLen <= 65535:
-		buf = append(buf, b1|126)
+		buf = append(buf, b2|126)
 		buf = binary.BigEndian.AppendUint16(buf, uint16(payloadLen))
 	default:
-		buf = append(buf, b1|127)
+		buf = append(buf, b2|127)
 		buf = binary.BigEndian.AppendUint64(buf, uint64(payloadLen))
 	}
 
-	// Optional masking key and actual payload
+	// add masking key (optional) and actual payload
 	if masked {
 		buf = append(buf, mask[:]...)
 		for i, b := range frame.Payload {
@@ -324,23 +325,21 @@ func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 	} else {
 		buf = append(buf, frame.Payload...)
 	}
-	return buf
+
+	// finally, write our serialized frame
+	if _, err := dst.Write(buf); err != nil {
+		return newError(StatusAbnormalClose, "error writing frame: %w", err)
+	}
+	return nil
 }
 
-// marshaledSize returns the number of bytes required to marshal a frame.
-func marshaledSize(f *Frame, mask MaskingKey) int {
-	payloadLen := len(f.Payload)
-	size := 2 + payloadLen
-	switch {
-	case payloadLen >= 64<<10:
-		size += 8
-	case payloadLen > 125:
-		size += 2
+// MarshalFrame marshals a [Frame] into a byte slice.
+func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
+	buf := &bytes.Buffer{}
+	if err := WriteFrame(buf, mask, frame); err != nil {
+		panic("MarshalFrame: failed to write to in-memory buffer: " + err.Error())
 	}
-	if mask != Unmasked {
-		size += 4
-	}
-	return size
+	return buf.Bytes()
 }
 
 // FrameMessage splits a message into N frames with payloads of at most
