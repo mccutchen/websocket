@@ -187,6 +187,50 @@ func TestIncompleteFrames(t *testing.T) {
 }
 
 // ============================================================================
+// Fuzzers
+// ============================================================================
+func FuzzReadFrame(f *testing.F) {
+	// Set up seed corpus
+	var testCases [][]byte
+	// Example frames from RFC 6455 section 5.7
+	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.7
+	testCases = append(testCases, [][]byte{
+		// single-frame unmasked text
+		{0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f},
+		// single-frame masked text
+		{0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58},
+		// fragmented unmasked text part 1
+		{0x01, 0x03, 0x48, 0x65, 0x6c},
+		// fragmented unmasked text part 2
+		{0x80, 0x02, 0x6c, 0x6f},
+		// unmasked ping
+		{0x89, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f},
+		// masked ping response
+		{0x8a, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58},
+		// 256 bytes binary message
+		append([]byte{0x82, 0x7E, 0x01, 0x00}, make([]byte, 256)...),
+		// 64KiB binary message
+		append([]byte{0x82, 0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00}, make([]byte, 65536)...),
+	}...)
+
+	for _, tc := range testCases {
+		f.Add(tc)
+	}
+
+	f.Fuzz(func(t *testing.T, input []byte) {
+		modes := []websocket.Mode{websocket.ClientMode, websocket.ServerMode}
+		for _, mode := range modes {
+			frame, err := websocket.ReadFrame(bytes.NewReader(input), mode, 1<<20)
+			if err != nil {
+				t.Skipf("skipping eror: %s", err)
+				return
+			}
+			t.Logf("frame: %s", frame)
+		}
+	})
+}
+
+// ============================================================================
 // Benchmarks
 // ============================================================================
 var benchMarkFrameSizes = []int{

@@ -8,6 +8,10 @@ BENCH_COUNT   ?= 10
 BENCH_ARGS    ?= -bench=. -benchmem -count=$(BENCH_COUNT) -run=^$$
 DOCS_PORT     ?= :8080
 
+FUZZ_TIME          ?= 60s
+FUZZ_MINIMIZE_TIME ?= 60s
+FUZZ_ARGS          ?= -fuzz=Fuzz -run=^Fuzz -fuzztime $(FUZZ_TIME) -fuzzminimizetime $(FUZZ_MINIMIZE_TIME)
+
 # 3rd party tools
 CMD_GOFUMPT     := go run mvdan.cc/gofumpt@v0.8.0
 CMD_PKGSITE     := go run golang.org/x/pkgsite/cmd/pkgsite@latest
@@ -28,6 +32,11 @@ EXAMPLE_PATHS   := $(addprefix $(OUT_DIR)/,$(EXAMPLE_NAMES)) # -> $(OUT_DIR)/foo
 test:
 	go test $(TEST_ARGS) ./...
 .PHONY: test
+
+fuzz:
+	go test $(FUZZ_ARGS) .
+.PHONY: fuzz
+
 
 # Test command to run for continuous integration, which includes code coverage
 # based on codecov.io's documentation:
