@@ -290,28 +290,40 @@ func WriteFrame(dst io.Writer, mask MaskingKey, frame *Frame) error {
 	return nil
 }
 
+// Worst case size for frame metadata, comprising:
+//
+// 2 byte header
+// + 8 byte extended payload size (0, 2, or 8 bytes)
+// + 4 byte mask key (if masked)
+const maxFrameMetadataSize = 14
+
 // MarshalFrame marshals a [Frame] into bytes for transmission.
 func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
-	buf := make([]byte, 0, marshaledSize(frame, mask))
+	payloadLen := len(frame.Payload)
+
+	// pre-allocate buffer into which the frame will be serialized before
+	// writing to dst, where a) we know we will always write to at least the
+	// first two bytes and b) we pick the worst case header size, which might
+	// waste up to 12 bytes for small, unmasked frames
+	buf := make([]byte, 2, maxFrameMetadataSize+payloadLen)
+
+	// first header byte can be written directly
+	buf[0] = frame.header
+
+	// second header byte depends on mask and payload size
 	masked := mask != Unmasked
-
-	buf = append(buf, frame.header)
-
-	// Masked bit, payload length
-	var b1 byte
 	if masked {
-		b1 |= 0b1000_0000
+		buf[1] |= 0b1000_0000
 	}
 
-	payloadLen := int64(len(frame.Payload))
 	switch {
 	case payloadLen <= 125:
-		buf = append(buf, b1|byte(payloadLen))
+		buf[1] |= byte(payloadLen)
 	case payloadLen <= 65535:
-		buf = append(buf, b1|126)
+		buf[1] |= 126
 		buf = binary.BigEndian.AppendUint16(buf, uint16(payloadLen))
 	default:
-		buf = append(buf, b1|127)
+		buf[1] |= 127
 		buf = binary.BigEndian.AppendUint64(buf, uint64(payloadLen))
 	}
 
@@ -325,22 +337,6 @@ func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 		buf = append(buf, frame.Payload...)
 	}
 	return buf
-}
-
-// marshaledSize returns the number of bytes required to marshal a frame.
-func marshaledSize(f *Frame, mask MaskingKey) int {
-	payloadLen := len(f.Payload)
-	size := 2 + payloadLen
-	switch {
-	case payloadLen >= 64<<10:
-		size += 8
-	case payloadLen > 125:
-		size += 2
-	}
-	if mask != Unmasked {
-		size += 4
-	}
-	return size
 }
 
 // FrameMessage splits a message into N frames with payloads of at most
