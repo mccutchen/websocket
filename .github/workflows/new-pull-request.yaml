@@ -12,7 +12,7 @@ jobs:
     steps:
       - name: compose benchmark instructions
         env:
-          HEAD_SHA: "${{ github.event.pull_request.number }}"
+          HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
         run: |
           set -euo pipefail
 
