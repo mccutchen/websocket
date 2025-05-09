@@ -304,16 +304,16 @@ func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 		payloadOffset = 2 // at least 2 bytes will be taken by header
 	)
 
-	// pre-allocate buffer into which the frame will be serialized before
-	// writing to dst, where a) we know we will always write to at least the
-	// first two bytes and b) we pick the worst case header size, which might
-	// waste up to 12 bytes for small, unmasked frames
+	// Pre-allocate buffer into which frame will be marshaled, where a) we know
+	// we will always write to at least the first two bytes and b) we guarnatee
+	// enough space by picking the worst case header size (which might waste up
+	// to 12 bytes for small, unmasked frames)
 	buf := make([]byte, 2, maxFrameMetadataSize+payloadLen)
 
-	// first header byte can be written directly
+	// First header byte can be written directly
 	buf[0] = frame.header
 
-	// second header byte depends on mask and payload size
+	// Second header byte depends on mask and payload size
 	masked := mask != Unmasked
 	if masked {
 		buf[1] |= 0b1000_0000
@@ -336,9 +336,8 @@ func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 	if masked {
 		buf = append(buf, mask[:]...)
 		payloadOffset += 4
-		payloadEnd := payloadOffset + payloadLen
 		buf = append(buf, frame.Payload...)
-		applyMask(buf[payloadOffset:payloadEnd], mask)
+		applyMask(buf[payloadOffset:payloadOffset+payloadLen], mask)
 	} else {
 		buf = append(buf, frame.Payload...)
 	}
