@@ -331,7 +331,7 @@ func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 	if masked {
 		buf = append(buf, mask[:]...)
 		for i, b := range frame.Payload {
-			buf = append(buf, b^mask[i%4])
+			buf = append(buf, b^mask[i&3]) // i&3 == i%4, but faster
 		}
 	} else {
 		buf = append(buf, frame.Payload...)
