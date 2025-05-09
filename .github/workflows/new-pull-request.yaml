@@ -12,13 +12,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: compose benchmark instructions
+        env:
+          HEAD_SHA: "${{ github.event.pull_request.number }}"
         run: |
           set -euo pipefail
 
           # Create a URL-encoded dispatch URL that will pre-fill the parameters
           REPO="${{ github.repository }}"
           WORKFLOW_ID="bench"
-          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
 
           # Create the workflow dispatch URL
           PR_NUMBER="${{ github.event.pull_request.number }}"

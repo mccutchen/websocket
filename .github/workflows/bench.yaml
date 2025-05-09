@@ -30,25 +30,30 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: determine baseline commit
         id: get-baseline
+        env:
+          INPUT_BASELINE_SHA: "${{ inputs.baseline_sha }}"
         run: |
-          if [ -z "${{ inputs.baseline_sha }}" ]; then
+          if [ -z "${INPUT_BASELINE_SHA}" ]; then
             git fetch origin main
             BASELINE=$(git rev-parse origin/main)
           else
-            BASELINE="${{ inputs.baseline_sha }}"
+            BASELINE="${INPUT_BASELINE_SHA}"
           fi
           echo "baseline=${BASELINE::7}" >> $GITHUB_OUTPUT
 
       - name: run baseline benchmarks
+        env:
+          BASELINE: "${{ steps.get-baseline.outputs.baseline }}"
         run: |
-          git checkout ${{ steps.get-baseline.outputs.baseline }}
+          git checkout "${BASELINE}"
           make bench | tee bench-results.txt
           cat <<EOF >> $GITHUB_STEP_SUMMARY
-          ### baseline benchmarks (${{ steps.get-baseline.outputs.baseline }})
+          ### baseline benchmarks (${BASELINE})
           \`\`\`
           $(cat bench-results.txt)
           \`\`\`
@@ -73,13 +78,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: get pr head commit
         id: get-head
+        env:
+          PR_NUMBER: "${{ inputs.pr_number }}"
         run: |
           # Use GitHub API to get PR details
           PR_DATA=$(curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ inputs.pr_number }}")
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${PR_NUMBER}")
 
           HEAD_SHA=$(echo "$PR_DATA" | jq -r .head.sha)
           if [ "$HEAD_SHA" = "null" ]; then
@@ -89,11 +97,13 @@ jobs:
           echo "head=${HEAD_SHA::7}" >> $GITHUB_OUTPUT
 
       - name: run head benchmarks
+        env:
+          HEAD: "${{ steps.get-head.outputs.head }}"
         run: |
-          git checkout ${{ steps.get-head.outputs.head }}
+          git checkout ${HEAD}
           make bench | tee bench-results.txt
           cat <<EOF >> $GITHUB_STEP_SUMMARY
-          ### HEAD benchmarks (${{ steps.get-head.outputs.head }})
+          ### HEAD benchmarks (${HEAD})
           \`\`\`
           $(cat bench-results.txt)
           \`\`\`
@@ -131,11 +141,12 @@ jobs:
           go-version: "stable"
 
       - name: compare results with benchstat
+        env:
+          BASELINE: "${{ needs.baseline.outputs.baseline_sha }}"
+          HEAD: "${{ needs.head.outputs.head_sha }}"
         run: |
           set -euo pipefail
 
-          BASELINE="${{ needs.baseline.outputs.baseline_sha }}"
-          HEAD="${{ needs.head.outputs.head_sha }}"
           COMPARE_URL="https://github.com/${{ github.repository }}/compare/$BASELINE...$HEAD"
           COMPARE_LINK="[$BASELINE...$HEAD]($COMPARE_URL)"
           SUMMARY_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
