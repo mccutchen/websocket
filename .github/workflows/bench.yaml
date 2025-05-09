@@ -122,6 +122,9 @@ jobs:
     needs: [baseline, head]
     runs-on: ubuntu-latest
 
+    permissions:
+      pull-requests: write
+
     steps:
       - name: download baseline results
         uses: actions/download-artifact@v4
@@ -169,5 +172,3 @@ jobs:
           header: results
           path: pr_comment
           number: ${{ inputs.pr_number }}
-        permissions:
-          pull-requests: write
