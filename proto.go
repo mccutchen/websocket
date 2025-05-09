@@ -324,13 +324,18 @@ func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 	}
 
 	// Optional masking key and actual payload
+	//
+	// Note that we manually extend capacity of buffer as necessary to enable
+	// use of `copy()` instead of `append()`
 	if masked {
-		buf = append(buf, mask[:]...)
+		buf = buf[:payloadOffset+payloadLen+4]
+		copy(buf[payloadOffset:payloadOffset+4], mask[:])
 		payloadOffset += 4
-		buf = append(buf, frame.Payload...)
+		copy(buf[payloadOffset:payloadOffset+payloadLen], frame.Payload)
 		applyMask(buf[payloadOffset:payloadOffset+payloadLen], mask)
 	} else {
-		buf = append(buf, frame.Payload...)
+		buf = buf[:payloadOffset+payloadLen]
+		copy(buf[payloadOffset:payloadOffset+payloadLen], frame.Payload)
 	}
 	return buf
 }
