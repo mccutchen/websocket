@@ -38,6 +38,8 @@ jobs:
 
     - name: checkout
       uses: actions/checkout@v4
+      with:
+        persist-credentials: false
 
     - name: test
       run: make testci
@@ -60,6 +62,8 @@ jobs:
 
     - name: checkout
       uses: actions/checkout@v4
+      with:
+        persist-credentials: false
 
     - name: run autobahn tests
       run: |
@@ -95,6 +99,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        persist-credentials: false
         fetch-depth: 0  # Full history for commit timestamps
 
     - name: setup pages
@@ -129,6 +134,8 @@ jobs:
 
     - name: checkout
       uses: actions/checkout@v4
+      with:
+        persist-credentials: false
 
     - name: build examples
       run: make examples

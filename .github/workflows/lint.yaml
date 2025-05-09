@@ -6,14 +6,20 @@ on:
   pull_request:
     branches: [main] # on pull requests AGAINST main
 
+permissions: {}
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - uses: actions/setup-go@v5
         with:
           go-version: 'stable'
+
       - uses: golangci/golangci-lint-action@v6
         with:
           version: latest

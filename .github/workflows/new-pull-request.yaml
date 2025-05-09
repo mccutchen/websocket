@@ -4,21 +4,25 @@ on:
   pull_request:
     types: [opened, synchronize]
 
-permissions:
-  pull-requests: write
+permissions: {}
 
 jobs:
   bench-instructions:
     runs-on: ubuntu-latest
+
+    permissions:
+      pull-requests: write
+
     steps:
       - name: compose benchmark instructions
+        env:
+          HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
         run: |
           set -euo pipefail
 
           # Create a URL-encoded dispatch URL that will pre-fill the parameters
           REPO="${{ github.repository }}"
           WORKFLOW_ID="bench"
-          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
 
           # Create the workflow dispatch URL
           PR_NUMBER="${{ github.event.pull_request.number }}"
