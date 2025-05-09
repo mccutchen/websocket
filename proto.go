@@ -299,7 +299,10 @@ const maxFrameMetadataSize = 14
 
 // MarshalFrame marshals a [Frame] into bytes for transmission.
 func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
-	payloadLen := len(frame.Payload)
+	var (
+		payloadLen    = len(frame.Payload)
+		payloadOffset = 2 // at least 2 bytes will be taken by header
+	)
 
 	// pre-allocate buffer into which the frame will be serialized before
 	// writing to dst, where a) we know we will always write to at least the
@@ -322,17 +325,20 @@ func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 	case payloadLen <= 65535:
 		buf[1] |= 126
 		buf = binary.BigEndian.AppendUint16(buf, uint16(payloadLen))
+		payloadOffset += 2
 	default:
 		buf[1] |= 127
 		buf = binary.BigEndian.AppendUint64(buf, uint64(payloadLen))
+		payloadOffset += 8
 	}
 
 	// Optional masking key and actual payload
 	if masked {
 		buf = append(buf, mask[:]...)
-		for i, b := range frame.Payload {
-			buf = append(buf, b^mask[i&3]) // i&3 == i%4, but faster
-		}
+		payloadOffset += 4
+		payloadEnd := payloadOffset + payloadLen
+		buf = append(buf, frame.Payload...)
+		applyMask(buf[payloadOffset:payloadEnd], mask)
 	} else {
 		buf = append(buf, frame.Payload...)
 	}
