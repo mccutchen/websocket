@@ -18,6 +18,8 @@ concurrency:
   group: "${{ github.workflow }}-${{ inputs.pr_number }}"
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   baseline:
     runs-on: ubuntu-latest
@@ -119,8 +121,6 @@ jobs:
   analysis:
     needs: [baseline, head]
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
 
     steps:
       - name: download baseline results
@@ -169,3 +169,5 @@ jobs:
           header: results
           path: pr_comment
           number: ${{ inputs.pr_number }}
+        permissions:
+          pull-requests: write

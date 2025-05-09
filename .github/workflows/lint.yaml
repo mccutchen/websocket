@@ -6,6 +6,8 @@ on:
   pull_request:
     branches: [main] # on pull requests AGAINST main
 
+permissions: {}
+
 jobs:
   lint:
     runs-on: ubuntu-latest

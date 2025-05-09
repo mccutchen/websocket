@@ -4,8 +4,7 @@ on:
   pull_request:
     types: [opened, synchronize]
 
-permissions:
-  pull-requests: write
+permissions: {}
 
 jobs:
   bench-instructions:
@@ -40,3 +39,5 @@ jobs:
         with:
           header: instructions
           path: pr_comment
+        permissions:
+          pull-requests: write
