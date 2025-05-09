@@ -292,44 +292,56 @@ func WriteFrame(dst io.Writer, mask MaskingKey, frame *Frame) error {
 
 // MarshalFrame marshals a [Frame] into bytes for transmission.
 func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
-	buf := make([]byte, 0, marshaledSize(frame, mask))
+	var (
+		payloadLen    = len(frame.Payload)
+		payloadOffset = 2 // at least 2 bytes will be taken by header
+	)
+
+	// Right-size buffer with initial capacity of 2 because we will always write
+	// two header bytes.
+	buf := make([]byte, 2, marshaledSize(payloadLen, mask))
+
+	// First header byte can be written directly
+	buf[0] = frame.header
+
+	// Second header byte depends on mask and payload size
 	masked := mask != Unmasked
-
-	buf = append(buf, frame.header)
-
-	// Masked bit, payload length
-	var b1 byte
 	if masked {
-		b1 |= 0b1000_0000
+		buf[1] |= 0b1000_0000
 	}
 
-	payloadLen := int64(len(frame.Payload))
 	switch {
 	case payloadLen <= 125:
-		buf = append(buf, b1|byte(payloadLen))
+		buf[1] |= byte(payloadLen)
 	case payloadLen <= 65535:
-		buf = append(buf, b1|126)
+		buf[1] |= 126
 		buf = binary.BigEndian.AppendUint16(buf, uint16(payloadLen))
+		payloadOffset += 2
 	default:
-		buf = append(buf, b1|127)
+		buf[1] |= 127
 		buf = binary.BigEndian.AppendUint64(buf, uint64(payloadLen))
+		payloadOffset += 8
 	}
 
 	// Optional masking key and actual payload
+	//
+	// Note that we manually extend capacity of buffer as necessary to enable
+	// use of `copy()` instead of `append()`
 	if masked {
-		buf = append(buf, mask[:]...)
-		for i, b := range frame.Payload {
-			buf = append(buf, b^mask[i%4])
-		}
+		buf = buf[:payloadOffset+payloadLen+4]
+		copy(buf[payloadOffset:payloadOffset+4], mask[:])
+		payloadOffset += 4
+		copy(buf[payloadOffset:payloadOffset+payloadLen], frame.Payload)
+		applyMask(buf[payloadOffset:payloadOffset+payloadLen], mask)
 	} else {
-		buf = append(buf, frame.Payload...)
+		buf = buf[:payloadOffset+payloadLen]
+		copy(buf[payloadOffset:payloadOffset+payloadLen], frame.Payload)
 	}
 	return buf
 }
 
 // marshaledSize returns the number of bytes required to marshal a frame.
-func marshaledSize(f *Frame, mask MaskingKey) int {
-	payloadLen := len(f.Payload)
+func marshaledSize(payloadLen int, mask MaskingKey) int {
 	size := 2 + payloadLen
 	switch {
 	case payloadLen >= 64<<10:
