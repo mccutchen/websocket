@@ -26,11 +26,11 @@ jobs:
     outputs:
       baseline_sha: ${{ steps.get-baseline.outputs.baseline }}
     steps:
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "stable"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -62,7 +62,7 @@ jobs:
           EOF
 
       - name: upload baseline results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baseline-results
           path: bench-results.txt
@@ -73,11 +73,11 @@ jobs:
     outputs:
       head_sha: ${{ steps.get-head.outputs.head }}
     steps:
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "stable"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -112,7 +112,7 @@ jobs:
           EOF
 
       - name: upload head results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: head-results
           path: bench-results.txt
@@ -127,19 +127,19 @@ jobs:
 
     steps:
       - name: download baseline results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: baseline-results
           path: ./baseline
 
       - name: download head results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: head-results
           path: ./head
 
       - name: install go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "stable"
 
@@ -167,7 +167,7 @@ jobs:
           cat pr_comment >> $GITHUB_STEP_SUMMARY
 
       - name: post benchmark results
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@67d0dec7b07ed060a405f9b2a64b8ab319fdd7db # v2.9.2
         with:
           header: results
           path: pr_comment
