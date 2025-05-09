@@ -290,13 +290,6 @@ func WriteFrame(dst io.Writer, mask MaskingKey, frame *Frame) error {
 	return nil
 }
 
-// Worst case size for frame metadata, comprising:
-//
-// 2 byte header
-// + 8 byte extended payload size (0, 2, or 8 bytes)
-// + 4 byte mask key (if masked)
-const maxFrameMetadataSize = 14
-
 // MarshalFrame marshals a [Frame] into bytes for transmission.
 func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 	var (
@@ -304,11 +297,9 @@ func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 		payloadOffset = 2 // at least 2 bytes will be taken by header
 	)
 
-	// Pre-allocate buffer into which frame will be marshaled, where a) we know
-	// we will always write to at least the first two bytes and b) we guarnatee
-	// enough space by picking the worst case header size (which might waste up
-	// to 12 bytes for small, unmasked frames)
-	buf := make([]byte, 2, maxFrameMetadataSize+payloadLen)
+	// Right-size buffer with initial capacity of 2 because we will always write
+	// two header bytes.
+	buf := make([]byte, 2, marshaledSize(payloadLen, mask))
 
 	// First header byte can be written directly
 	buf[0] = frame.header
@@ -342,6 +333,21 @@ func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
 		buf = append(buf, frame.Payload...)
 	}
 	return buf
+}
+
+// marshaledSize returns the number of bytes required to marshal a frame.
+func marshaledSize(payloadLen int, mask MaskingKey) int {
+	size := 2 + payloadLen
+	switch {
+	case payloadLen >= 64<<10:
+		size += 8
+	case payloadLen > 125:
+		size += 2
+	}
+	if mask != Unmasked {
+		size += 4
+	}
+	return size
 }
 
 // FrameMessage splits a message into N frames with payloads of at most
