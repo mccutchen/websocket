@@ -123,7 +123,7 @@ func TestAutobahn(t *testing.T) {
 	autobahnCfgFile, err := os.Create(path.Join(testDir, "autobahn.json"))
 	assert.NilError(t, err)
 	assert.NilError(t, json.NewEncoder(autobahnCfgFile).Encode(autobahnCfg))
-	autobahnCfgFile.Close()
+	assert.NilError(t, autobahnCfgFile.Close())
 
 	pullCmd := exec.Command("docker", "pull", autobahnImage)
 	runCmd(t, pullCmd)
@@ -253,7 +253,7 @@ func loadSummary(t *testing.T, testDir string) []autobahnReportResult {
 	t.Helper()
 	f, err := os.Open(path.Join(testDir, "report", "index.json"))
 	assert.NilError(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var summary autobahnReportSummary
 	assert.NilError(t, json.NewDecoder(f).Decode(&summary))
 	var results []autobahnReportResult
@@ -312,5 +312,5 @@ func (r autobahnReportResult) Failed() bool {
 	if allowNonStrict[r.ID] {
 		okayBehavior["NON-STRICT"] = true
 	}
-	return !(okayBehavior[r.Behavior] && okayBehavior[r.BehaviorClose])
+	return !okayBehavior[r.Behavior] || !okayBehavior[r.BehaviorClose]
 }

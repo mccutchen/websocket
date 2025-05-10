@@ -31,7 +31,9 @@ func ReadAll(t testing.TB, r io.Reader) string {
 		t.Fatalf("error reading: %s", err)
 	}
 	if rc, ok := r.(io.ReadCloser); ok {
-		rc.Close()
+		if err := rc.Close(); err != nil {
+			t.Fatalf("error closing after reading: %s", err)
+		}
 	}
 	return string(body)
 }

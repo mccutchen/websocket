@@ -270,7 +270,7 @@ func TestConnectionLimits(t *testing.T) {
 
 		// close client connection, which should interrupt the server's
 		// blocking read call on the connection
-		conn.Close()
+		assert.NilError(t, conn.Close())
 		assertConnClosed(t, conn)
 
 		assert.Equal(t, os.IsTimeout(clientReadErr), true, "expected timeout error")
@@ -851,7 +851,7 @@ func setupRawConnWithHandler(t testing.TB, handler http.Handler) net.Conn {
 	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
 	assert.NilError(t, err)
 	t.Cleanup(func() {
-		conn.Close()
+		_ = conn.Close()
 		srv.Close()
 	})
 
