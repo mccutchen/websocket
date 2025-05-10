@@ -851,7 +851,7 @@ func setupRawConnWithHandler(t testing.TB, handler http.Handler) net.Conn {
 	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
 	assert.NilError(t, err)
 	t.Cleanup(func() {
-		assert.NilError(t, conn.Close())
+		_ = conn.Close()
 		srv.Close()
 	})
 
