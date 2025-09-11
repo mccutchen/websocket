@@ -496,25 +496,29 @@ func NewMaskingKey() MaskingKey {
 	return key
 }
 
-// applyMask optimizes payload masking by working 8 bytes at a time.
+// applyMask applies a [MaskingKey] to the payload in-place.
 func applyMask(payload []byte, mask MaskingKey) {
 	n := len(payload)
+	if n == 0 {
+		return
+	}
+
+	// duplicate 4 byte masking key to make uint64 mask that can be applied to
+	// the payload 8 bytes at a time in a single XOR.
+	mask64 := uint64(mask[0]) | uint64(mask[1])<<8 | uint64(mask[2])<<16 | uint64(mask[3])<<24
+	mask64 |= mask64 << 32
+
+	// apply mask in-place 8 bytes at a time
 	chunks := n / 8
 	for i := range chunks {
-		// create a slice of exactly 8 bytes that the compiler can verify and
-		// eliminate bounds checks on the 8 xor operations per iteration
-		chunk := payload[i*8 : i*8+8]
-		chunk[0] ^= mask[0]
-		chunk[1] ^= mask[1]
-		chunk[2] ^= mask[2]
-		chunk[3] ^= mask[3]
-		chunk[4] ^= mask[0]
-		chunk[5] ^= mask[1]
-		chunk[6] ^= mask[2]
-		chunk[7] ^= mask[3]
+		offset := i * 8
+		data := binary.LittleEndian.Uint64(payload[offset : offset+8])
+		data ^= mask64
+		binary.LittleEndian.PutUint64(payload[offset:offset+8], data)
 	}
+
 	remainder := payload[chunks*8:]
-	for i := range len(remainder) {
+	for i := range remainder {
 		remainder[i] ^= mask[i&3] // i&3 == i%4, but faster
 	}
 }
