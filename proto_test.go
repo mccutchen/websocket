@@ -230,13 +230,12 @@ func BenchmarkWriteFrame(b *testing.B) {
 			assert.NilError(b, websocket.WriteFrame(buf, mask, frame))
 			expectedSize := len(buf.Bytes())
 			b.SetBytes(int64(expectedSize))
-			buf.Reset()
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
 				buf.Reset()
 				assert.NilError(b, websocket.WriteFrame(buf, mask, frame))
-				assert.Equal(b, len(buf.Bytes()), expectedSize, "payload length")
+				assert.Equal(b, buf.Len(), expectedSize, "payload length")
 			}
 		})
 	}
