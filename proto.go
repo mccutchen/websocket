@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -283,65 +284,95 @@ func ReadFrame(src io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 // WriteFrame writes a [Frame] to dst with the given masking key. To write an
 // unmasked frame, use the special [Unmasked] key.
 func WriteFrame(dst io.Writer, mask MaskingKey, frame *Frame) error {
-	_, err := dst.Write(MarshalFrame(frame, mask))
-	if err != nil {
+	var (
+		marshaledSize = computeMarshaledSize(len(frame.Payload), mask)
+		buf           = getWriteBuffer(marshaledSize)
+	)
+	buf = marshalFrameTo(buf, frame, mask)
+	defer putWriteBuffer(buf)
+	if _, err := dst.Write(buf); err != nil {
 		return newError(StatusAbnormalClose, "error writing frame: %w", err)
 	}
 	return nil
 }
 
+var writeBufferSizes = [...]int{
+	1024,
+	4096,
+	8192,
+}
+
+var writeBufferPools = [...]sync.Pool{
+	{New: func() any { return make([]byte, 1024) }},
+	{New: func() any { return make([]byte, 4096) }},
+	{New: func() any { return make([]byte, 8192) }},
+}
+
+func getWriteBuffer(size int) []byte {
+	for i, n := range writeBufferSizes {
+		if n >= size {
+			buf := writeBufferPools[i].Get().([]byte)
+			return buf[:size]
+		}
+	}
+	return make([]byte, size)
+}
+
+func putWriteBuffer(buf []byte) {
+	bufCap := cap(buf)
+	for i, n := range writeBufferSizes {
+		if n == bufCap {
+			writeBufferPools[i].Put(buf)
+			return
+		}
+	}
+}
+
 // MarshalFrame marshals a [Frame] into bytes for transmission.
-func MarshalFrame(frame *Frame, mask MaskingKey) []byte {
+func marshalFrameTo(buf []byte, frame *Frame, mask MaskingKey) []byte {
 	var (
 		payloadLen    = len(frame.Payload)
 		payloadOffset = 2 // at least 2 bytes will be taken by header
 	)
 
-	// Right-size buffer with initial capacity of 2 because we will always write
-	// two header bytes.
-	buf := make([]byte, 2, marshaledSize(payloadLen, mask))
-
 	// First header byte can be written directly
 	buf[0] = frame.header
 
-	// Second header byte depends on mask and payload size
+	// Second header byte encodes mask bit and payload size, and additional
+	// header bytes might be written for extended payload sizes.
+	buf[1] = 0
 	masked := mask != Unmasked
 	if masked {
 		buf[1] |= 0b1000_0000
 	}
-
 	switch {
 	case payloadLen <= 125:
 		buf[1] |= byte(payloadLen)
 	case payloadLen <= 65535:
 		buf[1] |= 126
-		buf = binary.BigEndian.AppendUint16(buf, uint16(payloadLen))
+		binary.BigEndian.PutUint16(buf[payloadOffset:], uint16(payloadLen))
 		payloadOffset += 2
 	default:
 		buf[1] |= 127
-		buf = binary.BigEndian.AppendUint64(buf, uint64(payloadLen))
+		binary.BigEndian.PutUint64(buf[payloadOffset:], uint64(payloadLen))
 		payloadOffset += 8
 	}
 
 	// Optional masking key and actual payload
-	//
-	// Note that we manually extend capacity of buffer as necessary to enable
-	// use of `copy()` instead of `append()`
 	if masked {
-		buf = buf[:payloadOffset+payloadLen+4]
-		copy(buf[payloadOffset:payloadOffset+4], mask[:])
+		copy(buf[payloadOffset:], mask[:])
 		payloadOffset += 4
-		copy(buf[payloadOffset:payloadOffset+payloadLen], frame.Payload)
+		copy(buf[payloadOffset:], frame.Payload)
 		applyMask(buf[payloadOffset:payloadOffset+payloadLen], mask)
 	} else {
-		buf = buf[:payloadOffset+payloadLen]
-		copy(buf[payloadOffset:payloadOffset+payloadLen], frame.Payload)
+		copy(buf[payloadOffset:], frame.Payload)
 	}
 	return buf
 }
 
-// marshaledSize returns the number of bytes required to marshal a frame.
-func marshaledSize(payloadLen int, mask MaskingKey) int {
+// computeMarshaledSize returns the number of bytes required to marshal a
+// [Frame] with the given payload length and [MaskingKey].
+func computeMarshaledSize(payloadLen int, mask MaskingKey) int {
 	size := 2 + payloadLen
 	switch {
 	case payloadLen >= 64<<10:

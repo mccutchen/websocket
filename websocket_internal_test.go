@@ -44,3 +44,22 @@ func TestDefaults(t *testing.T) {
 	assert.Equal(t, ws.hooks.OnWriteFrame != nil, true, "OnWriteFrame hook is nil")
 	assert.Equal(t, ws.hooks.OnWriteMessage != nil, true, "OnWriteMessage hook is nil")
 }
+
+func TestWriteBufferPoolConfig(t *testing.T) {
+	t.Parallel()
+
+	// Ensure our manual writeBufferPoolSizes and writeBufferPools arrays are
+	// kept in sync
+	assert.Equal(t, len(writeBufferSizes), len(writeBufferPools),
+		"writeBufferSizes and writeBufferPools arrays must have the same length")
+
+	for i, expectedSize := range writeBufferSizes {
+		buf := writeBufferPools[i].Get().([]byte)
+		assert.Equal(t, len(buf), expectedSize,
+			"pool at index %d should create buffers of size %d, got %d", i, expectedSize, len(buf))
+		assert.Equal(t, cap(buf), expectedSize,
+			"pool at index %d should create buffers with capacity %d, got %d", i, expectedSize, cap(buf))
+		// Put it back to avoid affecting other tests
+		writeBufferPools[i].Put(buf)
+	}
+}

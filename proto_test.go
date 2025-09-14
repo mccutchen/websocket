@@ -48,8 +48,10 @@ func TestRSV(t *testing.T) {
 	// We don't currently support any extensions, so RSV bits are not allowed.
 	// But we still need to be able properly parse and marshal them.
 	marshalledFrame := func(rsvBits ...websocket.RSVBit) []byte {
+		buf := &bytes.Buffer{}
 		frame := websocket.NewFrame(websocket.OpcodeText, true, nil, rsvBits...)
-		return websocket.MarshalFrame(frame, websocket.Unmasked)
+		assert.NilError(t, websocket.WriteFrame(buf, websocket.Unmasked, frame))
+		return buf.Bytes()
 	}
 
 	testCases := map[string]struct {

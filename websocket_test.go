@@ -309,15 +309,19 @@ func TestProtocolOkay(t *testing.T) {
 		conn := setupRawConn(t, newOpts(t))
 		clientFrame := websocket.NewFrame(websocket.OpcodeText, true, []byte("hello"))
 		mustWriteFrame(t, conn, true, clientFrame)
+		t.Logf("wrote initial frame")
 
 		// read server frame and ensure that it matches client frame
 		serverFrame := mustReadFrame(t, conn, maxFrameSize)
 		assert.DeepEqual(t, serverFrame, clientFrame, "matching frames")
+		t.Logf("read server response")
 
 		// ensure closing handshake is completed when initiated by client
 		clientClose := websocket.NewCloseFrame(websocket.StatusNormalClosure, "")
 		mustWriteFrame(t, conn, true, clientClose)
+		t.Logf("wrote close frame")
 		mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
+		t.Logf("read close frame")
 		assertConnClosed(t, conn)
 	})
 
