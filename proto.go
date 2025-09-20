@@ -284,64 +284,18 @@ func ReadFrame(src io.Reader, mode Mode, maxPayloadLen int) (*Frame, error) {
 // WriteFrame writes a [Frame] to dst with the given masking key. To write an
 // unmasked frame, use the special [Unmasked] key.
 func WriteFrame(dst io.Writer, mask MaskingKey, frame *Frame) error {
-	var (
-		marshaledSize = computeMarshaledSize(len(frame.Payload), mask)
-		buf           = getWriteBuffer(marshaledSize)
-	)
-	buf = marshalFrameTo(buf, frame, mask)
+	buf := getWriteBuffer(marshaledSize(len(frame.Payload), mask))
 	defer putWriteBuffer(buf)
+	marshalFrameTo(buf, frame, mask)
 	if _, err := dst.Write(buf); err != nil {
 		return newError(StatusAbnormalClose, "error writing frame: %w", err)
 	}
 	return nil
 }
 
-type bufferPool struct {
-	size int
-	pool sync.Pool
-}
-
-func newBufferPool(size int) *bufferPool {
-	return &bufferPool{
-		size: size,
-		pool: sync.Pool{
-			New: func() any {
-				buf := make([]byte, size)
-				return &buf
-			},
-		},
-	}
-}
-
-var writeBufferPools = [...]*bufferPool{
-	newBufferPool(1024),
-	newBufferPool(4096),
-	newBufferPool(8192),
-}
-
-func getWriteBuffer(size int) []byte {
-	for _, bp := range writeBufferPools {
-		if bp.size >= size {
-			ptr := bp.pool.Get().(*[]byte)
-			buf := *ptr
-			return buf[:size]
-		}
-	}
-	return make([]byte, size)
-}
-
-func putWriteBuffer(buf []byte) {
-	bufCap := cap(buf)
-	for _, bp := range writeBufferPools {
-		if bp.size == bufCap {
-			bp.pool.Put(&buf)
-			return
-		}
-	}
-}
-
-// MarshalFrame marshals a [Frame] into bytes for transmission.
-func marshalFrameTo(buf []byte, frame *Frame, mask MaskingKey) []byte {
+// marshalFrameTo marshals a [Frame] into a []byte buffer for transmission.
+// Callers must ensure that len(buf) == marshaledSize(frame).
+func marshalFrameTo(buf []byte, frame *Frame, mask MaskingKey) {
 	var (
 		payloadLen    = len(frame.Payload)
 		payloadOffset = 2 // at least 2 bytes will be taken by header
@@ -379,12 +333,11 @@ func marshalFrameTo(buf []byte, frame *Frame, mask MaskingKey) []byte {
 	} else {
 		copy(buf[payloadOffset:], frame.Payload)
 	}
-	return buf
 }
 
-// computeMarshaledSize returns the number of bytes required to marshal a
+// marshaledSize returns the number of bytes required to marshal a
 // [Frame] with the given payload length and [MaskingKey].
-func computeMarshaledSize(payloadLen int, mask MaskingKey) int {
+func marshaledSize(payloadLen int, mask MaskingKey) int {
 	size := 2 + payloadLen
 	switch {
 	case payloadLen >= 64<<10:
@@ -563,5 +516,57 @@ func applyMask(payload []byte, mask MaskingKey) {
 	remainder := payload[chunks*8:]
 	for i := range remainder {
 		remainder[i] ^= mask[i&3] // i&3 == i%4, but faster
+	}
+}
+
+// bufferPool is a thin wrapper around [sync.Pool] for working with []byte
+// slices.
+type bufferPool struct {
+	size int
+	pool sync.Pool
+}
+
+func newBufferPool(size int) *bufferPool {
+	return &bufferPool{
+		size: size,
+		pool: sync.Pool{
+			New: func() any {
+				buf := make([]byte, size)
+				return &buf
+			},
+		},
+	}
+}
+
+// writeBufferPools is an array of predefined pools of []byte buffers used
+// internally by [WriteFrame] to minimize allocations for frames that fit
+// within specific size classes.
+var writeBufferPools = [...]*bufferPool{
+	newBufferPool(1024),
+	newBufferPool(4096),
+	newBufferPool(8192),
+}
+
+// getWriteBuffer returns a []byte slice with length equal to the given size,
+// which may or may not come from a pool of reusable buffers. Callers must
+// assume that the buffer may contain stale data.
+func getWriteBuffer(size int) []byte {
+	for _, bp := range writeBufferPools {
+		if bp.size >= size {
+			ptr := bp.pool.Get().(*[]byte)
+			buf := *ptr
+			return buf[:size]
+		}
+	}
+	return make([]byte, size)
+}
+
+func putWriteBuffer(buf []byte) {
+	bufCap := cap(buf)
+	for _, bp := range writeBufferPools {
+		if bp.size == bufCap {
+			bp.pool.Put(&buf)
+			return
+		}
 	}
 }
