@@ -303,15 +303,16 @@ var writeBufferSizes = [...]int{
 }
 
 var writeBufferPools = [...]sync.Pool{
-	{New: func() any { return make([]byte, 1024) }},
-	{New: func() any { return make([]byte, 4096) }},
-	{New: func() any { return make([]byte, 8192) }},
+	{New: func() any { buf := make([]byte, 1024); return &buf }},
+	{New: func() any { buf := make([]byte, 4096); return &buf }},
+	{New: func() any { buf := make([]byte, 8192); return &buf }},
 }
 
 func getWriteBuffer(size int) []byte {
 	for i, n := range writeBufferSizes {
 		if n >= size {
-			buf := writeBufferPools[i].Get().([]byte)
+			ptr := writeBufferPools[i].Get().(*[]byte)
+			buf := *ptr
 			return buf[:size]
 		}
 	}
@@ -322,7 +323,7 @@ func putWriteBuffer(buf []byte) {
 	bufCap := cap(buf)
 	for i, n := range writeBufferSizes {
 		if n == bufCap {
-			writeBufferPools[i].Put(buf)
+			writeBufferPools[i].Put(&buf)
 			return
 		}
 	}
