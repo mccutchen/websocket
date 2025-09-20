@@ -296,22 +296,33 @@ func WriteFrame(dst io.Writer, mask MaskingKey, frame *Frame) error {
 	return nil
 }
 
-var writeBufferSizes = [...]int{
-	1024,
-	4096,
-	8192,
+type bufferPool struct {
+	size int
+	pool sync.Pool
 }
 
-var writeBufferPools = [...]sync.Pool{
-	{New: func() any { buf := make([]byte, 1024); return &buf }},
-	{New: func() any { buf := make([]byte, 4096); return &buf }},
-	{New: func() any { buf := make([]byte, 8192); return &buf }},
+func newBufferPool(size int) *bufferPool {
+	return &bufferPool{
+		size: size,
+		pool: sync.Pool{
+			New: func() any {
+				buf := make([]byte, size)
+				return &buf
+			},
+		},
+	}
+}
+
+var writeBufferPools = [...]*bufferPool{
+	newBufferPool(1024),
+	newBufferPool(4096),
+	newBufferPool(8192),
 }
 
 func getWriteBuffer(size int) []byte {
-	for i, n := range writeBufferSizes {
-		if n >= size {
-			ptr := writeBufferPools[i].Get().(*[]byte)
+	for _, bp := range writeBufferPools {
+		if bp.size >= size {
+			ptr := bp.pool.Get().(*[]byte)
 			buf := *ptr
 			return buf[:size]
 		}
@@ -321,9 +332,9 @@ func getWriteBuffer(size int) []byte {
 
 func putWriteBuffer(buf []byte) {
 	bufCap := cap(buf)
-	for i, n := range writeBufferSizes {
-		if n == bufCap {
-			writeBufferPools[i].Put(&buf)
+	for _, bp := range writeBufferPools {
+		if bp.size == bufCap {
+			bp.pool.Put(&buf)
 			return
 		}
 	}
