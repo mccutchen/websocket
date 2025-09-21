@@ -295,6 +295,7 @@ func marshalFrame(frame *Frame, mask MaskingKey) []byte {
 		payloadLen    = len(frame.Payload)
 		payloadOffset = 2 // at least 2 bytes will be taken by header
 		buf           = make([]byte, marshaledSize(payloadLen, mask))
+		masked        = mask != Unmasked
 	)
 
 	// First header byte can be written directly
@@ -302,7 +303,6 @@ func marshalFrame(frame *Frame, mask MaskingKey) []byte {
 
 	// Second header byte encodes masked bit and payload size, additional
 	// header bytes may be written for extended payload sizes.
-	masked := mask != Unmasked
 	if masked {
 		buf[1] |= 0b1000_0000
 	}
