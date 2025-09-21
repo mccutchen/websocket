@@ -36,6 +36,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -155,7 +156,6 @@ func TestAutobahn(t *testing.T) {
 	}
 
 	for _, result := range summary {
-		result := result
 		t.Run("autobahn/"+result.ID, func(t *testing.T) {
 			if result.Failed() {
 				report := loadReport(t, testDir, result.ReportFile)
@@ -214,17 +214,12 @@ func newAutobahnTargetURL(t *testing.T, targetURL string) string {
 
 func isLocalhost(ipAddr string) bool {
 	ipAddr = strings.ToLower(ipAddr)
-	for _, addr := range []string{
+	return slices.Contains([]string{
 		"localhost",
 		"127.0.0.1",
 		"::1",
 		"0:0:0:0:0:0:0:1",
-	} {
-		if ipAddr == addr {
-			return true
-		}
-	}
-	return false
+	}, ipAddr)
 }
 
 func runCmd(t *testing.T, cmd *exec.Cmd) {

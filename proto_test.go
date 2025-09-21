@@ -83,7 +83,6 @@ func TestRSV(t *testing.T) {
 		},
 	}
 	for name, tc := range testCases {
-		tc := tc
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			buf := bytes.NewReader(tc.rawBytes)
@@ -145,7 +144,6 @@ func TestExampleFramesFromRFC(t *testing.T) {
 	}
 
 	for name, tc := range testCases {
-		tc := tc
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			buf := bytes.NewReader(tc.rawBytes)
@@ -179,7 +177,6 @@ func TestIncompleteFrames(t *testing.T) {
 	}
 
 	for name, tc := range testCases {
-		tc := tc
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			buf := bytes.NewReader(tc.rawBytes)
@@ -209,7 +206,7 @@ func BenchmarkReadFrame(b *testing.B) {
 			src := bytes.NewReader(buf.Bytes())
 			b.SetBytes(int64(buf.Len()))
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				_, _ = src.Seek(0, 0)
 				frame2, err := websocket.ReadFrame(src, websocket.ServerMode, size)
 				if err != nil {
@@ -234,7 +231,7 @@ func BenchmarkWriteFrame(b *testing.B) {
 			b.SetBytes(int64(expectedSize))
 			b.ResetTimer()
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				buf.Reset()
 				assert.NilError(b, websocket.WriteFrame(buf, mask, frame))
 				assert.Equal(b, buf.Len(), expectedSize, "payload length")
