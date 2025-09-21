@@ -117,7 +117,6 @@ func TestHandshake(t *testing.T) {
 		},
 	}
 	for name, tc := range testCases {
-		tc := tc
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
@@ -563,7 +562,6 @@ func TestProtocolErrors(t *testing.T) {
 		},
 	}
 	for name, tc := range testCases {
-		tc := tc
 		if tc.opts == nil {
 			tc.opts = newOpts
 		}
@@ -629,7 +627,6 @@ func TestCloseFrames(t *testing.T) {
 	}
 
 	for name, tc := range testCases {
-		tc := tc
 		t.Run(name, func(t *testing.T) {
 			conn := setupRawConn(t, websocket.Options{})
 			t.Logf("sending close frame %v", tc.frame)
