@@ -1,0 +1,25 @@
+#!/bin/bash
+#
+# loadtest - a thin wrapper around `k6 run ./perf/k6/loadtest.js`
+#
+# Usage:
+#
+#   ./perf/loadtest --vus=512 --duration=60s
+#
+#   MESSAGE_SIZE=8192 ./perf/loadtest
+#
+#   TARGET_URL=http://whatever ./perf/loadtest
+
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+MESSAGE_SIZE=${MESSAGE_SIZE:-1024}
+TARGET_URL=${TARGET_URL:-ws://127.0.0.1:8080/}
+
+exec k6 run \
+    -e MESSAGE_SIZE="$MESSAGE_SIZE" \
+    -e TARGET_URL="$TARGET_URL" \
+    --throw \
+    "$@" \
+    ./perf/k6/loadtest.js

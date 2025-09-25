@@ -25,14 +25,9 @@ func main() {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	if pprof {
-		go func() {
-			logger.Info("starting pprof server", "addr", "http://127.0.0.1:6060")
-			log.Fatal(http.ListenAndServe("127.0.0.1:6060", nil))
-		}()
-	}
+	mux := http.NewServeMux()
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		var hooks websocket.Hooks
 		if debug {
 			hooks = newDebugHooks(r.Context(), logger)
@@ -56,9 +51,15 @@ func main() {
 		logger.InfoContext(r.Context(), "websocket handshake completed, starting echo handler", "client-key", ws.ClientKey())
 		ws.Serve(r.Context(), websocket.EchoHandler)
 	})
+
+	if pprof {
+		logger.Info("pprof endponts enabled at /debug/pproff/")
+		mux.Handle("/debug/pprof/", http.DefaultServeMux)
+	}
+
 	addr := getListenAddr()
 	logger.Info("starting echoserver", "addr", "http://"+addr)
-	log.Fatal(http.ListenAndServe(addr, handler))
+	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
 func newDebugHooks(ctx context.Context, logger *slog.Logger) websocket.Hooks {
