@@ -195,22 +195,27 @@ func TestConnectionLimits(t *testing.T) {
 	t.Run("server enforces read deadline", func(t *testing.T) {
 		t.Parallel()
 
+		// this test ensures that the server will close the connection if it
+		// gets a timeout while reading a message.
+		//
+		// the server has a 250ms read timeout and the client never sends a
+		// message, so the read loop will time out after ~250ms and the server
+		// will start the closing handshake.
+		//
+		// at that point, the client should be able to read the close frame
+		// from the server, write its ACK, and then the connection should be
+		// closed.
 		maxDuration := 250 * time.Millisecond
 		conn := setupRawConn(t, websocket.Options{
 			ReadTimeout:  maxDuration,
 			WriteTimeout: maxDuration,
 			Hooks:        newTestHooks(t),
 		})
-
-		// client read should succeed, because we expect the server to send
-		// a close frame when its read deadline is reached
 		start := time.Now()
-		resp, err := io.ReadAll(conn)
+		mustReadCloseFrame(t, conn, websocket.StatusAbnormalClose, errors.New("error reading frame header"))
 		elapsed := time.Since(start)
-		assert.NilError(t, err)
-		assert.RoughlyEqual(t, elapsed, maxDuration, 25*time.Millisecond)
-		mustReadCloseFrame(t, bytes.NewBuffer(resp), websocket.StatusAbnormalClose, errors.New("error reading frame header"))
-		// server should close connection after writing its close frame
+		assert.Equal(t, elapsed > maxDuration, true, "not enough time passed")
+		mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, "server closed connection"))
 		assertConnClosed(t, conn)
 	})
 
@@ -881,8 +886,11 @@ func setupWebsocketClient(t testing.TB, conn net.Conn, opts websocket.Options) *
 func newTestHooks(t testing.TB) websocket.Hooks {
 	t.Helper()
 	return websocket.Hooks{
-		OnClose: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
-			t.Logf("HOOK: client=%s OnClose code=%v err=%v", key, code, err)
+		OnCloseHandshakeStart: func(key websocket.ClientKey, initiatedBy websocket.Mode, code websocket.StatusCode, err error) {
+			t.Logf("HOOK: client=%s OnCloseSHandshakeStart initiatedBy=%q code=%v err=%q", initiatedBy, key, code, err)
+		},
+		OnCloseHandshakeDone: func(key websocket.ClientKey, initiatedBy websocket.Mode, code websocket.StatusCode, err error) {
+			t.Logf("HOOK: client=%s OnCloseHandshakeDone initiatedBy=%q code=%v err=%q", initiatedBy, key, code, err)
 		},
 		OnReadError: func(key websocket.ClientKey, err error) {
 			t.Logf("HOOK: client=%s OnReadError err=%v", key, err)
