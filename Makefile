@@ -1,7 +1,8 @@
 # Default flags used by the test, testci, testcover targets
 COVERAGE_PATH ?= coverage.out
 COVERAGE_ARGS ?= -covermode=atomic -coverprofile=$(COVERAGE_PATH)
-TEST_ARGS     ?= -race -count=1 -timeout=15s
+TEST_ARGS     ?= -race -count=1 -timeout=5s
+CI_TEST_ARGS  ?= -timeout=30s
 AUTOBAHN_ARGS ?= -race -count=1 -timeout=120s
 BENCH_COUNT   ?= 10
 BENCH_ARGS    ?= -bench=. -benchmem -count=$(BENCH_COUNT) -run=^$$
@@ -32,7 +33,7 @@ test:
 # based on codecov.io's documentation:
 # https://github.com/codecov/example-go/blob/b85638743b972bd0bd2af63421fe513c6f968930/README.md
 testci:
-	go test $(TEST_ARGS) $(COVERAGE_ARGS) ./...
+	go test $(TEST_ARGS) $(CI_TEST_ARGS) $(COVERAGE_ARGS) ./...
 .PHONY: testci
 
 testcover: testci
