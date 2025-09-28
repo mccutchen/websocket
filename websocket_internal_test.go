@@ -35,6 +35,7 @@ func TestDefaults(t *testing.T) {
 	assert.Equal(t, ws.maxMessageSize, DefaultMaxMessageSize, "incorrect max message size")
 	assert.Equal(t, ws.readTimeout, 0, "incorrect read timeout")
 	assert.Equal(t, ws.writeTimeout, 0, "incorrect write timeout")
+	assert.Equal(t, ws.closeTimeout, DefaultCloseTimeout, "incorrect close timeout")
 	assert.Equal(t, ws.mode, ServerMode, "incorrect mode value")
 	assert.Equal(t, ws.hooks.OnCloseHandshakeStart != nil, true, "OnCloseHandshakeStart hook is nil")
 	assert.Equal(t, ws.hooks.OnCloseHandshakeDone != nil, true, "OnCloseHandshakeDone hook is nil")

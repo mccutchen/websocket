@@ -18,6 +18,11 @@ import (
 const (
 	DefaultMaxFrameSize   int = 16 << 10  // 16KiB
 	DefaultMaxMessageSize int = 256 << 10 // 256KiB
+
+	// DefaultCloseTimeout is set to a reasonable default to prevent
+	// misbehaving/malicious clients from holding open connections for too
+	// long.
+	DefaultCloseTimeout = 1 * time.Second
 )
 
 // Mode enalbes server or client behavior
@@ -41,6 +46,7 @@ type Options struct {
 	Hooks          Hooks
 	ReadTimeout    time.Duration
 	WriteTimeout   time.Duration
+	CloseTimeout   time.Duration
 	MaxFrameSize   int
 	MaxMessageSize int
 }
@@ -63,7 +69,7 @@ type Websocket struct {
 	conn io.ReadWriteCloser
 	mode Mode
 
-	// connection state (protected by mutex)
+	// connection state, protected by mutex
 	mu        sync.Mutex
 	state     ConnState
 	closeOnce sync.Once
@@ -120,7 +126,7 @@ func New(src io.ReadWriteCloser, clientKey ClientKey, mode Mode, opts Options) *
 		mode:           mode,
 		clientKey:      clientKey,
 		hooks:          opts.Hooks,
-		closeTimeout:   opts.ReadTimeout, // FIXME: add opts.CloseTimeout
+		closeTimeout:   opts.CloseTimeout,
 		readTimeout:    opts.ReadTimeout,
 		writeTimeout:   opts.WriteTimeout,
 		maxFrameSize:   opts.MaxFrameSize,
@@ -135,6 +141,9 @@ func setDefaults(opts *Options) {
 	}
 	if opts.MaxMessageSize <= 0 {
 		opts.MaxMessageSize = DefaultMaxMessageSize
+	}
+	if opts.CloseTimeout <= 0 {
+		opts.CloseTimeout = DefaultCloseTimeout
 	}
 	setupHooks(&opts.Hooks)
 }
