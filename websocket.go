@@ -336,6 +336,8 @@ func (ws *Websocket) mask() MaskingKey {
 
 // Close starts the closing handshake.
 func (ws *Websocket) Close() error {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
 	return ws.doClose(nil)
 }
 
@@ -429,8 +431,18 @@ func (ws *Websocket) resetWriteDeadline() {
 }
 
 var validTransitions = map[ConnState][]ConnState{
-	ConnStateOpen:    {ConnStateClosing, ConnStateClosed},
+	ConnStateOpen: {
+		// a well-behaved transition from open -> closing -> closed
+		ConnStateClosing,
+		// sometimes need to transition from open -> closed due to errors
+		// (e.g. client disconnected)
+		ConnStateClosed,
+	},
 	ConnStateClosing: {ConnStateClosed},
+	ConnStateClosed: {
+		// closing a connection twice is a no-op
+		ConnStateClosed,
+	},
 }
 
 // setState updates the connection's state, ensuring that the transition is
