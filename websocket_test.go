@@ -318,10 +318,14 @@ func TestProtocolOkay(t *testing.T) {
 		serverFrame := mustReadFrame(t, conn, maxFrameSize)
 		assert.DeepEqual(t, serverFrame, clientFrame, "matching frames")
 
-		// ensure closing handshake is completed when initiated by client
-		clientClose := websocket.NewCloseFrame(websocket.StatusNormalClosure, "")
-		mustWriteFrame(t, conn, true, clientClose)
-		mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
+		// ensure closing handshake is completed when initiated by client, and
+		// that server echos client close status and reason
+		var (
+			status = websocket.StatusGoingAway
+			reason = "test reason"
+		)
+		mustWriteFrame(t, conn, true, websocket.NewCloseFrame(status, reason))
+		mustReadCloseFrame(t, conn, status, errors.New(reason))
 		assertConnClosed(t, conn)
 	})
 

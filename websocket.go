@@ -224,9 +224,12 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			msg.Payload = append(msg.Payload, frame.Payload...)
 		case OpcodeClose:
 			ws.setState(ConnStateClosing)
-			status := StatusNormalClosure // FIXME: read close status from frame?
+			status := closeStatus(frame)
 			ws.hooks.OnCloseHandshakeStart(ws.clientKey, ClientMode, status, nil)
-			if err := ws.writeFrame(NewCloseFrame(StatusNormalClosure, "")); err != nil {
+			// When sending a Close frame in response, the endpoint typically
+			// echos the status code it received.
+			// https://datatracker.ietf.org/doc/html/rfc6455#section-5.5.1
+			if err := ws.writeFrame(frame); err != nil {
 				return nil, fmt.Errorf("websocket: read: failed to write close handshake reply: %w", err)
 			}
 			ws.hooks.OnCloseHandshakeDone(ws.clientKey, ClientMode, status, nil)

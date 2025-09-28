@@ -378,6 +378,12 @@ func FrameMessage(msg *Message, frameSize int) []*Frame {
 	return result
 }
 
+// closeStatus returns the [StatusCode] for a given close frame. It is the
+// caller's responsibility to call this only on valid close frames.
+func closeStatus(frame *Frame) StatusCode {
+	return StatusCode(binary.BigEndian.Uint16(frame.Payload[:2]))
+}
+
 var reservedStatusCodes = map[uint16]bool{
 	// Explicitly reserved by RFC section 7.4.1 Defined Status Codes:
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-7.4.1
