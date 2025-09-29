@@ -445,8 +445,8 @@ var validTransitions = map[ConnState][]ConnState{
 	ConnStateOpen: {
 		// a well-behaved transition from open -> closing -> closed
 		ConnStateClosing,
-		// sometimes need to transition from open -> closed due to errors
-		// (e.g. client disconnected)
+		// for some errors (e.g. network-level issues) we transition directly
+		// from open -> closed without doing a full closing handshake
 		ConnStateClosed,
 	},
 	ConnStateClosing: {ConnStateClosed},
