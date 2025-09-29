@@ -71,9 +71,10 @@ type Websocket struct {
 	mode Mode
 
 	// connection state, protected by mutex
-	mu        sync.Mutex
-	state     ConnState
-	closeOnce sync.Once
+	mu              sync.Mutex
+	state           ConnState
+	startCloseOnce  sync.Once
+	finishCloseOnce sync.Once
 
 	// observability
 	clientKey ClientKey
@@ -351,7 +352,7 @@ func (ws *Websocket) doClose(closeErr error) error {
 
 	// use sync.Once to ensure that we only close the connection once whether
 	// or not concurrent reads/writes attempt to close it simultaneously
-	ws.closeOnce.Do(func() {
+	ws.startCloseOnce.Do(func() {
 		if ws.state != ConnStateOpen {
 			panic(fmt.Errorf("websocket: close: cannot start closing connection in state %q", ws.state))
 		}
@@ -413,12 +414,14 @@ func (ws *Websocket) startCloseOnWriteError(err error) error {
 	return err
 }
 
-func (ws *Websocket) closeImmediately(err error) error {
-	ws.setState(ConnStateClosed)
-	if err := ws.conn.Close(); err != nil {
-		return fmt.Errorf("websocket: failed to close connection: %s", err)
-	}
-	return err
+func (ws *Websocket) closeImmediately(closeErr error) error {
+	ws.finishCloseOnce.Do(func() {
+		ws.setState(ConnStateClosed)
+		if err := ws.conn.Close(); err != nil {
+			closeErr = fmt.Errorf("websocket: failed to close connection: %s", err)
+		}
+	})
+	return closeErr
 }
 
 func (ws *Websocket) resetReadDeadline() {
