@@ -921,10 +921,12 @@ func newTestHooks(t testing.TB) websocket.Hooks {
 // inject faults during Read, Write, and/or Close. Unless overridden, each
 // method is proxied directly to the wrapped conn.
 type wrappedConn struct {
-	conn  net.Conn
-	read  func([]byte) (int, error)
-	write func([]byte) (int, error)
-	close func() error
+	conn             net.Conn
+	read             func([]byte) (int, error)
+	write            func([]byte) (int, error)
+	close            func() error
+	setReadDeadline  func(time.Time) error
+	setWriteDeadline func(time.Time) error
 }
 
 func (c *wrappedConn) Read(b []byte) (int, error) {
@@ -946,6 +948,20 @@ func (c *wrappedConn) Close() error {
 		return c.close()
 	}
 	return c.conn.Close()
+}
+
+func (c *wrappedConn) SetReadDeadline(t time.Time) error {
+	if c.setReadDeadline != nil {
+		return c.setReadDeadline(t)
+	}
+	return c.conn.SetReadDeadline(t)
+}
+
+func (c *wrappedConn) SetWriteDeadline(t time.Time) error {
+	if c.setWriteDeadline != nil {
+		return c.setWriteDeadline(t)
+	}
+	return c.conn.SetWriteDeadline(t)
 }
 
 var _ io.ReadWriteCloser = &wrappedConn{}
