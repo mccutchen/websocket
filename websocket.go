@@ -227,6 +227,9 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		case OpcodeClose:
 			ws.setState(ConnStateClosing)
 			status := closeStatus(frame)
+			if status == StatusNoStatusRcvd {
+				frame = NewCloseFrame(status, "")
+			}
 			ws.hooks.OnCloseHandshakeStart(ws.clientKey, ClientMode, status, nil)
 			// When sending a Close frame in response, the endpoint typically
 			// echos the status code it received.

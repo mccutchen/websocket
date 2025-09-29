@@ -381,6 +381,9 @@ func FrameMessage(msg *Message, frameSize int) []*Frame {
 // closeStatus returns the [StatusCode] for a given close frame. It is the
 // caller's responsibility to call this only on valid close frames.
 func closeStatus(frame *Frame) StatusCode {
+	if len(frame.Payload) < 2 {
+		return StatusNoStatusRcvd
+	}
 	return StatusCode(binary.BigEndian.Uint16(frame.Payload[:2]))
 }
 

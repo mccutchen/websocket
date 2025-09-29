@@ -606,7 +606,7 @@ func TestCloseFrames(t *testing.T) {
 	}{
 		"empty payload ok": {
 			frame:    websocket.NewFrame(websocket.OpcodeClose, true, nil),
-			wantCode: websocket.StatusNormalClosure,
+			wantCode: websocket.StatusNoStatusRcvd,
 		},
 		"one byte payload is illegal": {
 			frame:      websocket.NewFrame(websocket.OpcodeClose, true, []byte("X")),
