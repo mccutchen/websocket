@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -342,6 +343,14 @@ func (ws *Websocket) Close() error {
 }
 
 func (ws *Websocket) doClose(closeErr error) error {
+	// read or write failed because the connection is already closed, nothing
+	// we can do
+	if errors.Is(closeErr, net.ErrClosed) {
+		return closeErr
+	}
+
+	// use sync.Once to ensure that we only close the connection once whether
+	// or not concurrent reads/writes attempt to close it simultaneously
 	ws.closeOnce.Do(func() {
 		if ws.state != ConnStateOpen {
 			panic(fmt.Errorf("websocket: close: cannot start closing connection in state %q", ws.state))
@@ -416,7 +425,8 @@ func (ws *Websocket) resetReadDeadline() {
 	if ws.readTimeout == 0 {
 		return
 	}
-	if err := ws.conn.(deadliner).SetReadDeadline(time.Now().Add(ws.readTimeout)); err != nil {
+	err := ws.conn.(deadliner).SetReadDeadline(time.Now().Add(ws.readTimeout))
+	if err != nil && !errors.Is(err, net.ErrClosed) {
 		panic(fmt.Sprintf("websocket: failed to set read deadline: %s", err))
 	}
 }
@@ -425,7 +435,8 @@ func (ws *Websocket) resetWriteDeadline() {
 	if ws.writeTimeout == 0 {
 		return
 	}
-	if err := ws.conn.(deadliner).SetWriteDeadline(time.Now().Add(ws.writeTimeout)); err != nil {
+	err := ws.conn.(deadliner).SetWriteDeadline(time.Now().Add(ws.writeTimeout))
+	if err != nil && !errors.Is(err, net.ErrClosed) {
 		panic(fmt.Sprintf("websocket: failed to set write deadline: %s", err))
 	}
 }
