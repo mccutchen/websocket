@@ -298,6 +298,7 @@ func TestProtocolOkay(t *testing.T) {
 
 	newOpts := func(t *testing.T) websocket.Options {
 		return websocket.Options{
+			CloseTimeout:   maxDuration,
 			ReadTimeout:    maxDuration,
 			WriteTimeout:   maxDuration,
 			MaxFrameSize:   maxFrameSize,
@@ -834,6 +835,7 @@ func setupRawConn(t testing.TB, opts websocket.Options) net.Conn {
 		// FIXME: for now, we just disable server side hooks until we can
 		// find a fix.
 		opts.Hooks = websocket.Hooks{}
+		opts.Hooks = newTestHooks(t)
 
 		ws, err := websocket.Accept(w, r, opts)
 		if err != nil {
@@ -843,6 +845,8 @@ func setupRawConn(t testing.TB, opts websocket.Options) net.Conn {
 		ws.Serve(r.Context(), websocket.EchoHandler)
 	}))
 }
+
+var clientCount atomic.Int64
 
 // setupRawConnWithHandler starts a server with the given handler (which
 // must be a websocket echo server), does the client handshake, and returns
@@ -863,9 +867,10 @@ func setupRawConnWithHandler(t testing.TB, handler http.Handler) net.Conn {
 
 	handshakeReq := httptest.NewRequest(http.MethodGet, "/", nil)
 	for k, v := range map[string]string{
-		"Connection":            "upgrade",
-		"Upgrade":               "websocket",
-		"Sec-WebSocket-Key":     string(websocket.NewClientKey()),
+		"Connection": "upgrade",
+		"Upgrade":    "websocket",
+		// "Sec-WebSocket-Key":     string(websocket.NewClientKey()),
+		"Sec-WebSocket-Key":     fmt.Sprintf("client-%03d", clientCount.Add(1)),
 		"Sec-WebSocket-Version": "13",
 	} {
 		handshakeReq.Header.Set(k, v)
@@ -890,11 +895,11 @@ func setupWebsocketClient(t testing.TB, conn net.Conn, opts websocket.Options) *
 func newTestHooks(t testing.TB) websocket.Hooks {
 	t.Helper()
 	return websocket.Hooks{
-		OnCloseHandshakeStart: func(key websocket.ClientKey, initiatedBy websocket.Mode, code websocket.StatusCode, err error) {
-			t.Logf("HOOK: client=%s OnCloseSHandshakeStart initiatedBy=%q code=%v err=%q", initiatedBy, key, code, err)
+		OnCloseHandshakeStart: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
+			t.Logf("HOOK: client=%s OnCloseHandshakeStart code=%v err=%q", key, code, err)
 		},
-		OnCloseHandshakeDone: func(key websocket.ClientKey, initiatedBy websocket.Mode, code websocket.StatusCode, err error) {
-			t.Logf("HOOK: client=%s OnCloseHandshakeDone initiatedBy=%q code=%v err=%q", initiatedBy, key, code, err)
+		OnCloseHandshakeDone: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
+			t.Logf("HOOK: client=%s OnCloseHandshakeDone code=%v err=%q", key, code, err)
 		},
 		OnReadError: func(key websocket.ClientKey, err error) {
 			t.Logf("HOOK: client=%s OnReadError err=%v", key, err)
