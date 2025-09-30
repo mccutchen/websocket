@@ -226,11 +226,15 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 			msg.Payload = append(msg.Payload, frame.Payload...)
 		case OpcodeClose:
+			log.Printf("XXX got close from client")
 			code := closeStatusCode(frame)
 			if code == StatusNoStatusRcvd {
 				frame = NewCloseFrame(code, "")
 			}
-			return nil, ws.doCloseHandshake(frame, code, nil)
+			ws.hooks.OnCloseHandshakeDone(ws.clientKey, code, nil)
+			_ = ws.writeFrame(frame)
+			ws.finishClose()
+			return nil, nil
 		case OpcodePing:
 			frame = NewFrame(OpcodePong, true, frame.Payload)
 			if err := ws.writeFrame(frame); err != nil {
