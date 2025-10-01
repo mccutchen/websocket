@@ -835,7 +835,6 @@ func setupRawConn(t testing.TB, opts websocket.Options) net.Conn {
 		// FIXME: for now, we just disable server side hooks until we can
 		// find a fix.
 		opts.Hooks = websocket.Hooks{}
-		opts.Hooks = newTestHooks(t)
 
 		ws, err := websocket.Accept(w, r, opts)
 		if err != nil {

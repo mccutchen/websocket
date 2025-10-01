@@ -231,7 +231,10 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			if code == StatusNoStatusRcvd {
 				frame = NewCloseFrame(code, "")
 			}
-			return nil, ws.ackCloseHandshake(frame)
+			if err := ws.ackCloseHandshake(frame); err != nil {
+				return nil, err
+			}
+			return nil, io.EOF
 		case OpcodePing:
 			frame = NewFrame(OpcodePong, true, frame.Payload)
 			if err := ws.writeFrame(frame); err != nil {
