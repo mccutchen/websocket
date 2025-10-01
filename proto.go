@@ -378,13 +378,15 @@ func FrameMessage(msg *Message, frameSize int) []*Frame {
 	return result
 }
 
-// closeStatusCode returns the [StatusCode] for a given close frame. It is the
-// caller's responsibility to call this only on valid close frames.
-func closeStatusCode(frame *Frame) StatusCode {
-	if len(frame.Payload) < 2 {
-		return StatusNoStatusRcvd
+// closeAckFrame returns an appropriate close frame to use when completing a
+// closing handshake initiated by the other end. If the incoming close frame
+// has a valid payload, it is returned as-is.
+func closeAckFrame(closeFrame *Frame) *Frame {
+	if len(closeFrame.Payload) >= 2 {
+		return closeFrame
 	}
-	return StatusCode(binary.BigEndian.Uint16(frame.Payload[:2]))
+	return NewCloseFrame(StatusNoStatusRcvd, "")
+
 }
 
 var reservedStatusCodes = map[uint16]bool{

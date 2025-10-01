@@ -217,11 +217,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 			msg.Payload = append(msg.Payload, frame.Payload...)
 		case OpcodeClose:
-			code := closeStatusCode(frame)
-			if code == StatusNoStatusRcvd {
-				frame = NewCloseFrame(code, "")
-			}
-			if err := ws.ackCloseHandshake(frame); err != nil {
+			if err := ws.ackCloseHandshake(closeAckFrame(frame)); err != nil {
 				return nil, err
 			}
 			return nil, io.EOF
