@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"slices"
@@ -226,7 +225,6 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 			msg.Payload = append(msg.Payload, frame.Payload...)
 		case OpcodeClose:
-			log.Printf("XXX got close from client")
 			code := closeStatusCode(frame)
 			if code == StatusNoStatusRcvd {
 				frame = NewCloseFrame(code, "")
@@ -400,8 +398,8 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 			}
 			frame, err := ws.readFrame()
 			if err != nil {
-				log.Printf("XXX error reading ACK: %s", err)
 				if errors.Is(err, net.ErrClosed) {
+					// nothing to do if network connection is already closed
 					return
 				}
 				if errors.Is(err, io.EOF) {
@@ -416,7 +414,6 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 				// is started
 				continue
 			}
-			log.Printf("XXX finished closing handshake!")
 			ws.hooks.OnCloseHandshakeDone(ws.clientKey, 0, nil)
 			ws.finishClose()
 			return
@@ -448,9 +445,8 @@ func (ws *Websocket) closeImmediately(cause error) error {
 
 func (ws *Websocket) finishClose() {
 	ws.setState(ConnStateClosed)
-	log.Printf("XXX closing connection")
 	if err := ws.conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-		panic("XXX FIXME error closing connection: " + err.Error())
+		panic("websocket: close: error closing network connection: " + err.Error())
 	}
 }
 
