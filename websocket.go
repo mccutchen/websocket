@@ -35,13 +35,6 @@ const (
 	ClientMode      = true
 )
 
-func (m Mode) String() string {
-	if m == ServerMode {
-		return "server"
-	}
-	return "client"
-}
-
 // Options define the limits imposed on a websocket connection.
 type Options struct {
 	Hooks          Hooks
