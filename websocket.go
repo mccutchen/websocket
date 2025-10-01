@@ -321,7 +321,10 @@ func (ws *Websocket) mask() MaskingKey {
 	return NewMaskingKey()
 }
 
-// Close starts the closing handshake.
+// Close starts the closing handshake for a normal closure not due to an
+// error.
+//
+// TODO: add support for explicitly closing on error to public API.
 func (ws *Websocket) Close() error {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
@@ -329,6 +332,10 @@ func (ws *Websocket) Close() error {
 	return ws.doCloseHandshake(NewCloseFrame(code, ""), nil)
 }
 
+// startCloseOnError starts a closing handshake that will indicate an error
+// based on the given cause.
+//
+// Note: callers must hold mutex.
 func (ws *Websocket) startCloseOnError(cause error) error {
 	if errors.Is(cause, net.ErrClosed) {
 		return cause
@@ -348,6 +355,9 @@ func (ws *Websocket) startCloseOnWriteError(err error) error {
 	return ws.startCloseOnError(err)
 }
 
+// doCloseHandshake initiates the closing handshake and blocks until the
+// handshake is completed by the peer or until the configured close timeout
+// elapses.
 func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 	// read or write failed because the connection is already closed, nothing
 	// we can do
