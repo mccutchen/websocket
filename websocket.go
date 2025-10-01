@@ -300,9 +300,7 @@ func (ws *Websocket) Serve(ctx context.Context, handler Handler) {
 		if err != nil {
 			ws.mu.Lock()
 			defer ws.mu.Unlock()
-			code, reason := statusCodeForError(err)
-			frame := NewCloseFrame(code, reason)
-			_ = ws.doCloseHandshake(frame, err)
+			_ = ws.startCloseOnError(err)
 			return
 		}
 		if resp != nil {
