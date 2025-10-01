@@ -71,10 +71,9 @@ type Websocket struct {
 	mode Mode
 
 	// connection state, protected by mutex
-	mu                   sync.Mutex
-	state                ConnState
-	startCloseOnce       sync.Once
-	closeImmediatelyOnce sync.Once
+	mu             sync.Mutex
+	state          ConnState
+	startCloseOnce sync.Once
 
 	// observability
 	clientKey ClientKey
@@ -430,16 +429,13 @@ func (ws *Websocket) ackCloseHandshake(closeFrame *Frame) error {
 }
 
 func (ws *Websocket) closeImmediately(cause error) error {
-	ws.closeImmediatelyOnce.Do(func() {
-		code, reason := statusCodeForError(cause)
-		frame := NewCloseFrame(code, reason)
-		ws.hooks.OnCloseHandshakeStart(ws.clientKey, code, cause)
-		ws.hooks.OnWriteFrame(ws.clientKey, frame)
-		if err := ws.writeFrame(frame); err != nil {
-			cause = fmt.Errorf("websocket: close: failed to write close frame for error: %w: %w", cause, err)
-		}
-		ws.finishClose()
-	})
+	code, reason := statusCodeForError(cause)
+	frame := NewCloseFrame(code, reason)
+	ws.hooks.OnCloseHandshakeStart(ws.clientKey, code, cause)
+	if err := ws.writeFrame(frame); err != nil {
+		cause = fmt.Errorf("websocket: close: failed to write close frame for error: %w: %w", cause, err)
+	}
+	ws.finishClose()
 	return cause
 }
 
