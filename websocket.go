@@ -195,6 +195,15 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 
 		frame, err := ws.readFrame()
 		if err != nil {
+			// instances of our own error type represent protocol errors,
+			// which indicate that we should "Fail the Websocket connection"
+			// by sending a close frame and not waiting for a close frame
+			// in response.
+			var protoErr *Error
+			if errors.As(err, &protoErr) {
+				return nil, ws.closeImmediately(err)
+			}
+			// otherwise, we attempt a proper closing handshake.
 			return nil, ws.startCloseOnReadError(err)
 		}
 
@@ -428,10 +437,10 @@ func (ws *Websocket) ackCloseHandshake(closeFrame *Frame) error {
 func (ws *Websocket) closeImmediately(cause error) error {
 	code, reason := statusCodeForError(cause)
 	frame := NewCloseFrame(code, reason)
-	ws.hooks.OnCloseHandshakeStart(ws.clientKey, code, cause)
 	if err := ws.writeFrame(frame); err != nil {
 		cause = fmt.Errorf("websocket: close: failed to write close frame for error: %w: %w", cause, err)
 	}
+	ws.hooks.OnCloseHandshakeDone(ws.clientKey, code, cause)
 	ws.finishClose()
 	return cause
 }
