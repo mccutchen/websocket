@@ -347,9 +347,6 @@ func (ws *Websocket) Close() error {
 //
 // Note: callers must hold mutex.
 func (ws *Websocket) startCloseOnError(cause error) error {
-	if errors.Is(cause, net.ErrClosed) {
-		return cause
-	}
 	code, reason := statusCodeForError(cause)
 	closeFrame := NewCloseFrame(code, reason)
 	return ws.doCloseHandshake(closeFrame, cause)
@@ -369,12 +366,6 @@ func (ws *Websocket) startCloseOnWriteError(err error) error {
 // handshake is completed by the peer or until the configured close timeout
 // elapses.
 func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
-	// read or write failed because the connection is already closed, nothing
-	// we can do
-	if errors.Is(cause, net.ErrClosed) {
-		return cause
-	}
-
 	ws.setState(connStateClosing)
 	closeDeadline := time.Now().Add(ws.closeTimeout)
 	// also ensure no one read or write can exceed our new close deadline,

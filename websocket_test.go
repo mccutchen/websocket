@@ -695,7 +695,7 @@ func TestNetworkErrors(t *testing.T) {
 		mustReadCloseFrame(t, conn, websocket.StatusAbnormalClose, writeErr)
 	})
 
-	t.Run("handle client cancelation between reads of multi-frame message", func(t *testing.T) {
+	t.Run("handle context cancelation between reads of multi frame message", func(t *testing.T) {
 		// In this test, the client writes a partial message (fin=false) and
 		// then the context is canceled, so we ensure that the server properly
 		// handles cancelation between reads of multi-frame messages
@@ -990,6 +990,7 @@ type wrappedConn struct {
 	read             func([]byte) (int, error)
 	write            func([]byte) (int, error)
 	close            func() error
+	setDeadline      func(time.Time) error
 	setReadDeadline  func(time.Time) error
 	setWriteDeadline func(time.Time) error
 }
@@ -1015,6 +1016,13 @@ func (c *wrappedConn) Close() error {
 	return c.conn.Close()
 }
 
+func (c *wrappedConn) SetDeadline(t time.Time) error {
+	if c.setDeadline != nil {
+		return c.setDeadline(t)
+	}
+	return c.conn.SetDeadline(t)
+}
+
 func (c *wrappedConn) SetReadDeadline(t time.Time) error {
 	if c.setReadDeadline != nil {
 		return c.setReadDeadline(t)
@@ -1029,7 +1037,17 @@ func (c *wrappedConn) SetWriteDeadline(t time.Time) error {
 	return c.conn.SetWriteDeadline(t)
 }
 
-var _ io.ReadWriteCloser = &wrappedConn{}
+func (c *wrappedConn) LocalAddr() net.Addr {
+	return c.conn.LocalAddr()
+}
+func (c *wrappedConn) RemoteAddr() net.Addr {
+	return c.conn.RemoteAddr()
+}
+
+var (
+	_ io.ReadWriteCloser = &wrappedConn{}
+	_ net.Conn           = &wrappedConn{}
+)
 
 // brokenHijackResponseWriter implements just enough to satisfy the
 // http.ResponseWriter and http.Hijacker interfaces and get through the
