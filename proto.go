@@ -386,7 +386,6 @@ func closeAckFrame(closeFrame *Frame) *Frame {
 		return closeFrame
 	}
 	return NewCloseFrame(StatusNoStatusRcvd, "")
-
 }
 
 var reservedStatusCodes = map[uint16]bool{

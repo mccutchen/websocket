@@ -195,6 +195,10 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 
 		frame, err := ws.readFrame()
 		if err != nil {
+			// peer closed connection, close our end immediately
+			if errors.Is(err, io.EOF) {
+				return nil, ws.closeImmediately(err)
+			}
 			// instances of our own error type represent protocol errors,
 			// which indicate that we should "Fail the Websocket connection"
 			// by sending a close frame and not waiting for a close frame
@@ -203,7 +207,10 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			if errors.As(err, &protoErr) {
 				return nil, ws.closeImmediately(err)
 			}
-			// otherwise, we attempt a proper closing handshake.
+			// otherwise, we attempt a proper closing handshake. I *think*
+			// this is only useful in the case where we enforced a read
+			// timeout but the peer is still connected, so that we can inform
+			// them of the timeout.
 			return nil, ws.startCloseOnReadError(err)
 		}
 
@@ -297,25 +304,22 @@ func (ws *Websocket) writeFrame(frame *Frame) error {
 // incoming message and its return value is sent back to the client.
 //
 // See also [EchoHandler].
-func (ws *Websocket) Serve(ctx context.Context, handler Handler) {
+func (ws *Websocket) Serve(ctx context.Context, handler Handler) error {
 	for {
 		msg, err := ws.ReadMessage(ctx)
 		if err != nil {
-			// an error in Read() closes the connection
-			return
+			return err
 		}
 
 		resp, err := handler(ctx, msg)
 		if err != nil {
 			ws.mu.Lock()
 			defer ws.mu.Unlock()
-			_ = ws.startCloseOnError(err)
-			return
+			return ws.startCloseOnError(err)
 		}
 		if resp != nil {
 			if err := ws.WriteMessage(ctx, resp); err != nil {
-				// an error in Write() closes the connection
-				return
+				return err
 			}
 		}
 	}

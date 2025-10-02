@@ -234,7 +234,7 @@ func TestConnectionLimits(t *testing.T) {
 
 			// record the error the server sees when the client closes the
 			// connection
-			gotServerReadError error
+			gotServerError error
 		)
 
 		wg.Add(1)
@@ -245,17 +245,12 @@ func TestConnectionLimits(t *testing.T) {
 				ReadTimeout:    serverTimeout,
 				MaxFrameSize:   128,
 				MaxMessageSize: 256,
-				Hooks: websocket.Hooks{
-					OnReadError: func(key websocket.ClientKey, err error) {
-						gotServerReadError = err
-					},
-				},
 			})
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			ws.Serve(r.Context(), websocket.EchoHandler)
+			gotServerError = ws.Serve(r.Context(), websocket.EchoHandler)
 			elapsedServerTime = time.Since(start)
 		}))
 
@@ -285,7 +280,7 @@ func TestConnectionLimits(t *testing.T) {
 		// timeout and an appropriate error
 		wg.Wait()
 		assert.RoughlyEqual(t, elapsedServerTime, clientTimeout, 10*time.Millisecond)
-		assert.Error(t, gotServerReadError, io.EOF)
+		assert.Error(t, gotServerError, io.EOF)
 	})
 }
 
