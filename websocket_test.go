@@ -683,7 +683,7 @@ func TestNetworkErrors(t *testing.T) {
 			}
 
 			ws := websocket.New(fakeConn, clientKey, websocket.ServerMode, websocket.Options{})
-			ws.Serve(r.Context(), websocket.EchoHandler)
+			_ = ws.Serve(r.Context(), websocket.EchoHandler)
 		}))
 
 		// We write a frame, but the server's attempt to write the echo
@@ -705,7 +705,7 @@ func TestServeLoop(t *testing.T) {
 		conn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ws, err := websocket.Accept(w, r, websocket.Options{})
 			assert.NilError(t, err)
-			ws.Serve(r.Context(), func(ctx context.Context, msg *websocket.Message) (*websocket.Message, error) {
+			_ = ws.Serve(r.Context(), func(ctx context.Context, msg *websocket.Message) (*websocket.Message, error) {
 				if bytes.Equal(msg.Payload, []byte("fail")) {
 					return nil, wantErr
 				}
