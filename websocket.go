@@ -178,17 +178,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		// check for cancelation on each iteration
 		select {
 		case <-ctx.Done():
-			// If context is canceled due to deadline, treat it as a read error
-			// and initiate server closure.
-			//
-			// Otherwise, assume the client closed the connection and there's
-			// nothing for us to do besides close our end.
-			//
-			// TODO: hook for context cancellation/timeout/early closure?
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return nil, ws.startCloseOnReadError(ctx.Err())
-			}
-			return nil, ws.closeImmediately(nil)
+			return nil, ws.closeImmediately(ctx.Err())
 		default:
 		}
 
