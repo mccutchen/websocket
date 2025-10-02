@@ -195,23 +195,18 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 
 		frame, err := ws.readFrame()
 		if err != nil {
-			// peer closed connection, close our end immediately
-			if errors.Is(err, io.EOF) {
-				return nil, ws.closeImmediately(err)
-			}
-			// instances of our own error type represent protocol errors,
-			// which indicate that we should "Fail the Websocket connection"
-			// by sending a close frame and not waiting for a close frame
-			// in response.
-			var protoErr *Error
-			if errors.As(err, &protoErr) {
-				return nil, ws.closeImmediately(err)
-			}
-			// otherwise, we attempt a proper closing handshake. I *think*
-			// this is only useful in the case where we enforced a read
-			// timeout but the peer is still connected, so that we can inform
-			// them of the timeout.
-			return nil, ws.startCloseOnReadError(err)
+			// If we failed to read a frame for any reason (generally a read
+			// timeout or a validation error), send a close frame to inform
+			// the peer of the reason and close connection immediately without
+			// waiting for a reply.
+			//
+			// This approach seems a) expected by the Autobahn test suite and
+			// b) supported by the RFC:
+			// https://datatracker.ietf.org/doc/html/rfc6455#section-7.1.7
+			//
+			// (Search for "Fail the" to see all of the scenarios where
+			// immediately closing the connection is the correct behavior.)
+			return nil, ws.closeImmediately(err)
 		}
 
 		opcode := frame.Opcode()
