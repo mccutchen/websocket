@@ -126,7 +126,7 @@ func TestHandshake(t *testing.T) {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
 				}
-				ws.Serve(r.Context(), websocket.EchoHandler)
+				_ = ws.Serve(r.Context(), websocket.EchoHandler)
 			}))
 			defer srv.Close()
 
@@ -902,7 +902,7 @@ func setupRawConn(t testing.TB, opts websocket.Options) net.Conn {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		ws.Serve(r.Context(), websocket.EchoHandler)
+		_ = ws.Serve(r.Context(), websocket.EchoHandler)
 	}))
 }
 
@@ -1108,7 +1108,11 @@ func ExampleServe() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		ws.Serve(r.Context(), websocket.EchoHandler)
+		if err := ws.Serve(r.Context(), websocket.EchoHandler); err != nil {
+			// an error returned by Serve is strictly informational; the
+			// connection will already be closed at this point.
+			log.Printf("error serving websocket connection: %s", err)
+		}
 	})
 	if err := http.ListenAndServe(":8080", handler); err != nil {
 		log.Fatalf("error starting server: %v", err)
