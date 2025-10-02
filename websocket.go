@@ -64,9 +64,8 @@ type Websocket struct {
 	mode Mode
 
 	// connection state, protected by mutex
-	mu             sync.Mutex
-	state          ConnState
-	startCloseOnce sync.Once
+	mu    sync.Mutex
+	state ConnState
 
 	// observability
 	clientKey ClientKey
@@ -375,55 +374,52 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 
 	// use sync.Once to ensure that we only close the connection once whether
 	// or not concurrent reads/writes attempt to close it simultaneously
-	ws.startCloseOnce.Do(func() {
-		ws.setState(ConnStateClosing)
-		closeDeadline := time.Now().Add(ws.closeTimeout)
-		// also ensure no one read or write can exceed our new close deadline,
-		// since we may do multiple reads below while waiting for our close
-		// frame to be ACK'd
-		ws.writeTimeout = ws.closeTimeout
-		ws.readTimeout = ws.closeTimeout
+	ws.setState(ConnStateClosing)
+	closeDeadline := time.Now().Add(ws.closeTimeout)
+	// also ensure no one read or write can exceed our new close deadline,
+	// since we may do multiple reads below while waiting for our close
+	// frame to be ACK'd
+	ws.writeTimeout = ws.closeTimeout
+	ws.readTimeout = ws.closeTimeout
 
-		ws.hooks.OnCloseHandshakeStart(ws.clientKey, 0, cause) // TODO: close code
-		if err := ws.writeFrame(closeFrame); err != nil && !errors.Is(err, net.ErrClosed) {
-			cause = fmt.Errorf("websocket: close: failed to write close frame for error: %w: %w", cause, err)
-			ws.finishClose()
-		}
+	ws.hooks.OnCloseHandshakeStart(ws.clientKey, 0, cause) // TODO: close code
+	if err := ws.writeFrame(closeFrame); err != nil && !errors.Is(err, net.ErrClosed) {
+		cause = fmt.Errorf("websocket: close: failed to write close frame for error: %w: %w", cause, err)
+		ws.finishClose()
+	}
 
-		// Once we've written the frame to start the closing handshake, we
-		// need to read frames until a) we get an ack close frame in return or
-		// b) the close deadline elapses. Any non-close frames read are
-		// discarded.
-		for {
-			if time.Now().After(closeDeadline) {
-				cause = fmt.Errorf("websocket: close: timeout waiting for ack for error: %w", cause)
-				ws.finishClose()
-				return
-			}
-			frame, err := ws.readFrame()
-			if err != nil {
-				if errors.Is(err, net.ErrClosed) {
-					// nothing to do if network connection is already closed
-					return
-				}
-				if errors.Is(err, io.EOF) {
-					ws.finishClose()
-				}
-				cause = fmt.Errorf("websocket: close: read failed while waiting for ack for error: %w: %w", cause, err)
-				ws.finishClose()
-				return
-			}
-			if frame.Opcode() != OpcodeClose {
-				// drop any non-close frames recevied after closing handshake
-				// is started
-				continue
-			}
-			ws.hooks.OnCloseHandshakeDone(ws.clientKey, 0, nil)
+	// Once we've written the frame to start the closing handshake, we
+	// need to read frames until a) we get an ack close frame in return or
+	// b) the close deadline elapses. Any non-close frames read are
+	// discarded.
+	for {
+		if time.Now().After(closeDeadline) {
+			cause = fmt.Errorf("websocket: close: timeout waiting for ack for error: %w", cause)
 			ws.finishClose()
-			return
+			return cause
 		}
-	})
-	return cause
+		frame, err := ws.readFrame()
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				// nothing to do if network connection is already closed
+				return cause
+			}
+			if errors.Is(err, io.EOF) {
+				ws.finishClose()
+			}
+			cause = fmt.Errorf("websocket: close: read failed while waiting for ack for error: %w: %w", cause, err)
+			ws.finishClose()
+			return cause
+		}
+		if frame.Opcode() != OpcodeClose {
+			// drop any non-close frames recevied after closing handshake
+			// is started
+			continue
+		}
+		ws.hooks.OnCloseHandshakeDone(ws.clientKey, 0, nil)
+		ws.finishClose()
+		return cause
+	}
 }
 
 func (ws *Websocket) ackCloseHandshake(closeFrame *Frame) error {
