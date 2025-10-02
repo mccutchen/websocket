@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/goccy/go-json v0.10.5
-	github.com/mccutchen/websocket v0.0.2
+	github.com/mccutchen/websocket v0.0.0
 )
 
 replace github.com/mccutchen/websocket => ../../
