@@ -378,10 +378,11 @@ func FrameMessage(msg *Message, frameSize int) []*Frame {
 	return result
 }
 
-// closeAckFrame returns an appropriate close frame to use when completing a
-// closing handshake initiated by the other end. If the incoming close frame
-// has a valid payload, it is returned as-is.
-func closeAckFrame(closeFrame *Frame) *Frame {
+// closeReplyFrame returns an appropriate close frame to use when replying to
+// a closing handshake initiated by the other end. If the incoming close frame
+// has a valid payload, it is returned as-is, otherwise a reasonable default
+// reply is chosen.
+func closeReplyFrame(closeFrame *Frame) *Frame {
 	if len(closeFrame.Payload) >= 2 {
 		return closeFrame
 	}

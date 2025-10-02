@@ -227,7 +227,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 			msg.Payload = append(msg.Payload, frame.Payload...)
 		case OpcodeClose:
-			if err := ws.ackCloseHandshake(closeAckFrame(frame)); err != nil {
+			if err := ws.doCloseHandshakeReply(closeReplyFrame(frame)); err != nil {
 				return nil, err
 			}
 			return nil, io.EOF
@@ -238,9 +238,9 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 			continue
 		case OpcodePong:
-			continue // no-op
+			continue // no-op, assume reply to a ping
 		default:
-			return nil, ws.startCloseOnReadError(ErrOpcodeUnknown)
+			return nil, ws.closeImmediately(ErrOpcodeUnknown)
 		}
 
 		if frame.Fin() {
@@ -372,8 +372,6 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 		return cause
 	}
 
-	// use sync.Once to ensure that we only close the connection once whether
-	// or not concurrent reads/writes attempt to close it simultaneously
 	ws.setState(ConnStateClosing)
 	closeDeadline := time.Now().Add(ws.closeTimeout)
 	// also ensure no one read or write can exceed our new close deadline,
@@ -422,7 +420,10 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 	}
 }
 
-func (ws *Websocket) ackCloseHandshake(closeFrame *Frame) error {
+// doCloseHandshakeReply sends a close frame in response to a closing
+// handshake initiated by the other end and then closes our end of the
+// connection.
+func (ws *Websocket) doCloseHandshakeReply(closeFrame *Frame) error {
 	err := ws.writeFrame(closeFrame)
 	ws.hooks.OnCloseHandshakeDone(ws.clientKey, 0, err)
 	ws.finishClose()
@@ -469,17 +470,14 @@ func (ws *Websocket) resetWriteDeadline() {
 
 var validTransitions = map[ConnState][]ConnState{
 	ConnStateOpen: {
-		// a well-behaved transition from open -> closing -> closed
+		// proper closing handshake has started, waiting on reply from peer
 		ConnStateClosing,
 		// for some errors (e.g. network-level issues) we transition directly
 		// from open -> closed without doing a full closing handshake
 		ConnStateClosed,
 	},
 	ConnStateClosing: {ConnStateClosed},
-	ConnStateClosed: {
-		// closing a connection twice is a no-op
-		ConnStateClosed,
-	},
+	ConnStateClosed:  {ConnStateClosed}, // we treat closing a connection twice as a no-op
 }
 
 // setState updates the connection's state, ensuring that the transition is
