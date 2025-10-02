@@ -380,8 +380,12 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 	// also ensure no one read or write can exceed our new close deadline,
 	// since we may do multiple reads below while waiting for our close
 	// frame to be ACK'd
-	ws.writeTimeout = ws.closeTimeout
-	ws.readTimeout = ws.closeTimeout
+	if ws.readTimeout > 0 {
+		ws.readTimeout = ws.closeTimeout
+	}
+	if ws.writeTimeout > 0 {
+		ws.writeTimeout = ws.closeTimeout
+	}
 
 	ws.hooks.OnCloseHandshakeStart(ws.clientKey, 0, cause) // TODO: close code
 	if err := ws.writeFrame(closeFrame); err != nil && !errors.Is(err, net.ErrClosed) {

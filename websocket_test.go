@@ -694,6 +694,36 @@ func TestNetworkErrors(t *testing.T) {
 		mustWriteFrame(t, conn, true, websocket.NewFrame(websocket.OpcodeText, true, []byte("hello")))
 		mustReadCloseFrame(t, conn, websocket.StatusAbnormalClose, writeErr)
 	})
+
+	t.Run("handle client cancelation between reads of multi-frame message", func(t *testing.T) {
+		// In this test, the client writes a partial message (fin=false) and
+		// then the context is canceled, so we ensure that the server properly
+		// handles cancelation between reads of multi-frame messages
+		t.Parallel()
+
+		var wg sync.WaitGroup
+		clientConn, serverConn := net.Pipe()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ws := websocket.New(serverConn, websocket.NewClientKey(), websocket.ServerMode, websocket.Options{})
+			msg, err := ws.ReadMessage(ctx)
+			assert.Error(t, err, context.Canceled)
+			assert.Equal(t, msg, nil, "expected nil message")
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mustWriteFrame(t, clientConn, true, websocket.NewFrame(websocket.OpcodeText, false, []byte("frame 1")))
+			cancel()
+			mustReadCloseFrame(t, clientConn, websocket.StatusInternalError, context.Canceled)
+		}()
+		wg.Wait()
+	})
 }
 
 func TestServeLoop(t *testing.T) {
@@ -745,6 +775,42 @@ func TestNew(t *testing.T) {
 			WriteTimeout: time.Second,
 		})
 	})
+}
+
+func TestClose(t *testing.T) {
+	t.Parallel()
+
+	// simulate a websocket client and server connaction
+	clientConn, serverConn := net.Pipe()
+	ws := websocket.New(serverConn, websocket.ClientKey("test-client-key"), websocket.ServerMode, websocket.Options{})
+
+	// close the server connection
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		assert.NilError(t, ws.Close())
+	}()
+
+	// confirm that the client got the close frame as expected
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		mustReadCloseFrame(t, clientConn, websocket.StatusNormalClosure, nil)
+		mustWriteFrame(t, clientConn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
+	}()
+	wg.Wait()
+
+	// make sure any reads or writes after closing the connection are rejected
+	{
+		msg, err := ws.ReadMessage(t.Context())
+		assert.Equal(t, msg, nil, "msg should be nil")
+		assert.Error(t, err, websocket.ErrConnectionClosed)
+	}
+	{
+		err := ws.WriteMessage(t.Context(), &websocket.Message{})
+		assert.Error(t, err, websocket.ErrConnectionClosed)
+	}
 }
 
 func mustReadFrame(t testing.TB, src io.Reader, maxPayloadLen int) *websocket.Frame {
@@ -994,27 +1060,34 @@ var (
 // provide a separate reader and writer, and ensures that the conn can't be
 // used after it's closed.
 type dummyConn struct {
+	mu     sync.Mutex
 	in     io.Reader
 	out    io.Writer
-	closed atomic.Bool
+	closed bool
 }
 
 func (c *dummyConn) Read(p []byte) (int, error) {
-	if c.closed.Load() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
 		return 0, errors.New("reader closed")
 	}
 	return c.in.Read(p)
 }
 
 func (c *dummyConn) Write(p []byte) (int, error) {
-	if c.closed.Load() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
 		return 0, errors.New("writer closed")
 	}
 	return c.out.Write(p)
 }
 
 func (c *dummyConn) Close() error {
-	c.closed.Swap(true)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
 	return nil
 }
 
