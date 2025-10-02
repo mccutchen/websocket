@@ -385,7 +385,7 @@ func closeAckFrame(closeFrame *Frame) *Frame {
 	if len(closeFrame.Payload) >= 2 {
 		return closeFrame
 	}
-	return NewCloseFrame(StatusNoStatusRcvd, "")
+	return NewCloseFrame(StatusNormalClosure, "")
 }
 
 var reservedStatusCodes = map[uint16]bool{
