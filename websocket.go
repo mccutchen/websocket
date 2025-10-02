@@ -50,13 +50,18 @@ type deadliner interface {
 	SetWriteDeadline(time.Time) error
 }
 
-type ConnState string
+// Connections can be in one of three states.
+type connState string
 
 const (
-	ConnStateOpen    ConnState = "open"
-	ConnStateClosing ConnState = "closing"
-	ConnStateClosed  ConnState = "closed"
+	connStateOpen    connState = "open"
+	connStateClosing connState = "closing"
+	connStateClosed  connState = "closed"
 )
+
+// ErrConnectionClosed is returned on any attempt to read from or write to
+// a closed or closing connection.
+var ErrConnectionClosed = errors.New("websocket: connection not open for reading or writing")
 
 // Websocket is a websocket connection.
 type Websocket struct {
@@ -65,7 +70,7 @@ type Websocket struct {
 
 	// connection state, protected by mutex
 	mu    sync.Mutex
-	state ConnState
+	state connState
 
 	// observability
 	clientKey ClientKey
@@ -115,7 +120,7 @@ func New(src io.ReadWriteCloser, clientKey ClientKey, mode Mode, opts Options) *
 	}
 	return &Websocket{
 		conn:           src,
-		state:          ConnStateOpen,
+		state:          connStateOpen,
 		mode:           mode,
 		clientKey:      clientKey,
 		hooks:          opts.Hooks,
@@ -172,6 +177,10 @@ func Handshake(w http.ResponseWriter, r *http.Request) (ClientKey, error) {
 func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
+
+	if ws.state != connStateOpen {
+		return nil, ErrConnectionClosed
+	}
 
 	var msg *Message
 	for {
@@ -249,6 +258,10 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
+
+	if ws.state != connStateOpen {
+		return ErrConnectionClosed
+	}
 
 	ws.hooks.OnWriteMessage(ws.clientKey, msg)
 	for _, frame := range FrameMessage(msg, ws.maxFrameSize) {
@@ -362,7 +375,7 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 		return cause
 	}
 
-	ws.setState(ConnStateClosing)
+	ws.setState(connStateClosing)
 	closeDeadline := time.Now().Add(ws.closeTimeout)
 	// also ensure no one read or write can exceed our new close deadline,
 	// since we may do multiple reads below while waiting for our close
@@ -432,7 +445,7 @@ func (ws *Websocket) closeImmediately(cause error) error {
 }
 
 func (ws *Websocket) finishClose() {
-	ws.setState(ConnStateClosed)
+	ws.setState(connStateClosed)
 	if err := ws.conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 		panic("websocket: close: error closing network connection: " + err.Error())
 	}
@@ -458,23 +471,23 @@ func (ws *Websocket) resetWriteDeadline() {
 	}
 }
 
-var validTransitions = map[ConnState][]ConnState{
-	ConnStateOpen: {
+var validTransitions = map[connState][]connState{
+	connStateOpen: {
 		// proper closing handshake has started, waiting on reply from peer
-		ConnStateClosing,
+		connStateClosing,
 		// for some errors (e.g. network-level issues) we transition directly
 		// from open -> closed without doing a full closing handshake
-		ConnStateClosed,
+		connStateClosed,
 	},
-	ConnStateClosing: {ConnStateClosed},
-	ConnStateClosed:  {ConnStateClosed}, // we treat closing a connection twice as a no-op
+	connStateClosing: {connStateClosed},
+	connStateClosed:  {connStateClosed}, // we treat closing a connection twice as a no-op
 }
 
 // setState updates the connection's state, ensuring that the transition is
 // valid.
 //
 // Note: caller must hold the mutex.
-func (ws *Websocket) setState(newState ConnState) {
+func (ws *Websocket) setState(newState connState) {
 	isValid := slices.Contains(validTransitions[ws.state], newState)
 	if !isValid {
 		panic(fmt.Errorf("websocket: setState: invalid transition from %q to %q", ws.state, newState))
