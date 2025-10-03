@@ -46,3 +46,25 @@ func TestDefaults(t *testing.T) {
 	assert.Equal(t, ws.hooks.OnWriteFrame != nil, true, "OnWriteFrame hook is nil")
 	assert.Equal(t, ws.hooks.OnWriteMessage != nil, true, "OnWriteMessage hook is nil")
 }
+
+func TestMask(t *testing.T) {
+	t.Parallel()
+
+	var (
+		conn net.Conn
+		key  = ClientKey("test-client-key")
+		opts = Options{}
+	)
+
+	{
+		ws := New(conn, key, ServerMode, opts)
+		mask := ws.mask()
+		assert.Equal(t, mask, Unmasked, "ServerMode should be unmasked")
+	}
+
+	{
+		ws := New(conn, key, ClientMode, opts)
+		mask := ws.mask()
+		assert.Equal(t, mask != Unmasked, true, "ClientMode should be masked")
+	}
+}
