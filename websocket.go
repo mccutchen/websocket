@@ -113,9 +113,9 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Websocket, e
 // using New directly.
 func New(src io.ReadWriteCloser, clientKey ClientKey, mode Mode, opts Options) *Websocket {
 	setDefaults(&opts)
-	if opts.ReadTimeout != 0 || opts.WriteTimeout != 0 {
+	if opts.ReadTimeout != 0 || opts.WriteTimeout != 0 || opts.CloseTimeout != 0 {
 		if _, ok := src.(deadliner); !ok {
-			panic("ReadTimeout and WriteTimeout may only be used when input source supports setting read/write deadlines")
+			panic("ReadTimeout/WriteTimeout/CloseTimeout may only be used when input source supports setting read/write deadlines")
 		}
 	}
 	return &Websocket{
@@ -371,16 +371,12 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 	// also ensure no one read or write can exceed our new close deadline,
 	// since we may do multiple reads below while waiting for our close
 	// frame to be ACK'd
-	if ws.readTimeout > 0 {
-		ws.readTimeout = ws.closeTimeout
-	}
-	if ws.writeTimeout > 0 {
-		ws.writeTimeout = ws.closeTimeout
-	}
+	ws.readTimeout = ws.closeTimeout
+	ws.writeTimeout = ws.closeTimeout
 
 	ws.hooks.OnCloseHandshakeStart(ws.clientKey, 0, cause) // TODO: close code
 	if err := ws.writeFrame(closeFrame); err != nil && !errors.Is(err, net.ErrClosed) {
-		cause = fmt.Errorf("websocket: close: failed to write close frame for error: %w: %w", cause, err)
+		cause = fmt.Errorf("websocket: close: failed to write close frame %w", err)
 		ws.finishClose()
 	}
 
@@ -390,7 +386,7 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 	// discarded.
 	for {
 		if time.Now().After(closeDeadline) {
-			cause = fmt.Errorf("websocket: close: timeout waiting for ack for error: %w", cause)
+			cause = fmt.Errorf("websocket: close: timeout waiting for reply")
 			ws.finishClose()
 			return cause
 		}
@@ -403,7 +399,7 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 			if errors.Is(err, io.EOF) {
 				ws.finishClose()
 			}
-			cause = fmt.Errorf("websocket: close: read failed while waiting for ack for error: %w: %w", cause, err)
+			cause = fmt.Errorf("websocket: close: read failed while waiting for reply: %w", err)
 			ws.finishClose()
 			return cause
 		}
