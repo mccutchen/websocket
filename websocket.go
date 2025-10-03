@@ -19,11 +19,6 @@ import (
 const (
 	DefaultMaxFrameSize   int = 16 << 10  // 16KiB
 	DefaultMaxMessageSize int = 256 << 10 // 256KiB
-
-	// DefaultCloseTimeout is set to a reasonable default to prevent
-	// misbehaving/malicious clients from holding open connections for too
-	// long.
-	DefaultCloseTimeout = 1 * time.Second
 )
 
 // Mode enalbes server or client behavior
@@ -40,7 +35,7 @@ type Options struct {
 	Hooks          Hooks
 	ReadTimeout    time.Duration
 	WriteTimeout   time.Duration
-	CloseTimeout   time.Duration
+	CloseTimeout   time.Duration // defaults to ReadTimeout if set
 	MaxFrameSize   int
 	MaxMessageSize int
 }
@@ -140,8 +135,8 @@ func setDefaults(opts *Options) {
 	if opts.MaxMessageSize <= 0 {
 		opts.MaxMessageSize = DefaultMaxMessageSize
 	}
-	if opts.CloseTimeout <= 0 {
-		opts.CloseTimeout = DefaultCloseTimeout
+	if opts.CloseTimeout == 0 && opts.ReadTimeout != 0 {
+		opts.CloseTimeout = opts.ReadTimeout
 	}
 	setupHooks(&opts.Hooks)
 }

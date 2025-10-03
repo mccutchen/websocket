@@ -20,6 +20,7 @@ import (
 	"net"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/mccutchen/websocket/internal/testing/assert"
 )
@@ -39,7 +40,7 @@ func TestDefaults(t *testing.T) {
 	assert.Equal(t, ws.maxMessageSize, DefaultMaxMessageSize, "incorrect max message size")
 	assert.Equal(t, ws.readTimeout, 0, "incorrect read timeout")
 	assert.Equal(t, ws.writeTimeout, 0, "incorrect write timeout")
-	assert.Equal(t, ws.closeTimeout, DefaultCloseTimeout, "incorrect close timeout")
+	assert.Equal(t, ws.closeTimeout, 0, "incorrect close timeout")
 	assert.Equal(t, ws.mode, ServerMode, "incorrect mode value")
 	assert.Equal(t, ws.hooks.OnCloseHandshakeStart != nil, true, "OnCloseHandshakeStart hook is nil")
 	assert.Equal(t, ws.hooks.OnCloseHandshakeDone != nil, true, "OnCloseHandshakeDone hook is nil")
@@ -49,6 +50,21 @@ func TestDefaults(t *testing.T) {
 	assert.Equal(t, ws.hooks.OnWriteError != nil, true, "OnWriteError hook is nil")
 	assert.Equal(t, ws.hooks.OnWriteFrame != nil, true, "OnWriteFrame hook is nil")
 	assert.Equal(t, ws.hooks.OnWriteMessage != nil, true, "OnWriteMessage hook is nil")
+
+	t.Run("CloseTimeout defaults to ReadTimeout if set", func(t *testing.T) {
+		var (
+			conn        *net.TCPConn
+			key         = ClientKey("test-client-key")
+			readTimeout = 10 * time.Second
+			opts        = Options{
+				ReadTimeout: readTimeout,
+			}
+			ws = New(conn, key, ServerMode, opts)
+		)
+		assert.Equal(t, ws.readTimeout, readTimeout, "incorrect read timeout")
+		assert.Equal(t, ws.closeTimeout, readTimeout, "incorrect close timeout")
+		assert.Equal(t, ws.writeTimeout, 0, "incorrect write timeout")
+	})
 }
 
 func TestMask(t *testing.T) {

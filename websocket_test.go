@@ -862,13 +862,14 @@ func TestNew(t *testing.T) {
 			if r == nil {
 				t.Fatalf("expected panic did not occur")
 			}
-			assert.Equal(t, fmt.Sprint(r), "ReadTimeout and WriteTimeout may only be used when input source supports setting read/write deadlines", "incorrect panic message")
+			assert.Equal(t, fmt.Sprint(r), "ReadTimeout/WriteTimeout/CloseTimeout may only be used when input source supports setting read/write deadlines", "incorrect panic message")
 		}()
 		websocket.New(&dummyConn{}, websocket.ClientKey("test-client-key"), websocket.ServerMode, websocket.Options{
-			// setting either read or write timeout will cause a panic if the
+			// setting any timeouts will cause a panic if the
 			// given src doesn't support setting deadlines
 			ReadTimeout:  time.Second,
 			WriteTimeout: time.Second,
+			CloseTimeout: time.Second,
 		})
 	})
 }
