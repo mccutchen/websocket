@@ -14,7 +14,9 @@ package websocket
 // These tests should be minimized in favor of public API tests.
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net"
 	"slices"
 	"testing"
@@ -115,5 +117,43 @@ func TestSetState(t *testing.T) {
 			})
 		}
 	}
+}
 
+func TestStatusCodeForError(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		err        error
+		wantStatus StatusCode
+		wantReason string
+	}{
+		{
+			err:        nil,
+			wantStatus: StatusNormalClosure,
+			wantReason: "",
+		},
+		{
+			err:        ErrClientFrameUnmasked,
+			wantStatus: StatusProtocolError,
+			wantReason: "client frame must be masked",
+		},
+		{
+			err:        context.DeadlineExceeded,
+			wantStatus: StatusInternalError,
+			wantReason: context.DeadlineExceeded.Error(),
+		},
+		{
+			err:        fmt.Errorf("wrapped io.EOF: %w", io.EOF),
+			wantStatus: StatusNormalClosure,
+			wantReason: "wrapped io.EOF: EOF",
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(fmt.Sprint(tc.err), func(t *testing.T) {
+			t.Parallel()
+			gotStatus, gotReason := statusCodeForError(tc.err)
+			assert.Equal(t, gotStatus, tc.wantStatus, "incorrect status code")
+			assert.Equal(t, gotReason, tc.wantReason, "incorrect reason")
+		})
+	}
 }
