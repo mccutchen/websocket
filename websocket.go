@@ -360,6 +360,8 @@ func (ws *Websocket) startCloseOnWriteError(err error) error {
 // doCloseHandshake initiates the closing handshake and blocks until the
 // handshake is completed by the peer or until the configured close timeout
 // elapses.
+//
+// Note: caller must hold the mutex.
 func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 	// enter closing state and ensure no one read or write can exceed our
 	// close timeout, since we may do multiple reads below while waiting for a
@@ -412,9 +414,7 @@ func (ws *Websocket) doCloseHandshakeReply(closeFrame *Frame) error {
 func (ws *Websocket) closeImmediately(cause error) error {
 	code, reason := statusCodeForError(cause)
 	frame := NewCloseFrame(code, reason)
-	if err := ws.writeFrame(frame); err != nil {
-		cause = fmt.Errorf("websocket: close: failed to write immediate close frame: %w", err)
-	}
+	_ = ws.writeFrame(frame) // connection is closed on our end, error not actionable
 	ws.hooks.OnCloseHandshakeDone(ws.clientKey, code, cause)
 	ws.finishClose()
 	return cause
