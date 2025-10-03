@@ -380,7 +380,8 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 	// b) the close deadline elapses. Any non-close frames read are
 	// discarded.
 	for {
-		if time.Now().After(closeDeadline) {
+		// only check close deadline if we have a non-zero close timeout
+		if ws.closeTimeout != 0 && time.Now().After(closeDeadline) {
 			cause = fmt.Errorf("websocket: close: timeout waiting for reply")
 			ws.finishClose()
 			return cause

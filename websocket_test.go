@@ -651,8 +651,10 @@ func TestClosingHandshake(t *testing.T) {
 
 		var (
 			serverConn, clientConn = net.Pipe()
-			server                 = websocket.New(serverConn, websocket.NewClientKey(), websocket.ServerMode, websocket.Options{})
-			wg                     sync.WaitGroup
+			server                 = websocket.New(serverConn, websocket.NewClientKey(), websocket.ServerMode, websocket.Options{
+				CloseTimeout: 1 * time.Second,
+			})
+			wg sync.WaitGroup
 		)
 
 		// server
