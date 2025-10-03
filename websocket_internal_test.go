@@ -14,7 +14,9 @@ package websocket
 // These tests should be minimized in favor of public API tests.
 
 import (
+	"fmt"
 	"net"
+	"slices"
 	"testing"
 
 	"github.com/mccutchen/websocket/internal/testing/assert"
@@ -67,4 +69,51 @@ func TestMask(t *testing.T) {
 		mask := ws.mask()
 		assert.Equal(t, mask != Unmasked, true, "ClientMode should be masked")
 	}
+}
+
+func TestSetState(t *testing.T) {
+	t.Parallel()
+
+	// build map of invalid transitions as the inverse of validTransitions
+	invalidTransitions := make(map[connState][]connState)
+	for state, validStates := range validTransitions {
+		var invalidStates []connState
+		for candidate := range validTransitions {
+			if candidate == state {
+				continue
+			}
+			if !slices.Contains(validStates, candidate) {
+				invalidStates = append(invalidStates, candidate)
+			}
+		}
+		if len(invalidStates) > 0 {
+			invalidTransitions[state] = invalidStates
+		}
+	}
+
+	// ensure each invalid transition triggers a panic
+	for state, invalidStates := range invalidTransitions {
+		for _, invalidState := range invalidStates {
+			t.Run(fmt.Sprintf("illegal transition %s -> %s", state, invalidState), func(t *testing.T) {
+				t.Parallel()
+				defer func() {
+					r := recover()
+					if r == nil {
+						t.Fatalf("expected to catch panic on invalid transition from %s -> %s", state, invalidState)
+					}
+					assert.Equal(t, fmt.Sprint(r), fmt.Sprintf("websocket: setState: invalid transition from %q to %q", state, invalidState), "incorrect panic message")
+				}()
+
+				var (
+					conn net.Conn
+					key  = ClientKey("test-client-key")
+					opts = Options{}
+					ws   = New(conn, key, ServerMode, opts)
+				)
+				ws.state = state
+				ws.setState(invalidState)
+			})
+		}
+	}
+
 }
