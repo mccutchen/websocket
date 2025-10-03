@@ -361,15 +361,14 @@ func (ws *Websocket) startCloseOnWriteError(err error) error {
 // handshake is completed by the peer or until the configured close timeout
 // elapses.
 func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
+	// enter closing state and ensure no one read or write can exceed our
+	// close timeout, since we may do multiple reads below while waiting for a
+	// reply to our close frame
 	ws.setState(connStateClosing)
-	closeDeadline := time.Now().Add(ws.closeTimeout)
-	// also ensure no one read or write can exceed our new close deadline,
-	// since we may do multiple reads below while waiting for our close
-	// frame to be ACK'd
 	ws.readTimeout = ws.closeTimeout
 	ws.writeTimeout = ws.closeTimeout
 
-	ws.hooks.OnCloseHandshakeStart(ws.clientKey, 0, cause) // TODO: close code
+	ws.hooks.OnCloseHandshakeStart(ws.clientKey, 0, cause)
 	if err := ws.writeFrame(closeFrame); err != nil && !errors.Is(err, net.ErrClosed) {
 		cause = fmt.Errorf("websocket: close: failed to write close frame %w", err)
 		ws.finishClose()
@@ -380,18 +379,8 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 	// b) the close deadline elapses. Any non-close frames read are
 	// discarded.
 	for {
-		// only check close deadline if we have a non-zero close timeout
-		if ws.closeTimeout != 0 && time.Now().After(closeDeadline) {
-			cause = fmt.Errorf("websocket: close: timeout waiting for reply")
-			ws.finishClose()
-			return cause
-		}
 		frame, err := ws.readFrame()
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				// nothing to do if network connection is already closed
-				return cause
-			}
 			if errors.Is(err, io.EOF) {
 				ws.finishClose()
 			}

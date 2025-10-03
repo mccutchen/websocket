@@ -705,7 +705,7 @@ func TestClosingHandshake(t *testing.T) {
 		wg.Wait()
 	})
 
-	t.Run("incomplete handshake", func(t *testing.T) {
+	t.Run("timeout waiting for handshake reply", func(t *testing.T) {
 		t.Parallel()
 
 		var (
@@ -739,7 +739,38 @@ func TestClosingHandshake(t *testing.T) {
 	})
 
 	t.Run("client sends additional non-close frames before completing handshake", func(t *testing.T) {
+		t.Parallel()
 
+		var (
+			closeTimeout           = 200 * time.Millisecond
+			serverConn, clientConn = net.Pipe()
+			server                 = websocket.New(serverConn, websocket.NewClientKey(), websocket.ServerMode, websocket.Options{
+				CloseTimeout: closeTimeout,
+			})
+			wg sync.WaitGroup
+		)
+
+		// server
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := server.Close()
+			assert.NilError(t, err)
+		}()
+
+		// client
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mustReadCloseFrame(t, clientConn, websocket.StatusNormalClosure, nil)
+			mustWriteFrames(t, clientConn, true, []*websocket.Frame{
+				websocket.NewFrame(websocket.OpcodePing, true, nil),
+				websocket.NewFrame(websocket.OpcodeText, true, []byte("ignore me")),
+				websocket.NewCloseFrame(websocket.StatusNormalClosure, ""),
+			})
+		}()
+
+		wg.Wait()
 	})
 }
 
