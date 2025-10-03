@@ -369,7 +369,7 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 	ws.writeTimeout = ws.closeTimeout
 
 	ws.hooks.OnCloseHandshakeStart(ws.clientKey, 0, cause)
-	if err := ws.writeFrame(closeFrame); err != nil && !errors.Is(err, net.ErrClosed) {
+	if err := ws.writeFrame(closeFrame); err != nil {
 		cause = fmt.Errorf("websocket: close: failed to write close frame %w", err)
 		ws.finishClose()
 	}
@@ -413,7 +413,7 @@ func (ws *Websocket) closeImmediately(cause error) error {
 	code, reason := statusCodeForError(cause)
 	frame := NewCloseFrame(code, reason)
 	if err := ws.writeFrame(frame); err != nil {
-		cause = fmt.Errorf("websocket: close: failed to write close frame for error: %w: %w", cause, err)
+		cause = fmt.Errorf("websocket: close: failed to write immediate close frame: %w", err)
 	}
 	ws.hooks.OnCloseHandshakeDone(ws.clientKey, code, cause)
 	ws.finishClose()
@@ -422,9 +422,7 @@ func (ws *Websocket) closeImmediately(cause error) error {
 
 func (ws *Websocket) finishClose() {
 	ws.setState(connStateClosed)
-	if err := ws.conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-		panic("websocket: close: error closing network connection: " + err.Error())
-	}
+	_ = ws.conn.Close() // nothing we can do about an error here
 }
 
 func (ws *Websocket) resetReadDeadline() {
