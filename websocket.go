@@ -372,8 +372,8 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 
 	ws.hooks.OnCloseHandshakeStart(ws.clientKey, 0, cause)
 	if err := ws.writeFrame(closeFrame); err != nil {
-		cause = fmt.Errorf("websocket: close: failed to write close frame %w", err)
 		ws.finishClose()
+		return fmt.Errorf("websocket: close: failed to write close frame %w", err)
 	}
 
 	// Once we've written the frame to start the closing handshake, we
