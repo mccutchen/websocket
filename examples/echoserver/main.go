@@ -70,8 +70,11 @@ func newDebugHooks(ctx context.Context, logger *slog.Logger) websocket.Hooks {
 		return slog.LevelInfo
 	}
 	return websocket.Hooks{
-		OnClose: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
-			logger.Log(ctx, levelForErr(err), "OnClose", "client", key, "code", code, "err", err)
+		OnCloseHandshakeStart: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
+			logger.Log(ctx, levelForErr(err), "OnCloseHandshakeStart", "client", key, "code", code, "err", err)
+		},
+		OnCloseHandshakeDone: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
+			logger.Log(ctx, levelForErr(err), "OnCloseHandshakeDone", "client", key, "code", code, "err", err)
 		},
 		OnReadError: func(key websocket.ClientKey, err error) {
 			logger.ErrorContext(ctx, "OnReadError", "client", key, "err", err)

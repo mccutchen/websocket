@@ -108,6 +108,7 @@ cat > "${INDEX_PATH}" <<EOF
 EOF
 
 # List all report directories in reverse chronological order
+# shellcheck disable=SC2207
 REPORT_DIRS=($(ls -rd "${REPORTS_ROOT}"/*/))
 for dir in "${REPORT_DIRS[@]}"; do
     if [ -f "${dir}index.html" ]; then

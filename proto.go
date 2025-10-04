@@ -378,6 +378,17 @@ func FrameMessage(msg *Message, frameSize int) []*Frame {
 	return result
 }
 
+// closeReplyFrame returns an appropriate close frame to use when replying to
+// a closing handshake initiated by the other end. If the incoming close frame
+// has a valid payload, it is returned as-is, otherwise a reasonable default
+// reply is chosen.
+func closeReplyFrame(closeFrame *Frame) *Frame {
+	if len(closeFrame.Payload) >= 2 {
+		return closeFrame
+	}
+	return NewCloseFrame(StatusNormalClosure, "")
+}
+
 var reservedStatusCodes = map[uint16]bool{
 	// Explicitly reserved by RFC section 7.4.1 Defined Status Codes:
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-7.4.1
