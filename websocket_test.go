@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -579,8 +580,17 @@ func TestProtocolErrors(t *testing.T) {
 				opts = newOpts(t)
 			}
 			conn := setupRawConn(t, opts)
+
+			// write erronous or invalid frames to the connection, which should
+			// cause the server to start the closing handshake
 			mustWriteFrames(t, conn, !tc.unmasked, tc.frames)
+
+			// read expected close frame
 			mustReadCloseFrame(t, conn, tc.wantCloseCode, tc.wantCloseReason)
+
+			// server closes connection immediately on protocol errors,
+			// without waiting for client to reply
+			assertConnClosed(t, conn)
 		})
 	}
 }
@@ -664,6 +674,7 @@ func TestCloseHandshake(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			assert.NilError(t, server.Close())
+			assertConnClosed(t, serverConn)
 		}()
 		// client finishes closing handshake
 		wg.Add(1)
@@ -671,6 +682,7 @@ func TestCloseHandshake(t *testing.T) {
 			defer wg.Done()
 			mustReadCloseFrame(t, clientConn, websocket.StatusNormalClosure, nil)
 			mustWriteFrame(t, clientConn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
+			assertConnClosed(t, clientConn)
 		}()
 		wg.Wait()
 	})
@@ -691,6 +703,7 @@ func TestCloseHandshake(t *testing.T) {
 			defer wg.Done()
 			mustWriteFrame(t, clientConn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
 			mustReadCloseFrame(t, clientConn, websocket.StatusNormalClosure, nil)
+			assertConnClosed(t, serverConn)
 		}()
 		// server replies to close frame automatically during a ReadMessage
 		// call, which returns io.EOF when the connection is closed.
@@ -700,6 +713,7 @@ func TestCloseHandshake(t *testing.T) {
 			msg, err := server.ReadMessage(t.Context())
 			assert.Equal(t, msg, nil, "expected nil message")
 			assert.Error(t, err, io.EOF)
+			assertConnClosed(t, clientConn)
 		}()
 		wg.Wait()
 	})
@@ -726,12 +740,14 @@ func TestCloseHandshake(t *testing.T) {
 			elapsed := time.Since(start)
 			assert.Error(t, err, errors.New("websocket: close: read failed while waiting for reply: error reading frame header: read pipe: i/o timeout"))
 			assert.Equal(t, elapsed > closeTimeout, true, "close should have waited for timeout")
+			assertConnClosed(t, serverConn)
 		}()
 		// client gets the closing handshake message but ignores it
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			mustReadCloseFrame(t, clientConn, websocket.StatusNormalClosure, nil)
+			assertConnClosed(t, clientConn)
 		}()
 		wg.Wait()
 	})
@@ -757,6 +773,7 @@ func TestCloseHandshake(t *testing.T) {
 			defer wg.Done()
 			err := server.Close()
 			assert.NilError(t, err)
+			assertConnClosed(t, serverConn)
 		}()
 		// client receives initial closing handshake but sends additional data
 		// before closing its end.
@@ -769,6 +786,7 @@ func TestCloseHandshake(t *testing.T) {
 				websocket.NewFrame(websocket.OpcodeText, true, []byte("ignore me")),
 				websocket.NewCloseFrame(websocket.StatusNormalClosure, ""),
 			})
+			assertConnClosed(t, clientConn)
 		}()
 		wg.Wait()
 	})
@@ -812,6 +830,7 @@ func TestCloseHandshake(t *testing.T) {
 		// client starts closing handshake
 		mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
 		wg.Wait()
+		assertConnClosed(t, conn)
 	})
 
 	t.Run("server fails to initiate close", func(t *testing.T) {
@@ -821,7 +840,7 @@ func TestCloseHandshake(t *testing.T) {
 
 		var wg sync.WaitGroup
 		wg.Add(1)
-		setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer wg.Done()
 
 			// Manually re-implement websocket.Accept in order to wrap the
@@ -848,6 +867,7 @@ func TestCloseHandshake(t *testing.T) {
 			assert.Error(t, ws.Close(), writeErr)
 		}))
 		wg.Wait()
+		assertConnClosed(t, conn)
 	})
 }
 
@@ -1085,6 +1105,30 @@ func mustReadCloseFrame(t *testing.T, r io.Reader, wantCode websocket.StatusCode
 func assertConnClosed(t testing.TB, conn net.Conn) {
 	t.Helper()
 	_, err := conn.Read(make([]byte, 1))
+	// testing this is super annoying, because we get at least four kinds of
+	// errors at various points in our test suite:
+	//
+	// - a *net.OpError with a non-deterministic strings containing random IP
+	//   addresses and the substring "connection reset by peer"
+	// - an error string "connection reset by peer" (from net.Pipe conns)
+	// - a concrete io.EOF value
+	// - a concrete net.ErrClosed value
+	//
+	// The latter two are easy to test, the first one requires this ugly
+	// substring check.
+	assert.Equal(t, err != nil, true, "expected non-nil error when reading from closed connection")
+
+	// first check ugly substring matches
+	for _, substring := range []string{
+		"read/write on closed pipe",
+		"connection reset by peer",
+	} {
+		if strings.Contains(err.Error(), substring) {
+			return
+		}
+	}
+
+	// finally check for concrete errors
 	assert.Error(t, err, io.EOF, net.ErrClosed)
 }
 
