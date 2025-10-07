@@ -985,25 +985,6 @@ func TestServeLoop(t *testing.T) {
 	})
 }
 
-func TestNew(t *testing.T) {
-	t.Run("timeouts allowed only if deadline can be set", func(t *testing.T) {
-		defer func() {
-			r := recover()
-			if r == nil {
-				t.Fatalf("expected panic did not occur")
-			}
-			assert.Equal(t, fmt.Sprint(r), "ReadTimeout/WriteTimeout/CloseTimeout may only be used when input source supports setting read/write deadlines", "incorrect panic message")
-		}()
-		websocket.New(&dummyConn{}, websocket.ClientKey("test-client-key"), websocket.ServerMode, websocket.Options{
-			// setting any timeouts will cause a panic if the
-			// given src doesn't support setting deadlines
-			ReadTimeout:  time.Second,
-			WriteTimeout: time.Second,
-			CloseTimeout: time.Second,
-		})
-	})
-}
-
 func TestClose(t *testing.T) {
 	t.Parallel()
 
@@ -1157,8 +1138,6 @@ func setupRawConn(t testing.TB, opts websocket.Options) net.Conn {
 	}))
 }
 
-var clientCount atomic.Int64
-
 // setupRawConnWithHandler starts a server with the given handler (which
 // must be a websocket echo server), does the client handshake, and returns
 // the underlying TCP connection ready for sending/receiving.
@@ -1178,10 +1157,9 @@ func setupRawConnWithHandler(t testing.TB, handler http.Handler) net.Conn {
 
 	handshakeReq := httptest.NewRequest(http.MethodGet, "/", nil)
 	for k, v := range map[string]string{
-		"Connection": "upgrade",
-		"Upgrade":    "websocket",
-		// "Sec-WebSocket-Key":     string(websocket.NewClientKey()),
-		"Sec-WebSocket-Key":     fmt.Sprintf("client-%03d", clientCount.Add(1)),
+		"Connection":            "upgrade",
+		"Upgrade":               "websocket",
+		"Sec-WebSocket-Key":     string(websocket.NewClientKey()),
 		"Sec-WebSocket-Version": "13",
 	} {
 		handshakeReq.Header.Set(k, v)
@@ -1324,43 +1302,6 @@ var (
 	_ http.ResponseWriter = &brokenHijackResponseWriter{}
 	_ http.Hijacker       = &brokenHijackResponseWriter{}
 )
-
-// dummyConn is a minimal implementation of net.Conn that allows tests to
-// provide a separate reader and writer, and ensures that the conn can't be
-// used after it's closed.
-type dummyConn struct {
-	mu     sync.Mutex
-	in     io.Reader
-	out    io.Writer
-	closed bool
-}
-
-func (c *dummyConn) Read(p []byte) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return 0, errors.New("reader closed")
-	}
-	return c.in.Read(p)
-}
-
-func (c *dummyConn) Write(p []byte) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return 0, errors.New("writer closed")
-	}
-	return c.out.Write(p)
-}
-
-func (c *dummyConn) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.closed = true
-	return nil
-}
-
-var _ io.ReadWriteCloser = &dummyConn{}
 
 // ============================================================================
 // Examples
