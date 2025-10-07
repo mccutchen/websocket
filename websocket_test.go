@@ -1155,6 +1155,15 @@ func setupRawConnWithHandler(t testing.TB, handler http.Handler) net.Conn {
 		srv.Close()
 	})
 
+	// tie our conn to a bufio.Reader because we need to pass the latter into
+	// http.ReadResponse below, which may end up reading some websocket frame
+	// data in tests where the server writes to the conn immediately after the
+	// handshake (e.g. where the server immediately closes the connection).
+	//
+	// this wrapper helps ensure that any data read into the buffer is still
+	// available on subsequent reads directly from the conn.
+	conn, br := newConnWithBufferedReader(conn)
+
 	handshakeReq := httptest.NewRequest(http.MethodGet, "/", nil)
 	for k, v := range map[string]string{
 		"Connection":            "upgrade",
@@ -1167,12 +1176,34 @@ func setupRawConnWithHandler(t testing.TB, handler http.Handler) net.Conn {
 	// write the request line and headers, which should cause the
 	// server to respond with a 101 Switching Protocols response.
 	assert.NilError(t, handshakeReq.Write(conn))
-	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	resp, err := http.ReadResponse(br, nil)
 	assert.NilError(t, err)
 	assert.StatusCode(t, resp, http.StatusSwitchingProtocols)
 
 	return conn
 }
+
+func newConnWithBufferedReader(conn net.Conn) (*connWithBufferedReader, *bufio.Reader) {
+	reader := bufio.NewReader(conn)
+	return &connWithBufferedReader{
+		Conn:   conn,
+		reader: reader,
+	}, reader
+}
+
+// connWithbufferedReader wraps a net.Conn with a bufio.Reader to ensure that
+// any partial data left in the buffer is available to subsequent reads from
+// the conn. See usage in setupRawConnWithHandler above for more explanation.
+type connWithBufferedReader struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *connWithBufferedReader) Read(b []byte) (int, error) {
+	return c.reader.Read(b)
+}
+
+var _ net.Conn = &connWithBufferedReader{}
 
 // setupWebsocketClient wraps the given conn in a websocket client. The handshake and
 // upgrade process must already be complete (see setupRawConn).
