@@ -313,7 +313,7 @@ func TestProtocolOkay(t *testing.T) {
 
 		// read server frame and ensure that it matches client frame
 		serverFrame := mustReadFrame(t, conn, maxFrameSize)
-		assert.DeepEqual(t, serverFrame, clientFrame, "matching frames")
+		assert.DeepEqual(t, serverFrame, clientFrame, "frames should match")
 
 		// ensure closing handshake is completed when initiated by client, and
 		// that server echos client close status and reason
@@ -655,6 +655,8 @@ func TestCloseFrames(t *testing.T) {
 	}
 }
 
+var defaultOpts = websocket.Options{}
+
 func TestCloseHandshake(t *testing.T) {
 	t.Run("normal server-initiated closing handshake", func(t *testing.T) {
 		// this test ensures that calling Close() on the server will initiate
@@ -666,12 +668,10 @@ func TestCloseHandshake(t *testing.T) {
 		// finishes the handshake as expected
 		var wg sync.WaitGroup
 		wg.Add(1)
-		clientConn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientConn := clientServerTest(t, defaultOpts, func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
 			defer wg.Done()
-			ws, err := websocket.Accept(w, r, websocket.Options{})
-			assert.NilError(t, err)
 			assert.NilError(t, ws.Close())
-		}))
+		})
 
 		// client finishes closing handshake
 		mustReadCloseFrame(t, clientConn, websocket.StatusNormalClosure, nil)
@@ -689,15 +689,12 @@ func TestCloseHandshake(t *testing.T) {
 		// call, which returns io.EOF when the connection is closed.
 		var wg sync.WaitGroup
 		wg.Add(1)
-		clientConn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientConn := clientServerTest(t, defaultOpts, func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
 			defer wg.Done()
-			ws, err := websocket.Accept(w, r, websocket.Options{})
-			assert.NilError(t, err)
-
 			msg, err := ws.ReadMessage(t.Context())
 			assert.Error(t, err, io.EOF)
 			assert.Equal(t, msg, nil, "expected nil message")
-		}))
+		})
 
 		// client initiates closing handshake and expects an appropriate reply
 		// from the server
@@ -1006,7 +1003,7 @@ func mustReadFrame(t testing.TB, src io.Reader, maxPayloadLen int) *websocket.Fr
 
 func mustReadMessage(t testing.TB, ws *websocket.Websocket) *websocket.Message {
 	t.Helper()
-	msg, err := ws.ReadMessage(context.Background())
+	msg, err := ws.ReadMessage(t.Context())
 	assert.NilError(t, err)
 	return msg
 }
@@ -1156,6 +1153,71 @@ func setupRawConnWithHandler(t testing.TB, handler http.Handler) net.Conn {
 	return conn
 }
 
+type serverTestFunc func(testing.TB, *websocket.Websocket, net.Conn)
+
+func clientServerTest(t testing.TB, opts websocket.Options, f serverTestFunc) net.Conn {
+	t.Helper()
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer wg.Done()
+
+		// Manually re-implement websocket.Accept in order to capture the
+		// underlying net.Conn
+		clientKey, err := websocket.Handshake(w, r)
+		assert.NilError(t, err)
+
+		conn, _, err := w.(http.Hijacker).Hijack()
+		assert.NilError(t, err)
+
+		ws := websocket.New(conn, clientKey, websocket.ServerMode, opts)
+		f(t, ws, conn)
+	}))
+	t.Cleanup(func() {
+		// TODO: require all tests to cleanly close the connection?
+		// assertConnClosed(t, conn)
+		srv.Close()
+	})
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	assert.NilError(t, err)
+
+	// tie our conn to a bufio.Reader because we need to pass the latter into
+	// http.ReadResponse below, which may end up reading some websocket frame
+	// data in tests where the server writes to the conn immediately after the
+	// handshake (e.g. where the server immediately closes the connection).
+	//
+	// this wrapper helps ensure that any data read into the buffer is still
+	// available on subsequent reads directly from the conn.
+	conn, br := newConnWithBufferedReader(conn)
+
+	handshakeReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	for k, v := range map[string]string{
+		"Connection": "upgrade",
+		"Upgrade":    "websocket",
+		// "Sec-WebSocket-Key":     string(websocket.NewClientKey()),
+		"Sec-WebSocket-Key":     fmt.Sprintf("client-%03d", clientCount.Add(1)),
+		"Sec-WebSocket-Version": "13",
+	} {
+		handshakeReq.Header.Set(k, v)
+	}
+	// write the request line and headers, which should cause the
+	// server to respond with a 101 Switching Protocols response.
+	assert.NilError(t, handshakeReq.Write(conn))
+	resp, err := http.ReadResponse(br, nil)
+	assert.NilError(t, err)
+	assert.StatusCode(t, resp, http.StatusSwitchingProtocols)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+	}()
+
+	return conn
+}
 func newConnWithBufferedReader(conn net.Conn) (*connWithBufferedReader, *bufio.Reader) {
 	reader := bufio.NewReader(conn)
 	return &connWithBufferedReader{
