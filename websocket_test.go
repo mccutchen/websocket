@@ -285,6 +285,22 @@ func TestConnectionLimits(t *testing.T) {
 	})
 }
 
+func mustDoCloseHandshake(t testing.TB, conn net.Conn, status websocket.StatusCode, reason string) {
+	t.Helper()
+	var wantErr error
+	if reason != "" {
+		wantErr = errors.New(reason)
+	}
+	if status == 0 {
+		status = websocket.StatusNormalClosure
+	}
+	mustWriteFrame(t, conn, true, websocket.NewCloseFrame(status, reason))
+	log.Printf("XXX wrote close frame")
+	mustReadCloseFrame(t, conn, status, wantErr)
+	log.Printf("XXX read close frame")
+	assertConnClosed(t, conn)
+}
+
 func TestProtocolOkay(t *testing.T) {
 	var (
 		maxDuration    = 250 * time.Millisecond
@@ -306,24 +322,20 @@ func TestProtocolOkay(t *testing.T) {
 	t.Run("echo okay", func(t *testing.T) {
 		t.Parallel()
 
-		// write client frame
-		conn := setupRawConn(t, newOpts(t))
 		clientFrame := websocket.NewFrame(websocket.OpcodeText, true, []byte("hello"))
-		mustWriteFrame(t, conn, true, clientFrame)
-
-		// read server frame and ensure that it matches client frame
-		serverFrame := mustReadFrame(t, conn, maxFrameSize)
-		assert.DeepEqual(t, serverFrame, clientFrame, "frames should match")
-
-		// ensure closing handshake is completed when initiated by client, and
-		// that server echos client close status and reason
-		var (
-			status = websocket.StatusGoingAway
-			reason = "test reason"
-		)
-		mustWriteFrame(t, conn, true, websocket.NewCloseFrame(status, reason))
-		mustReadCloseFrame(t, conn, status, errors.New(reason))
-		assertConnClosed(t, conn)
+		clientConn := clientServerTest(t, newOpts(t), func(t testing.TB, ws *websocket.Websocket, serverConn net.Conn) {
+			// read server frame and ensure that it matches client frame
+			serverFrame := mustReadFrame(t, serverConn, maxFrameSize)
+			log.Printf("XXX read server frame: %s", serverFrame)
+			assert.DeepEqual(t, serverFrame, clientFrame, "frames should match")
+			// read next message to receive and process closing handshake
+			// initiated by client
+			_, err := ws.ReadMessage(t.Context())
+			assert.Error(t, err, io.EOF)
+		})
+		mustWriteFrame(t, clientConn, true, clientFrame)
+		log.Printf("XXX wrote client frame: %s", clientFrame)
+		mustDoCloseHandshake(t, clientConn, 0, "")
 	})
 
 	t.Run("fragmented echo okay", func(t *testing.T) {
@@ -336,20 +348,23 @@ func TestProtocolOkay(t *testing.T) {
 				MaxMessageSize: 256,
 				Hooks:          newTestHooks(t),
 			}
-			conn = setupRawConn(t, opts)
-			ws   = setupWebsocketClient(t, conn, opts)
 		)
 
 		msgPayload := make([]byte, 0, opts.MaxMessageSize)
 		msgPayload = append(msgPayload, bytes.Repeat([]byte("0"), opts.MaxFrameSize)...)
 		msgPayload = append(msgPayload, bytes.Repeat([]byte("1"), opts.MaxFrameSize)...)
 
-		mustWriteFrames(t, conn, true, []*websocket.Frame{
+		clientConn := clientServerTest(t, opts, func(t testing.TB, ws *websocket.Websocket, serverConn net.Conn) {
+			msg := mustReadMessage(t, ws)
+			assert.DeepEqual(t, msg.Payload, msgPayload, "incorrect messaage payload")
+			assert.NilError(t, ws.Close())
+		})
+
+		mustWriteFrames(t, clientConn, true, []*websocket.Frame{
 			websocket.NewFrame(websocket.OpcodeText, false, msgPayload[:opts.MaxFrameSize]),
 			websocket.NewFrame(websocket.OpcodeContinuation, true, msgPayload[opts.MaxFrameSize:]),
 		})
-		msg := mustReadMessage(t, ws)
-		assert.DeepEqual(t, msg.Payload, msgPayload, "incorrect messaage payload")
+		mustReadCloseFrame(t, clientConn, websocket.StatusNormalClosure, nil)
 	})
 
 	t.Run("utf8 handling okay", func(t *testing.T) {
@@ -1027,7 +1042,7 @@ func mustWriteFrames(t testing.TB, dst io.Writer, masked bool, frames []*websock
 // mustReadCloseFrame ensures that we can read a close frame from the given
 // reader and optionally ensures that the close frame includes a specific
 // status code and message.
-func mustReadCloseFrame(t *testing.T, r io.Reader, wantCode websocket.StatusCode, wantErr error) {
+func mustReadCloseFrame(t testing.TB, r io.Reader, wantCode websocket.StatusCode, wantErr error) {
 	t.Helper()
 
 	// All control frames MUST have a payload length of 125 bytes or less
@@ -1159,7 +1174,6 @@ func clientServerTest(t testing.TB, opts websocket.Options, f serverTestFunc) ne
 	t.Helper()
 
 	var wg sync.WaitGroup
-
 	wg.Add(1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer wg.Done()
@@ -1181,7 +1195,7 @@ func clientServerTest(t testing.TB, opts websocket.Options, f serverTestFunc) ne
 		srv.Close()
 	})
 
-	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	clientConn, err := net.Dial("tcp", srv.Listener.Addr().String())
 	assert.NilError(t, err)
 
 	// tie our conn to a bufio.Reader because we need to pass the latter into
@@ -1191,7 +1205,7 @@ func clientServerTest(t testing.TB, opts websocket.Options, f serverTestFunc) ne
 	//
 	// this wrapper helps ensure that any data read into the buffer is still
 	// available on subsequent reads directly from the conn.
-	conn, br := newConnWithBufferedReader(conn)
+	clientConn, br := newConnWithBufferedReader(clientConn)
 
 	handshakeReq := httptest.NewRequest(http.MethodGet, "/", nil)
 	for k, v := range map[string]string{
@@ -1205,18 +1219,12 @@ func clientServerTest(t testing.TB, opts websocket.Options, f serverTestFunc) ne
 	}
 	// write the request line and headers, which should cause the
 	// server to respond with a 101 Switching Protocols response.
-	assert.NilError(t, handshakeReq.Write(conn))
+	assert.NilError(t, handshakeReq.Write(clientConn))
 	resp, err := http.ReadResponse(br, nil)
 	assert.NilError(t, err)
 	assert.StatusCode(t, resp, http.StatusSwitchingProtocols)
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-	}()
-
-	return conn
+	return clientConn
 }
 func newConnWithBufferedReader(conn net.Conn) (*connWithBufferedReader, *bufio.Reader) {
 	reader := bufio.NewReader(conn)
@@ -1251,28 +1259,36 @@ func newTestHooks(t testing.TB) websocket.Hooks {
 	t.Helper()
 	return websocket.Hooks{
 		OnCloseHandshakeStart: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
-			t.Logf("HOOK: client=%s OnCloseHandshakeStart code=%v err=%q", key, code, err)
+			// t.Logf("HOOK: client=%s OnCloseHandshakeStart code=%v err=%q", key, code, err)
+			log.Printf("HOOK: client=%s OnCloseHandshakeStart code=%v err=%q", key, code, err)
 		},
 		OnCloseHandshakeDone: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
-			t.Logf("HOOK: client=%s OnCloseHandshakeDone code=%v err=%q", key, code, err)
+			// t.Logf("HOOK: client=%s OnCloseHandshakeDone code=%v err=%q", key, code, err)
+			log.Printf("HOOK: client=%s OnCloseHandshakeDone code=%v err=%q", key, code, err)
 		},
 		OnReadError: func(key websocket.ClientKey, err error) {
-			t.Logf("HOOK: client=%s OnReadError err=%v", key, err)
+			// t.Logf("HOOK: client=%s OnReadError err=%v", key, err)
+			log.Printf("HOOK: client=%s OnReadError err=%v", key, err)
 		},
 		OnReadFrame: func(key websocket.ClientKey, frame *websocket.Frame) {
-			t.Logf("HOOK: client=%s OnReadFrame frame=%v", key, frame)
+			// t.Logf("HOOK: client=%s OnReadFrame frame=%v", key, frame)
+			log.Printf("HOOK: client=%s OnReadFrame frame=%v", key, frame)
 		},
 		OnReadMessage: func(key websocket.ClientKey, msg *websocket.Message) {
-			t.Logf("HOOK: client=%s OnReadMessage msg=%v", key, msg)
+			// t.Logf("HOOK: client=%s OnReadMessage msg=%v", key, msg)
+			log.Printf("HOOK: client=%s OnReadMessage msg=%v", key, msg)
 		},
 		OnWriteError: func(key websocket.ClientKey, err error) {
-			t.Logf("HOOK: client=%s OnWriteError err=%v", key, err)
+			// t.Logf("HOOK: client=%s OnWriteError err=%v", key, err)
+			log.Printf("HOOK: client=%s OnWriteError err=%v", key, err)
 		},
 		OnWriteFrame: func(key websocket.ClientKey, frame *websocket.Frame) {
-			t.Logf("HOOK: client=%s OnWriteFrame frame=%v", key, frame)
+			// t.Logf("HOOK: client=%s OnWriteFrame frame=%v", key, frame)
+			log.Printf("HOOK: client=%s OnWriteFrame frame=%v", key, frame)
 		},
 		OnWriteMessage: func(key websocket.ClientKey, msg *websocket.Message) {
-			t.Logf("HOOK: client=%s OnWriteMessage msg=%v", key, msg)
+			// t.Logf("HOOK: client=%s OnWriteMessage msg=%v", key, msg)
+			log.Printf("HOOK: client=%s OnWriteMessage msg=%v", key, msg)
 		},
 	}
 }
