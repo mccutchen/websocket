@@ -60,7 +60,7 @@ var ErrConnectionClosed = errors.New("websocket: connection not open for reading
 
 // Websocket is a websocket connection.
 type Websocket struct {
-	conn io.ReadWriteCloser
+	conn net.Conn
 	mode Mode
 
 	// connection state, protected by mutex
@@ -106,15 +106,10 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Websocket, e
 //
 // Prefer the higher-level [Accept] API when possible. See also [Handshake] if
 // using New directly.
-func New(src io.ReadWriteCloser, clientKey ClientKey, mode Mode, opts Options) *Websocket {
+func New(conn net.Conn, clientKey ClientKey, mode Mode, opts Options) *Websocket {
 	setDefaults(&opts)
-	if opts.ReadTimeout != 0 || opts.WriteTimeout != 0 || opts.CloseTimeout != 0 {
-		if _, ok := src.(deadliner); !ok {
-			panic("ReadTimeout/WriteTimeout/CloseTimeout may only be used when input source supports setting read/write deadlines")
-		}
-	}
 	return &Websocket{
-		conn:           src,
+		conn:           conn,
 		state:          connStateOpen,
 		mode:           mode,
 		clientKey:      clientKey,
