@@ -354,7 +354,10 @@ func TestProtocolOkay(t *testing.T) {
 		msgPayload = append(msgPayload, bytes.Repeat([]byte("0"), opts.MaxFrameSize)...)
 		msgPayload = append(msgPayload, bytes.Repeat([]byte("1"), opts.MaxFrameSize)...)
 
+		var wg sync.WaitGroup
+		wg.Add(1)
 		clientConn := clientServerTest(t, opts, func(t testing.TB, ws *websocket.Websocket, serverConn net.Conn) {
+			defer wg.Done()
 			msg := mustReadMessage(t, ws)
 			assert.DeepEqual(t, msg.Payload, msgPayload, "incorrect messaage payload")
 			assert.NilError(t, ws.Close())
@@ -365,6 +368,7 @@ func TestProtocolOkay(t *testing.T) {
 			websocket.NewFrame(websocket.OpcodeContinuation, true, msgPayload[opts.MaxFrameSize:]),
 		})
 		mustReadCloseFrame(t, clientConn, websocket.StatusNormalClosure, nil)
+		wg.Wait()
 	})
 
 	t.Run("utf8 handling okay", func(t *testing.T) {
