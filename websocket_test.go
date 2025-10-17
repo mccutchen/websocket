@@ -547,7 +547,6 @@ func TestProtocolErrors(t *testing.T) {
 		wantCloseReason error
 
 		// further customize behavior
-		opts     func(*testing.T) websocket.Options
 		unmasked bool
 	}{
 		"unexpected continuation frame": {
@@ -627,29 +626,28 @@ func TestProtocolErrors(t *testing.T) {
 		},
 	}
 	for name, tc := range testCases {
-		if tc.opts == nil {
-			tc.opts = newOpts
-		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			var opts websocket.Options
-			if tc.opts != nil {
-				opts = tc.opts(t)
-			} else {
-				opts = newOpts(t)
-			}
-			conn := setupRawConn(t, opts)
 
-			// write erronous or invalid frames to the connection, which should
-			// cause the server to start the closing handshake
-			mustWriteFrames(t, conn, !tc.unmasked, tc.frames)
-
-			// read expected close frame
-			mustReadCloseFrame(t, conn, tc.wantCloseCode, tc.wantCloseReason)
-
-			// server closes connection immediately on protocol errors,
-			// without waiting for client to reply
-			assertConnClosed(t, conn)
+			clientServerTest{
+				// client writes erroneous our invalid frames, which should
+				// cause the server to send a close frame.
+				//
+				// for these protocol-level errors, the server closes the
+				// conection immediately after sending its close frame, not
+				// waiting for the client to reply.
+				clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+					mustWriteFrames(t, conn, !tc.unmasked, tc.frames)
+					mustReadCloseFrame(t, conn, tc.wantCloseCode, tc.wantCloseReason)
+					assertConnClosed(t, conn)
+				},
+				// server just runs echo handler, which should process all
+				// protocol errors automatically
+				serverOpts: newOpts(t),
+				serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+					assert.Error(t, ws.Serve(t.Context(), websocket.EchoHandler), tc.wantCloseReason)
+				},
+			}.Run(t)
 		})
 	}
 }
