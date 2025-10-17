@@ -373,57 +373,97 @@ func TestProtocolOkay(t *testing.T) {
 	t.Run("utf8 handling okay", func(t *testing.T) {
 		t.Parallel()
 		var (
-			opts = newOpts(t)
-			conn = setupRawConn(t, opts)
-			ws   = setupWebsocketClient(t, conn, opts)
+			maxFrameSize   = 128
+			maxMessageSize = 256
 		)
 
-		// valid UTF-8 accepted and echoed back
-		{
-			frame := websocket.NewFrame(websocket.OpcodeText, true, []byte("Iñtërnâtiônàlizætiøn"))
-			mustWriteFrame(t, conn, true, frame)
-			msg := mustReadMessage(t, ws)
-			assert.DeepEqual(t, msg.Payload, frame.Payload, "incorrect message payloady")
-		}
+		clientServerTest{
+			clientOpts: websocket.Options{
+				MaxFrameSize:   maxFrameSize,
+				MaxMessageSize: maxMessageSize,
+				Hooks:          newTestHooks(t),
+			},
+			clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+				// valid UTF-8 accepted and echoed back
+				{
+					frame := websocket.NewFrame(websocket.OpcodeText, true, []byte("Iñtërnâtiônàlizætiøn"))
+					mustWriteFrame(t, conn, true, frame)
+					msg := mustReadMessage(t, ws)
+					assert.DeepEqual(t, msg.Payload, frame.Payload, "incorrect message payloady")
+				}
 
-		// valid UTF-8 fragmented on codepoint boundaries is okay
-		{
-			mustWriteFrames(t, conn, true, []*websocket.Frame{
-				websocket.NewFrame(websocket.OpcodeText, false, []byte("Iñtër")),
+				// valid UTF-8 fragmented on codepoint boundaries is okay
+				{
+					mustWriteFrames(t, conn, true, []*websocket.Frame{
+						websocket.NewFrame(websocket.OpcodeText, false, []byte("Iñtër")),
 
-				websocket.NewFrame(websocket.OpcodeContinuation, false, []byte("nâtiônàl")),
+						websocket.NewFrame(websocket.OpcodeContinuation, false, []byte("nâtiônàl")),
 
-				websocket.NewFrame(websocket.OpcodeContinuation, true, []byte("izætiøn")),
-			})
-			msg := mustReadMessage(t, ws)
-			assert.DeepEqual(t, msg.Payload, []byte("Iñtërnâtiônàlizætiøn"), "incorrect message payloady")
-		}
+						websocket.NewFrame(websocket.OpcodeContinuation, true, []byte("izætiøn")),
+					})
+					msg := mustReadMessage(t, ws)
+					assert.DeepEqual(t, msg.Payload, []byte("Iñtërnâtiônàlizætiøn"), "incorrect message payloady")
+				}
 
-		// valid UTF-8 fragmented in the middle of a codepoint is reassembled
-		// into a valid message
-		{
-			mustWriteFrames(t, conn, true, []*websocket.Frame{
-				websocket.NewFrame(websocket.OpcodeText, false, []byte("jalape\xc3")),
+				// valid UTF-8 fragmented in the middle of a codepoint is reassembled
+				// into a valid message
+				{
+					mustWriteFrames(t, conn, true, []*websocket.Frame{
+						websocket.NewFrame(websocket.OpcodeText, false, []byte("jalape\xc3")),
 
-				websocket.NewFrame(websocket.OpcodeContinuation, true, []byte("\xb1o")),
-			})
-			msg := mustReadMessage(t, ws)
-			assert.DeepEqual(t, msg.Payload, []byte("jalapeño"), "payload")
-		}
+						websocket.NewFrame(websocket.OpcodeContinuation, true, []byte("\xb1o")),
+					})
+					msg := mustReadMessage(t, ws)
+					assert.DeepEqual(t, msg.Payload, []byte("jalapeño"), "payload")
+				}
+			},
+
+			serverOpts: websocket.Options{
+				MaxFrameSize:   maxFrameSize,
+				MaxMessageSize: maxMessageSize,
+				Hooks:          newTestHooks(t),
+			},
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				// echo 3 messages
+				for i := 0; i < 3; i++ {
+					msg := mustReadMessage(t, ws)
+					assert.NilError(t, ws.WriteMessage(t.Context(), msg))
+				}
+			},
+		}.Run(t)
 	})
 
 	t.Run("binary messages can be invalid UTF-8", func(t *testing.T) {
 		t.Parallel()
 		var (
-			opts = newOpts(t)
-			conn = setupRawConn(t, opts)
-			ws   = setupWebsocketClient(t, conn, opts)
+			maxFrameSize   = 128
+			maxMessageSize = 256
 		)
-		frame := websocket.NewFrame(websocket.OpcodeBinary, true, []byte{0xc3})
-		mustWriteFrame(t, conn, true, frame)
-		msg := mustReadMessage(t, ws)
-		assert.Equal(t, msg.Binary, true, "binary message")
-		assert.DeepEqual(t, msg.Payload, frame.Payload, "binary payload")
+
+		clientServerTest{
+			clientOpts: websocket.Options{
+				MaxFrameSize:   maxFrameSize,
+				MaxMessageSize: maxMessageSize,
+				Hooks:          newTestHooks(t),
+			},
+			clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+				frame := websocket.NewFrame(websocket.OpcodeBinary, true, []byte{0xc3})
+				mustWriteFrame(t, conn, true, frame)
+				msg := mustReadMessage(t, ws)
+				assert.Equal(t, msg.Binary, true, "binary message")
+				assert.DeepEqual(t, msg.Payload, frame.Payload, "binary payload")
+			},
+
+			serverOpts: websocket.Options{
+				MaxFrameSize:   maxFrameSize,
+				MaxMessageSize: maxMessageSize,
+				Hooks:          newTestHooks(t),
+			},
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				msg := mustReadMessage(t, ws)
+				assert.NilError(t, ws.WriteMessage(t.Context(), msg))
+			},
+		}.Run(t)
 	})
 
 	t.Run("jumbo frames okay", func(t *testing.T) {
@@ -433,53 +473,110 @@ func TestProtocolOkay(t *testing.T) {
 		// payloads of length 65536 (64 KiB) or more must be encoded as 8
 		// bytes
 		jumboSize := 64 << 10 // == 64 KiB == 65536
-		conn := setupRawConn(t, websocket.Options{
-			MaxFrameSize:   jumboSize,
-			MaxMessageSize: jumboSize,
-			Hooks:          newTestHooks(t),
-		})
-		clientFrame := websocket.NewFrame(websocket.OpcodeText, true, bytes.Repeat([]byte("*"), jumboSize))
-		mustWriteFrame(t, conn, true, clientFrame)
-		respFrame := mustReadFrame(t, conn, jumboSize)
-		assert.DeepEqual(t, respFrame.Payload, clientFrame.Payload, "payload")
+
+		clientServerTest{
+			clientOpts: websocket.Options{
+				MaxFrameSize:   jumboSize,
+				MaxMessageSize: jumboSize,
+				Hooks:          newTestHooks(t),
+			},
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				clientFrame := websocket.NewFrame(websocket.OpcodeText, true, bytes.Repeat([]byte("*"), jumboSize))
+				mustWriteFrame(t, conn, true, clientFrame)
+				respFrame := mustReadFrame(t, conn, jumboSize)
+				assert.DeepEqual(t, respFrame.Payload, clientFrame.Payload, "payload")
+			},
+
+			serverOpts: websocket.Options{
+				MaxFrameSize:   jumboSize,
+				MaxMessageSize: jumboSize,
+				Hooks:          newTestHooks(t),
+			},
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				msg := mustReadMessage(t, ws)
+				assert.NilError(t, ws.WriteMessage(t.Context(), msg))
+			},
+		}.Run(t)
 	})
 
 	t.Run("ping frames handled between fragments", func(t *testing.T) {
 		t.Parallel()
 		var (
-			opts = newOpts(t)
-			conn = setupRawConn(t, opts)
-			ws   = setupWebsocketClient(t, conn, opts)
+			maxFrameSize   = 128
+			maxMessageSize = 256
 		)
-		// write two fragmented frames with a ping control frame in between
-		mustWriteFrames(t, conn, true, []*websocket.Frame{
-			websocket.NewFrame(websocket.OpcodeText, false, []byte("0")),
-			websocket.NewFrame(websocket.OpcodePing, true, nil),
-			websocket.NewFrame(websocket.OpcodeContinuation, true, []byte("1")),
-		})
 
-		// should get a pong control frame first, even though ping was sent
-		// as second frame
-		pongFrame := mustReadFrame(t, conn, 125)
-		assert.Equal(t, pongFrame.Opcode(), websocket.OpcodePong, "opcode")
+		clientServerTest{
+			clientOpts: websocket.Options{
+				MaxFrameSize:   maxFrameSize,
+				MaxMessageSize: maxMessageSize,
+				Hooks:          newTestHooks(t),
+			},
+			clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+				// write two fragmented frames with a ping control frame in between
+				mustWriteFrames(t, conn, true, []*websocket.Frame{
+					websocket.NewFrame(websocket.OpcodeText, false, []byte("0")),
+					websocket.NewFrame(websocket.OpcodePing, true, nil),
+					websocket.NewFrame(websocket.OpcodeContinuation, true, []byte("1")),
+				})
 
-		// then should get the echo'd message from the two fragments
-		msg := mustReadMessage(t, ws)
-		assert.DeepEqual(t, msg.Payload, []byte("01"), "incorrect messaage payload")
+				// should get a pong control frame first, even though ping was sent
+				// as second frame
+				pongFrame := mustReadFrame(t, conn, 125)
+				assert.Equal(t, pongFrame.Opcode(), websocket.OpcodePong, "opcode")
+
+				// then should get the echo'd message from the two fragments
+				msg := mustReadMessage(t, ws)
+				assert.DeepEqual(t, msg.Payload, []byte("01"), "incorrect messaage payload")
+			},
+
+			serverOpts: websocket.Options{
+				MaxFrameSize:   maxFrameSize,
+				MaxMessageSize: maxMessageSize,
+				Hooks:          newTestHooks(t),
+			},
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				msg := mustReadMessage(t, ws)
+				assert.NilError(t, ws.WriteMessage(t.Context(), msg))
+			},
+		}.Run(t)
 	})
 
 	t.Run("pong frames from client are ignored", func(t *testing.T) {
 		t.Parallel()
-		// write two frames, pong control frame followed by text frame.
-		//
-		// pong frame should be ignored, text frame should be echoed
-		conn := setupRawConn(t, newOpts(t))
-		mustWriteFrames(t, conn, true, []*websocket.Frame{
-			websocket.NewFrame(websocket.OpcodePong, true, nil),
-			websocket.NewFrame(websocket.OpcodeText, true, []byte("0")),
-		})
-		respFrame := mustReadFrame(t, conn, 10)
-		assert.DeepEqual(t, respFrame.Payload, []byte("0"), "payload")
+		var (
+			maxFrameSize   = 128
+			maxMessageSize = 256
+		)
+
+		clientServerTest{
+			clientOpts: websocket.Options{
+				MaxFrameSize:   maxFrameSize,
+				MaxMessageSize: maxMessageSize,
+				Hooks:          newTestHooks(t),
+			},
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				// write two frames, pong control frame followed by text frame.
+				//
+				// pong frame should be ignored, text frame should be echoed
+				mustWriteFrames(t, conn, true, []*websocket.Frame{
+					websocket.NewFrame(websocket.OpcodePong, true, nil),
+					websocket.NewFrame(websocket.OpcodeText, true, []byte("0")),
+				})
+				respFrame := mustReadFrame(t, conn, 10)
+				assert.DeepEqual(t, respFrame.Payload, []byte("0"), "payload")
+			},
+
+			serverOpts: websocket.Options{
+				MaxFrameSize:   maxFrameSize,
+				MaxMessageSize: maxMessageSize,
+				Hooks:          newTestHooks(t),
+			},
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				msg := mustReadMessage(t, ws)
+				assert.NilError(t, ws.WriteMessage(t.Context(), msg))
+			},
+		}.Run(t)
 	})
 }
 
