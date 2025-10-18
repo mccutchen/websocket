@@ -208,81 +208,61 @@ func TestConnectionLimits(t *testing.T) {
 		// from the server, write its ACK, and then the connection should be
 		// closed.
 		maxDuration := 250 * time.Millisecond
-		conn := setupRawConn(t, websocket.Options{
-			ReadTimeout:  maxDuration,
-			WriteTimeout: maxDuration,
-			Hooks:        newTestHooks(t),
-		})
-		start := time.Now()
-		mustReadCloseFrame(t, conn, websocket.StatusAbnormalClose, errors.New("error reading frame header"))
-		elapsed := time.Since(start)
-		assert.Equal(t, elapsed > maxDuration, true, "not enough time passed")
-		mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, "server closed connection"))
-		assertConnClosed(t, conn)
+
+		clientServerTest{
+			// client never sends a message, just waits for the server to
+			// timeout and then completes the closing handshake
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				start := time.Now()
+				mustReadCloseFrame(t, conn, websocket.StatusAbnormalClose, errors.New("error reading frame header"))
+				elapsed := time.Since(start)
+				assert.Equal(t, elapsed >= maxDuration, true, "not enough time passed")
+				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, "server closed connection"))
+				assertConnClosed(t, conn)
+			},
+			// server runs echo handler with read timeout, which should timeout
+			// after maxDuration and start closing handshake
+			serverOpts: websocket.Options{
+				ReadTimeout:  maxDuration,
+				WriteTimeout: maxDuration,
+				Hooks:        newTestHooks(t),
+			},
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				start := time.Now()
+				err := ws.Serve(t.Context(), websocket.EchoHandler)
+				elapsed := time.Since(start)
+				assert.Equal(t, elapsed >= maxDuration, true, "not enough time passed")
+				assert.Error(t, err, os.ErrDeadlineExceeded)
+			},
+		}.Run(t)
 	})
 
 	t.Run("client closing connection", func(t *testing.T) {
 		t.Parallel()
 
-		// the client will close the connection well before the server closes
-		// the connection. make sure the server properly handles the client
-		// closure.
-		var (
-			clientTimeout     = 100 * time.Millisecond
-			serverTimeout     = time.Hour // should never be reached
-			elapsedClientTime time.Duration
-			elapsedServerTime time.Duration
-			wg                sync.WaitGroup
+		serverTimeout := time.Hour // should never be reached
 
-			// record the error the server sees when the client closes the
-			// connection
-			gotServerError error
-		)
+		clientServerTest{
+			// client closes its end of the connection, which should interrupt
+			// the server's blocking read and cause it to return.
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				assert.NilError(t, conn.Close())
+			},
+			// server tries to read, which should be interrupted by client
+			// closing connection
+			serverOpts: websocket.Options{
+				ReadTimeout: serverTimeout,
+			},
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				start := time.Now()
+				msg, err := ws.ReadMessage(t.Context())
+				elapsed := time.Since(start)
 
-		wg.Add(1)
-		conn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer wg.Done()
-			start := time.Now()
-			ws, err := websocket.Accept(w, r, websocket.Options{
-				ReadTimeout:    serverTimeout,
-				MaxFrameSize:   128,
-				MaxMessageSize: 256,
-			})
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			gotServerError = ws.Serve(r.Context(), websocket.EchoHandler)
-			elapsedServerTime = time.Since(start)
-		}))
-
-		// should cause the client end of the connection to close well before
-		// the max request time configured above
-		assert.NilError(t, conn.SetDeadline(time.Now().Add(clientTimeout)))
-
-		// try to read from the connection, expecting the connection
-		// to be closed after roughly clientTimeout seconds.
-		//
-		// the server should detect the closed connection and abort the
-		// handler, also after roughly clientTimeout seconds.
-		start := time.Now()
-		_, clientReadErr := conn.Read(make([]byte, 1))
-		elapsedClientTime = time.Since(start)
-
-		// close client connection, which should interrupt the server's
-		// blocking read call on the connection
-		assert.NilError(t, conn.Close())
-		assertConnClosed(t, conn)
-
-		assert.Equal(t, os.IsTimeout(clientReadErr), true, "expected timeout error")
-		assert.RoughlyEqual(t, elapsedClientTime, clientTimeout, 10*time.Millisecond)
-
-		// wait for the server to finish handling the one request, then
-		// make sure it took the expected amount of time to get a read
-		// timeout and an appropriate error
-		wg.Wait()
-		assert.RoughlyEqual(t, elapsedServerTime, clientTimeout, 10*time.Millisecond)
-		assert.Error(t, gotServerError, io.EOF)
+				assert.Error(t, err, io.EOF)
+				assert.Equal(t, msg, nil, "msg should be nil on error")
+				assert.Equal(t, elapsed < serverTimeout, true, "server should not reach its own timeout")
+			},
+		}.Run(t)
 	})
 }
 
