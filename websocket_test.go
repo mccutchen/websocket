@@ -888,52 +888,47 @@ func TestCloseHandshake(t *testing.T) {
 
 func TestNetworkErrors(t *testing.T) {
 	t.Run("a write error should cause the server to close the connection", func(t *testing.T) {
+		t.Parallel()
+
 		// the error we will inject into the wrapped writer, which will be
 		// verified in the close frame
 		writeErr := errors.New("simulated write failure")
 
-		conn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Manually re-implement websocket.Accept in order to wrap the
-			// actual conn with one that will let us inject errors
-			clientKey, err := websocket.Handshake(w, r)
-			assert.NilError(t, err)
-
-			hj := w.(http.Hijacker)
-			realConn, _, err := hj.Hijack()
-			assert.NilError(t, err)
-
-			// Our wrapped conn will fail on the first write and succeed on
-			// any subsequent writes, so echoing the incoming frame will fail
-			// but writing the subsequent close frame will succeed.
-			//
-			// Note: I'm not sure it actually makes sense to try writing the
-			// close frame after an initial write error, but that's what we
-			// do for now!
-			var writeCount atomic.Int64
-			fakeConn := &wrappedConn{
-				conn: realConn,
-				write: func(b []byte) (int, error) {
-					count := writeCount.Add(1)
-					// return an error on first write
-					if count == 1 {
-						return 0, writeErr
-					}
-					// otherwise pass thru to underlying conn
-					return realConn.Write(b)
-				},
-			}
-
-			ws := websocket.New(fakeConn, clientKey, websocket.ServerMode, websocket.Options{})
-			_ = ws.Serve(r.Context(), websocket.EchoHandler)
-		}))
-
-		// We write a frame, but the server's attempt to write the echo
-		// response should fail via fakeConn above.
-		//
-		// The _second_ write, writing the close frame before closing the
-		// underlying conn, should succceed.
-		mustWriteFrame(t, conn, true, websocket.NewFrame(websocket.OpcodeText, true, []byte("hello")))
-		mustReadCloseFrame(t, conn, websocket.StatusAbnormalClose, writeErr)
+		clientServerTest{
+			// client writes a frame, but the server's attempt to write the echo
+			// response should fail. The server should then write a close frame
+			// (which succeeds). Client reads the close frame and then closes
+			// the connection to unblock the server.
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				mustWriteFrame(t, conn, true, websocket.NewFrame(websocket.OpcodeText, true, []byte("hello")))
+				mustReadCloseFrame(t, conn, websocket.StatusAbnormalClose, writeErr)
+				// reply to the close frame to complete the closing handshake
+				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
+				assertConnClosed(t, conn)
+			},
+			// server conn has write failures injected: first write fails,
+			// subsequent writes succeed. This allows the echo handler to fail
+			// on the first write but succeed when writing the close frame.
+			serverConn: func(conn net.Conn) net.Conn {
+				var writeCount atomic.Int64
+				return &wrappedConn{
+					conn: conn,
+					write: func(b []byte) (int, error) {
+						count := writeCount.Add(1)
+						// return an error on first write
+						if count == 1 {
+							return 0, writeErr
+						}
+						// otherwise pass thru to underlying conn
+						return conn.Write(b)
+					},
+				}
+			},
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				err := ws.Serve(t.Context(), websocket.EchoHandler)
+				assert.Error(t, err, writeErr)
+			},
+		}.Run(t)
 	})
 
 	t.Run("handle context cancelation between reads of multi frame message", func(t *testing.T) {
@@ -945,25 +940,21 @@ func TestNetworkErrors(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
-		var wg sync.WaitGroup
-		wg.Add(1)
-		conn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer wg.Done()
-			ws, err := websocket.Accept(w, r, websocket.Options{})
-			assert.NilError(t, err)
-			msg, err := ws.ReadMessage(ctx) // use context from test setup, not from request
-			assert.Error(t, err, context.Canceled)
-			assert.Equal(t, msg, nil, "expected nil message")
-		}))
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			mustWriteFrame(t, conn, true, websocket.NewFrame(websocket.OpcodeText, false, []byte("frame 1")))
-			cancel()
-			mustReadCloseFrame(t, conn, websocket.StatusInternalError, context.Canceled)
-		}()
-		wg.Wait()
+		clientServerTest{
+			// client writes partial message, cancels context, then reads close frame
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				mustWriteFrame(t, conn, true, websocket.NewFrame(websocket.OpcodeText, false, []byte("frame 1")))
+				cancel()
+				mustReadCloseFrame(t, conn, websocket.StatusInternalError, context.Canceled)
+			},
+			// server tries to read message with the cancelable context, which
+			// should be canceled while waiting for the continuation frame.
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				msg, err := ws.ReadMessage(ctx) // use context from test setup, not from request
+				assert.Error(t, err, context.Canceled)
+				assert.Equal(t, msg, nil, "expected nil message")
+			},
+		}.Run(t)
 	})
 }
 
