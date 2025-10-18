@@ -652,7 +652,7 @@ func TestProtocolErrors(t *testing.T) {
 	}
 }
 
-func TestCloseFrames(t *testing.T) {
+func TestCloseFrameValidation(t *testing.T) {
 	// construct a special close frame with an invalid utf8 reason outside of
 	// test table because it can't be defined inline in a struct literal
 	frameWithInvalidUTF8Reason := func() *websocket.Frame {
@@ -663,51 +663,69 @@ func TestCloseFrames(t *testing.T) {
 	}
 
 	testCases := map[string]struct {
-		frame      *websocket.Frame
-		wantCode   websocket.StatusCode
-		wantReason string
+		frame    *websocket.Frame
+		wantCode websocket.StatusCode
+		wantErr  error
 	}{
 		"empty payload ok": {
 			frame:    websocket.NewFrame(websocket.OpcodeClose, true, nil),
 			wantCode: websocket.StatusNormalClosure,
 		},
 		"one byte payload is illegal": {
-			frame:      websocket.NewFrame(websocket.OpcodeClose, true, []byte("X")),
-			wantCode:   websocket.StatusProtocolError,
-			wantReason: websocket.ErrClosePayloadInvalid.Error(),
+			frame:    websocket.NewFrame(websocket.OpcodeClose, true, []byte("X")),
+			wantCode: websocket.StatusProtocolError,
+			wantErr:  websocket.ErrClosePayloadInvalid,
 		},
 		"invalid close code (too low)": {
-			frame:      websocket.NewCloseFrame(websocket.StatusCode(999), ""),
-			wantCode:   websocket.StatusProtocolError,
-			wantReason: websocket.ErrCloseStatusInvalid.Error(),
+			frame:    websocket.NewCloseFrame(websocket.StatusCode(999), ""),
+			wantCode: websocket.StatusProtocolError,
+			wantErr:  websocket.ErrCloseStatusInvalid,
 		},
 		"invalid close code (too high))": {
-			frame:      websocket.NewCloseFrame(websocket.StatusCode(5001), ""),
-			wantCode:   websocket.StatusProtocolError,
-			wantReason: websocket.ErrCloseStatusInvalid.Error(),
+			frame:    websocket.NewCloseFrame(websocket.StatusCode(5001), ""),
+			wantCode: websocket.StatusProtocolError,
+			wantErr:  websocket.ErrCloseStatusInvalid,
 		},
 		"reserved close code": {
-			frame:      websocket.NewCloseFrame(websocket.StatusCode(1015), ""),
-			wantCode:   websocket.StatusProtocolError,
-			wantReason: websocket.ErrCloseStatusReserved.Error(),
+			frame:    websocket.NewCloseFrame(websocket.StatusCode(1015), ""),
+			wantCode: websocket.StatusProtocolError,
+			wantErr:  websocket.ErrCloseStatusReserved,
 		},
 		"invalid utf8 in close reason": {
-			frame:      frameWithInvalidUTF8Reason(),
-			wantCode:   websocket.StatusInvalidFramePayload,
-			wantReason: websocket.ErrInvalidFramePayload.Error(),
+			frame:    frameWithInvalidUTF8Reason(),
+			wantCode: websocket.StatusInvalidFramePayload,
+			wantErr:  websocket.ErrInvalidFramePayload,
 		},
 	}
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			conn := setupRawConn(t, websocket.Options{})
-			t.Logf("sending close frame %v", tc.frame)
-			assert.NilError(t, websocket.WriteFrame(conn, websocket.NewMaskingKey(), tc.frame))
-			var wantErr error
-			if tc.wantReason != "" {
-				wantErr = errors.New(tc.wantReason)
-			}
-			mustReadCloseFrame(t, conn, tc.wantCode, wantErr)
+			clientServerTest{
+				// client writes erroneous our invalid frames, which should
+				// cause the server to send a close frame.
+				//
+				// for these protocol-level errors, the server closes the
+				// conection immediately after sending its close frame, not
+				// waiting for the client to reply.
+				clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+					assert.NilError(t, websocket.WriteFrame(conn, websocket.NewMaskingKey(), tc.frame))
+					mustReadCloseFrame(t, conn, tc.wantCode, tc.wantErr)
+				},
+				// server just runs echo handler, which should process all
+				// protocol errors automatically
+				serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+					wantErr := tc.wantErr
+					if wantErr == nil {
+						// if we do not expect an error, Serve() should return
+						// io.EOF on the server's end of the connection.
+						//
+						// TODO: it probably shouldn't return an error, if
+						// this is expected behavior.
+						wantErr = io.EOF
+					}
+					assert.Error(t, ws.Serve(t.Context(), websocket.EchoHandler), wantErr)
+				},
+			}.Run(t)
 		})
 	}
 }
