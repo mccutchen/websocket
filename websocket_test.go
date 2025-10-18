@@ -1174,7 +1174,7 @@ func (cst clientServerTest) Run(t testing.TB) {
 		clientConn, err := net.Dial("tcp", srv.Listener.Addr().String())
 		assert.NilError(t, err)
 		t.Cleanup(func() {
-			clientConn.Close()
+			_ = clientConn.Close()
 		})
 
 		// optionally wrap client conn before handing it off to test function
@@ -1234,13 +1234,6 @@ func (c *connWithBufferedReader) Read(b []byte) (int, error) {
 }
 
 var _ net.Conn = &connWithBufferedReader{}
-
-// setupWebsocketClient wraps the given conn in a websocket client. The handshake and
-// upgrade process must already be complete (see setupRawConn).
-func setupWebsocketClient(t testing.TB, conn net.Conn, opts websocket.Options) *websocket.Websocket {
-	t.Helper()
-	return websocket.New(conn, websocket.ClientKey("test-client"), websocket.ClientMode, opts)
-}
 
 func newTestHooks(t testing.TB) websocket.Hooks {
 	t.Helper()
