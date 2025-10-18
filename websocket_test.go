@@ -1119,31 +1119,6 @@ func assertConnClosed(t testing.TB, conn net.Conn) {
 	assert.Error(t, err, io.EOF, net.ErrClosed)
 }
 
-// setupRawConn starts an websocket echo server with the given options, does
-// the client handshake, and returns the underlying TCP connection ready for
-// sending/receiving websocket messages.
-func setupRawConn(t testing.TB, opts websocket.Options) net.Conn {
-	return setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// unset any hooks to avoid reliable but flaky data race somewhere in
-		// the bowels of t.Logf that only triggers when newTestHooks are
-		// passed to both a server and a client.
-		//
-		// basic attempts like manually locking around t.Logf calls were
-		// unsuccessful.
-		//
-		// FIXME: for now, we just disable server side hooks until we can
-		// find a fix.
-		opts.Hooks = websocket.Hooks{}
-
-		ws, err := websocket.Accept(w, r, opts)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		_ = ws.Serve(r.Context(), websocket.EchoHandler)
-	}))
-}
-
 // setupRawConnWithHandler starts a server with the given handler (which
 // must be a websocket echo server), does the client handshake, and returns
 // the underlying TCP connection ready for sending/receiving.
