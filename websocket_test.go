@@ -335,19 +335,9 @@ func TestProtocolOkay(t *testing.T) {
 
 	t.Run("utf8 handling okay", func(t *testing.T) {
 		t.Parallel()
-		var (
-			maxFrameSize   = 128
-			maxMessageSize = 256
-		)
-
 		clientServerTest{
 			// client sends a variety of valid utf8-encoded messages and
 			// ensures that the server echoes them correctly.
-			clientOpts: websocket.Options{
-				MaxFrameSize:   maxFrameSize,
-				MaxMessageSize: maxMessageSize,
-				Hooks:          newTestHooks(t),
-			},
 			clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
 				// valid UTF-8 accepted and echoed back
 				{
@@ -383,11 +373,6 @@ func TestProtocolOkay(t *testing.T) {
 			},
 
 			// server just runs EchoHandler to reply to client
-			serverOpts: websocket.Options{
-				MaxFrameSize:   maxFrameSize,
-				MaxMessageSize: maxMessageSize,
-				Hooks:          newTestHooks(t),
-			},
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
 				assert.Error(t, ws.Serve(t.Context(), websocket.EchoHandler), io.EOF)
 			},
