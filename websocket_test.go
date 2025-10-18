@@ -738,7 +738,7 @@ func TestCloseHandshake(t *testing.T) {
 		t.Parallel()
 
 		clientServerTest{
-			// client finishes closing handshake
+			// client manually finishes closing handshake
 			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
 				mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
 				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
@@ -746,8 +746,12 @@ func TestCloseHandshake(t *testing.T) {
 			},
 			// server starts closing handshake, will get no error if the client
 			// finishes the handshake as expected
+			serverOpts: websocket.Options{
+				CloseTimeout: 250 * time.Millisecond,
+			},
 			serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
 				assert.NilError(t, ws.Close())
+				assertConnClosed(t, conn)
 			},
 		}.Run(t)
 	})
@@ -757,37 +761,39 @@ func TestCloseHandshake(t *testing.T) {
 		// handshake when it is initiated by a well-behaved client.
 		t.Parallel()
 
+		closeStatus := websocket.StatusGoingAway
+
 		clientServerTest{
 			// client initiates closing handshake and expects an appropriate reply
 			// from the server
 			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
-				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
-				mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
+				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(closeStatus, ""))
+				mustReadCloseFrame(t, conn, closeStatus, nil)
 				assertConnClosed(t, conn)
 			},
 			// server replies to close frame automatically during a ReadMessage
 			// call, which returns io.EOF when the connection is closed.
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+			serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
 				msg, err := ws.ReadMessage(t.Context())
 				assert.Error(t, err, io.EOF)
 				assert.Equal(t, msg, nil, "expected nil message")
+				assertConnClosed(t, conn)
 			},
 		}.Run(t)
 	})
 
 	t.Run("timeout waiting for handshake reply", func(t *testing.T) {
-		// this test ensure the serve enforces a timeout when waiting for a
+		// this test ensures the server enforces a timeout when waiting for a
 		// misbehaving client to reply to a closing handshake.
 		t.Parallel()
 
 		closeTimeout := 200 * time.Millisecond
 
 		clientServerTest{
-			// client gets the closing handshake message but ignores it,
-			// causing the server to time out waiting for a reply
+			// client gets the closing handshake message but does not reply,
+			// causing the server to time out while waiting
 			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
 				mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
-				// don't reply to the close frame, causing server to timeout
 			},
 			// server starts closing handshake, which should end with a timeout
 			// error when the client does not reply in time
