@@ -284,7 +284,6 @@ func TestProtocolOkay(t *testing.T) {
 			// written by the client, and then echoes it back.
 			serverTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
 				serverFrame := mustReadFrame(t, conn, len(wantFrame.Payload))
-				log.Printf("XXX read server frame: %s", serverFrame)
 				assert.DeepEqual(t, serverFrame, wantFrame, "frames should match")
 				mustWriteFrame(t, conn, false, serverFrame)
 			},
@@ -1119,53 +1118,17 @@ func assertConnClosed(t testing.TB, conn net.Conn) {
 	assert.Error(t, err, io.EOF, net.ErrClosed)
 }
 
-// setupRawConnWithHandler starts a server with the given handler (which
-// must be a websocket echo server), does the client handshake, and returns
-// the underlying TCP connection ready for sending/receiving.
+// clientServerTestFunc is a callback invoked by [clientServerTest.Run]to
+// execute either the client or server portion of a test.
 //
-// Prefer setupRawConn for simple use cases, use this only when a test
-// requires custom behavior (e.g. coordination via waitgroups).
-func setupRawConnWithHandler(t testing.TB, handler http.Handler) net.Conn {
-	t.Helper()
-
-	srv := httptest.NewServer(handler)
-	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
-	assert.NilError(t, err)
-	t.Cleanup(func() {
-		_ = conn.Close()
-		srv.Close()
-	})
-
-	// tie our conn to a bufio.Reader because we need to pass the latter into
-	// http.ReadResponse below, which may end up reading some websocket frame
-	// data in tests where the server writes to the conn immediately after the
-	// handshake (e.g. where the server immediately closes the connection).
-	//
-	// this wrapper helps ensure that any data read into the buffer is still
-	// available on subsequent reads directly from the conn.
-	conn, br := newConnWithBufferedReader(conn)
-
-	handshakeReq := httptest.NewRequest(http.MethodGet, "/", nil)
-	for k, v := range map[string]string{
-		"Connection":            "upgrade",
-		"Upgrade":               "websocket",
-		"Sec-WebSocket-Key":     string(websocket.NewClientKey()),
-		"Sec-WebSocket-Version": "13",
-	} {
-		handshakeReq.Header.Set(k, v)
-	}
-	// write the request line and headers, which should cause the
-	// server to respond with a 101 Switching Protocols response.
-	assert.NilError(t, handshakeReq.Write(conn))
-	resp, err := http.ReadResponse(br, nil)
-	assert.NilError(t, err)
-	assert.StatusCode(t, resp, http.StatusSwitchingProtocols)
-
-	return conn
-}
-
+// Each test func will be called in a separate goroutine. The [Websocket]
+// will be configured with clientOpts or serverOpts and the [net.Conn] will be
+// configured with clientConn or serverConn (if given).
 type clientServerTestFunc func(testing.TB, *websocket.Websocket, net.Conn)
 
+// clientServerTest encapsulates coordinates a unit test involving a websocket
+// client and server communicating with each other. See [clientServerTest.Run]
+// for details.
 type clientServerTest struct {
 	clientTest clientServerTestFunc
 	clientOpts websocket.Options
@@ -1177,6 +1140,14 @@ type clientServerTest struct {
 	serverConn func(net.Conn) net.Conn
 }
 
+// Run runs a client-server test by a) running a real, ephemeral websocket
+// server using httptest b) setting up a websocket client c) calling the
+// given clientTest and serverTest callbacks and d) ensuring that both
+// callbacks complete before returning.
+//
+// The client and server [websocket.Websocket] instances can be configured via
+// [clientOpts] and [serverOpts]. The underlying [net.Conn] can be configured
+// (e.g. wrapped, having deadlines set, etc) via [clientConn] and [serverConn].
 func (cst clientServerTest) Run(t testing.TB) {
 	t.Helper()
 
@@ -1203,9 +1174,7 @@ func (cst clientServerTest) Run(t testing.TB) {
 		}
 
 		ws := websocket.New(conn, clientKey, websocket.ServerMode, cst.serverOpts)
-		log.Printf("XXX server test func start")
 		cst.serverTest(t, ws, conn)
-		log.Printf("XXX server test func end")
 	}))
 	t.Cleanup(func() {
 		// TODO: require all tests to cleanly close the connection?
@@ -1254,10 +1223,7 @@ func (cst clientServerTest) Run(t testing.TB) {
 		assert.StatusCode(t, resp, http.StatusSwitchingProtocols)
 
 		clientSock := websocket.New(clientConn, cst.clientKey, websocket.ClientMode, cst.clientOpts)
-
-		log.Printf("XXX client test func start")
 		cst.clientTest(t, clientSock, clientConn)
-		log.Printf("XXX client test func end")
 	}()
 
 	wg.Wait()
