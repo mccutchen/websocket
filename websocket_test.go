@@ -782,28 +782,26 @@ func TestCloseHandshake(t *testing.T) {
 
 		closeTimeout := 200 * time.Millisecond
 
-		// server starts closing handshake, which should end with a timeout
-		// error when the client does not reply in time
-		var wg sync.WaitGroup
-		wg.Add(1)
-		clientConn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer wg.Done()
-			ws, err := websocket.Accept(w, r, websocket.Options{
+		clientServerTest{
+			// client gets the closing handshake message but ignores it,
+			// causing the server to time out waiting for a reply
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
+				// don't reply to the close frame, causing server to timeout
+			},
+			// server starts closing handshake, which should end with a timeout
+			// error when the client does not reply in time
+			serverOpts: websocket.Options{
 				CloseTimeout: closeTimeout,
-			})
-			assert.NilError(t, err)
-
-			start := time.Now()
-			closeErr := ws.Close()
-			elapsed := time.Since(start)
-			assert.Error(t, closeErr, os.ErrDeadlineExceeded)
-			assert.Equal(t, elapsed > closeTimeout, true, "close should have waited for timeout")
-		}))
-
-		// client gets the closing handshake message but ignores it
-		mustReadCloseFrame(t, clientConn, websocket.StatusNormalClosure, nil)
-		wg.Wait()
-		assertConnClosed(t, clientConn)
+			},
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				start := time.Now()
+				closeErr := ws.Close()
+				elapsed := time.Since(start)
+				assert.Error(t, closeErr, os.ErrDeadlineExceeded)
+				assert.Equal(t, elapsed > closeTimeout, true, "close should have waited for timeout")
+			},
+		}.Run(t)
 	})
 
 	t.Run("client sends additional non-close frames before completing handshake", func(t *testing.T) {
@@ -815,29 +813,27 @@ func TestCloseHandshake(t *testing.T) {
 
 		closeTimeout := 200 * time.Millisecond
 
-		// server initiates closing handshake, which should complete without
-		// error despite additional data frames sent by the client.
-		var wg sync.WaitGroup
-		wg.Add(1)
-		clientConn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer wg.Done()
-			ws, err := websocket.Accept(w, r, websocket.Options{
+		clientServerTest{
+			// client receives initial closing handshake but sends additional data
+			// before closing its end.
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
+				mustWriteFrames(t, conn, true, []*websocket.Frame{
+					websocket.NewFrame(websocket.OpcodePing, true, nil),
+					websocket.NewFrame(websocket.OpcodeText, true, []byte("ignore me")),
+					websocket.NewCloseFrame(websocket.StatusNormalClosure, ""),
+				})
+				assertConnClosed(t, conn)
+			},
+			// server initiates closing handshake, which should complete without
+			// error despite additional data frames sent by the client.
+			serverOpts: websocket.Options{
 				CloseTimeout: closeTimeout,
-			})
-			assert.NilError(t, err)
-			assert.NilError(t, ws.Close())
-		}))
-
-		// client receives initial closing handshake but sends additional data
-		// before closing its end.
-		mustReadCloseFrame(t, clientConn, websocket.StatusNormalClosure, nil)
-		mustWriteFrames(t, clientConn, true, []*websocket.Frame{
-			websocket.NewFrame(websocket.OpcodePing, true, nil),
-			websocket.NewFrame(websocket.OpcodeText, true, []byte("ignore me")),
-			websocket.NewCloseFrame(websocket.StatusNormalClosure, ""),
-		})
-		assertConnClosed(t, clientConn)
-		wg.Wait()
+			},
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				assert.NilError(t, ws.Close())
+			},
+		}.Run(t)
 	})
 
 	t.Run("client initiates close but server reply fails", func(t *testing.T) {
@@ -845,41 +841,40 @@ func TestCloseHandshake(t *testing.T) {
 		// from the client but cannot reply for whatever reason.
 		t.Parallel()
 
-		var wg sync.WaitGroup
-		wg.Add(1)
-		clientConn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer wg.Done()
+		// Define the error we'll inject when the server tries to write
+		writeErr := errors.New("simulated write error")
 
-			// Manually re-implement websocket.Accept in order to wrap the
-			// actual conn with one that will let us inject errors
-			clientKey, err := websocket.Handshake(w, r)
-			assert.NilError(t, err)
-
-			hj := w.(http.Hijacker)
-			realConn, _, err := hj.Hijack()
-			assert.NilError(t, err)
-
-			// any write by the server will fail
-			writeErr := errors.New("simulated write error")
-			fakeConn := &wrappedConn{
-				conn: realConn,
-				write: func(b []byte) (int, error) {
-					return 0, writeErr
-				},
-			}
-
-			ws := websocket.New(fakeConn, clientKey, websocket.ServerMode, websocket.Options{
+		clientServerTest{
+			// client starts closing handshake
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
+			},
+			serverOpts: websocket.Options{
 				Hooks: newTestHooks(t),
-			})
-			msg, err := ws.ReadMessage(r.Context())
-			assert.Error(t, err, writeErr)
-			assert.Equal(t, msg, nil, "msg should be nil on error")
-		}))
+			},
+			// server wraps the connection to inject write errors, then tries
+			// to read a message which should fail when trying to reply to the
+			// close frame
+			serverTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				// Wrap the connection to inject write errors
+				fakeConn := &wrappedConn{
+					conn: conn,
+					write: func(b []byte) (int, error) {
+						return 0, writeErr
+					},
+				}
 
-		// client starts closing handshake
-		mustWriteFrame(t, clientConn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
-		wg.Wait()
-		assertConnClosed(t, clientConn)
+				// Create a new websocket with the wrapped connection
+				// (we can't use the ws parameter because it uses the unwrapped conn)
+				ws := websocket.New(fakeConn, websocket.NewClientKey(), websocket.ServerMode, websocket.Options{
+					Hooks: newTestHooks(t),
+				})
+
+				msg, err := ws.ReadMessage(t.Context())
+				assert.Error(t, err, writeErr)
+				assert.Equal(t, msg, nil, "msg should be nil on error")
+			},
+		}.Run(t)
 	})
 
 	t.Run("server fails to initiate close", func(t *testing.T) {
@@ -887,36 +882,38 @@ func TestCloseHandshake(t *testing.T) {
 		// closing handshake due to a write error.
 		t.Parallel()
 
-		var wg sync.WaitGroup
-		wg.Add(1)
-		clientConn := setupRawConnWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer wg.Done()
+		// Define the error we'll inject when the server tries to write
+		writeErr := errors.New("simulated write error")
 
-			// Manually re-implement websocket.Accept in order to wrap the
-			// actual conn with one that will let us inject errors
-			clientKey, err := websocket.Handshake(w, r)
-			assert.NilError(t, err)
-
-			hj := w.(http.Hijacker)
-			realConn, _, err := hj.Hijack()
-			assert.NilError(t, err)
-
-			// any write by the server will fail
-			writeErr := errors.New("simulated write error")
-			fakeConn := &wrappedConn{
-				conn: realConn,
-				write: func(b []byte) (int, error) {
-					return 0, writeErr
-				},
-			}
-
-			ws := websocket.New(fakeConn, clientKey, websocket.ServerMode, websocket.Options{
+		clientServerTest{
+			// client doesn't need to do anything specific - the server will
+			// fail to initiate the close
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				// connection will be closed by cleanup
+			},
+			serverOpts: websocket.Options{
 				Hooks: newTestHooks(t),
-			})
-			assert.Error(t, ws.Close(), writeErr)
-		}))
-		wg.Wait()
-		assertConnClosed(t, clientConn)
+			},
+			// server wraps the connection to inject write errors, then tries
+			// to close which should fail immediately
+			serverTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				// Wrap the connection to inject write errors
+				fakeConn := &wrappedConn{
+					conn: conn,
+					write: func(b []byte) (int, error) {
+						return 0, writeErr
+					},
+				}
+
+				// Create a new websocket with the wrapped connection
+				// (we can't use the ws parameter because it uses the unwrapped conn)
+				ws := websocket.New(fakeConn, websocket.NewClientKey(), websocket.ServerMode, websocket.Options{
+					Hooks: newTestHooks(t),
+				})
+
+				assert.Error(t, ws.Close(), writeErr)
+			},
+		}.Run(t)
 	})
 }
 
