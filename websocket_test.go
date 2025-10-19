@@ -720,7 +720,7 @@ func TestCloseHandshake(t *testing.T) {
 		}.Run(t)
 	})
 
-	t.Run("client-initiated closing handshake", func(t *testing.T) {
+	t.Run("normal client-initiated closing handshake", func(t *testing.T) {
 		// this test ensures that a server will complete the 2 way closing
 		// handshake when it is initiated by a well-behaved client.
 		t.Parallel()
@@ -770,6 +770,25 @@ func TestCloseHandshake(t *testing.T) {
 				elapsed := time.Since(start)
 				assert.Error(t, closeErr, os.ErrDeadlineExceeded)
 				assert.Equal(t, elapsed > closeTimeout, true, "close should have waited for timeout")
+			},
+		}.Run(t)
+	})
+
+	t.Run("server initiates close but client closes conn without replying", func(t *testing.T) {
+		// this tests the case where a client closes the connection without
+		// replying when it receives the server's intitial closing handshake
+		t.Parallel()
+		clientServerTest{
+			// server closes connection, expects io.EOF error when reading
+			// reply from client
+			serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+				assert.Error(t, ws.Close(), io.EOF)
+			},
+			// client gets intitial closing frame from server but closes its
+			// end immediately
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
+				assert.NilError(t, conn.Close())
 			},
 		}.Run(t)
 	})
