@@ -342,11 +342,6 @@ func (ws *Websocket) startCloseOnError(cause error) error {
 	return ws.doCloseHandshake(closeFrame, cause)
 }
 
-func (ws *Websocket) startCloseOnReadError(err error) error {
-	ws.hooks.OnReadError(ws.clientKey, err)
-	return ws.startCloseOnError(err)
-}
-
 func (ws *Websocket) startCloseOnWriteError(err error) error {
 	ws.hooks.OnWriteError(ws.clientKey, err)
 	return ws.startCloseOnError(err)
