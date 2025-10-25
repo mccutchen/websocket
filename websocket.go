@@ -174,10 +174,9 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 
 	var msg *Message
 	for {
-		// check for cancelation on each iteration
 		select {
 		case <-ctx.Done():
-			return nil, ws.closeImmediately(ctx.Err())
+			return nil, fmt.Errorf("websocket: read: %w", ctx.Err())
 		default:
 		}
 
@@ -194,14 +193,14 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			//
 			// (Search for "Fail the" to see all of the scenarios where
 			// immediately closing the connection is the correct behavior.)
-			return nil, ws.closeImmediately(err)
+			return nil, err
 		}
 
 		opcode := frame.Opcode()
 		switch opcode {
 		case OpcodeBinary, OpcodeText:
 			if msg != nil {
-				return nil, ws.closeImmediately(ErrContinuationExpected)
+				return nil, ErrContinuationExpected
 			}
 			msg = &Message{
 				Binary:  opcode == OpcodeBinary,
@@ -209,10 +208,10 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 		case OpcodeContinuation:
 			if msg == nil {
-				return nil, ws.closeImmediately(ErrContinuationUnexpected)
+				return nil, ErrContinuationUnexpected
 			}
 			if len(msg.Payload)+len(frame.Payload) > ws.maxMessageSize {
-				return nil, ws.closeImmediately(ErrMessageTooLarge)
+				return nil, ErrMessageTooLarge
 			}
 			msg.Payload = append(msg.Payload, frame.Payload...)
 		case OpcodeClose:
@@ -223,18 +222,18 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		case OpcodePing:
 			frame = NewFrame(OpcodePong, true, frame.Payload)
 			if err := ws.writeFrame(frame); err != nil {
-				return nil, ws.startCloseOnError(err)
+				return nil, err
 			}
 			continue
 		case OpcodePong:
 			continue // no-op, assume reply to a ping
 		default:
-			return nil, ws.closeImmediately(ErrOpcodeUnknown)
+			return nil, ErrOpcodeUnknown
 		}
 
 		if frame.Fin() {
 			if !msg.Binary && !utf8.Valid(msg.Payload) {
-				return nil, ws.closeImmediately(ErrInvalidFramePayload)
+				return nil, ErrInvalidFramePayload
 			}
 			ws.hooks.OnReadMessage(ws.clientKey, msg)
 			return msg, nil
@@ -257,10 +256,10 @@ func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 	for _, frame := range FrameMessage(msg, ws.maxFrameSize) {
 		select {
 		case <-ctx.Done():
-			return ws.startCloseOnError(fmt.Errorf("websocket: write: %w", ctx.Err()))
+			return fmt.Errorf("websocket: write: %w", ctx.Err())
 		default:
 			if err := ws.writeFrame(frame); err != nil {
-				return ws.startCloseOnError(err)
+				return fmt.Errorf("websocket: write: %w", err)
 			}
 		}
 	}
@@ -272,11 +271,11 @@ func (ws *Websocket) readFrame() (*Frame, error) {
 	frame, err := ReadFrame(ws.conn, ws.mode, ws.maxFrameSize)
 	if err != nil {
 		ws.hooks.OnReadError(ws.clientKey, err)
-		return nil, err
+		return nil, fmt.Errorf("websocket: read: %w", err)
 	}
 	if err := validateFrame(frame); err != nil {
 		ws.hooks.OnReadError(ws.clientKey, err)
-		return nil, err
+		return nil, fmt.Errorf("websocket: read: %w", err)
 	}
 	ws.hooks.OnReadFrame(ws.clientKey, frame)
 	return frame, nil
@@ -284,11 +283,11 @@ func (ws *Websocket) readFrame() (*Frame, error) {
 
 func (ws *Websocket) writeFrame(frame *Frame) error {
 	ws.resetWriteDeadline()
+	ws.hooks.OnWriteFrame(ws.clientKey, frame)
 	if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
 		ws.hooks.OnWriteError(ws.clientKey, err)
 		return err
 	}
-	ws.hooks.OnWriteFrame(ws.clientKey, frame)
 	return nil
 }
 
