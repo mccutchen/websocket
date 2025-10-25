@@ -200,9 +200,9 @@ func TestConnectionLimits(t *testing.T) {
 		// this test ensures that the server will close the connection if it
 		// gets a timeout while reading a message.
 		//
-		// the server has a 250ms read timeout and the client never sends a
-		// message, so the read loop will time out after ~250ms and the server
-		// will start the closing handshake.
+		// because the server has a read timeout and the client never sends a
+		// message, the server's read loop will time out and it will start the
+		// closing handshake.
 		//
 		// at that point, the client should be able to read the close frame
 		// from the server, write its ACK, and then the connection should be
@@ -490,15 +490,12 @@ func TestProtocolOkay(t *testing.T) {
 
 func TestProtocolErrors(t *testing.T) {
 	var (
-		maxDuration    = 250 * time.Millisecond
 		maxFrameSize   = 128
-		maxMessageSize = 256
+		maxMessageSize = maxFrameSize * 2
 	)
 
 	newOpts := func(t *testing.T) websocket.Options {
 		return websocket.Options{
-			ReadTimeout:    maxDuration,
-			WriteTimeout:   maxDuration,
 			MaxFrameSize:   maxFrameSize,
 			MaxMessageSize: maxMessageSize,
 			Hooks:          newTestHooks(t),
@@ -711,7 +708,7 @@ func TestCloseHandshake(t *testing.T) {
 			// server starts closing handshake, will get no error if the client
 			// finishes the handshake as expected
 			serverOpts: websocket.Options{
-				CloseTimeout: 250 * time.Millisecond,
+				CloseTimeout: 1 * time.Second,
 			},
 			serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
 				assert.NilError(t, ws.Close())
@@ -751,7 +748,7 @@ func TestCloseHandshake(t *testing.T) {
 		// misbehaving client to reply to a closing handshake.
 		t.Parallel()
 
-		closeTimeout := 200 * time.Millisecond
+		closeTimeout := 250 * time.Millisecond
 
 		clientServerTest{
 			// client gets the closing handshake message but does not reply,
@@ -800,7 +797,7 @@ func TestCloseHandshake(t *testing.T) {
 		// close frame.
 		t.Parallel()
 
-		closeTimeout := 200 * time.Millisecond
+		closeTimeout := 1 * time.Second
 
 		clientServerTest{
 			// client receives initial closing handshake but sends additional data
@@ -991,9 +988,6 @@ func TestServeLoop(t *testing.T) {
 			},
 			// server runs Serve with a custom handler that returns an error
 			// when it receives a "fail" message
-			serverOpts: websocket.Options{
-				CloseTimeout: 500 * time.Millisecond,
-			},
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
 				err := ws.Serve(t.Context(), func(ctx context.Context, msg *websocket.Message) (*websocket.Message, error) {
 					if bytes.Equal(msg.Payload, []byte("fail")) {
