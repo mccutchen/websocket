@@ -334,7 +334,7 @@ func (ws *Websocket) Serve(ctx context.Context, handler Handler) error {
 			// on error from handler function, start full closing handshake
 			// so that clients may be properly informed of application-level
 			// errors.
-			return ws.Close(statusCodeForError(err))
+			return ws.CloseWithStatus(statusCodeForError(err))
 		}
 		if resp != nil {
 			if err := ws.WriteMessage(ctx, resp); err != nil {
@@ -357,9 +357,15 @@ func (ws *Websocket) mask() MaskingKey {
 	return NewMaskingKey()
 }
 
-// Close starts the closing handshake with the given status code and optional
-// reason.
-func (ws *Websocket) Close(status StatusCode, reason string) error {
+// Close starts a normal closing handshake. See [CloseWithStatus] for control
+// over status code and reason.
+func (ws *Websocket) Close() error {
+	return ws.CloseWithStatus(StatusNormalClosure, "")
+}
+
+// CloseWithStatus starts the closing handshake with the given status code and
+// optional reason.
+func (ws *Websocket) CloseWithStatus(status StatusCode, reason string) error {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 	return ws.doCloseHandshake(NewCloseFrame(status, reason), nil)
