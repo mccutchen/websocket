@@ -292,27 +292,58 @@ func (ws *Websocket) writeFrame(frame *Frame) error {
 	return nil
 }
 
-// Serve is a high-level convienience method for request-response style
+// Handle is a high-level convienience method for request-response style
 // websocket connections, where the given [Handler] is called for each
-// incoming message and its return value is sent back to the client.
+// incoming message read from the peer.
 //
-// See also [EchoHandler].
-func (ws *Websocket) Serve(ctx context.Context, handler Handler) error {
+// If the handler returns a non-nil message, that message is written back
+// to the peer. Nil messages indicate that there is no reply and are skipped.
+//
+// If the handler returns a non-nil error, its message will be sent to the
+// client as the start of the two-way closing handshake with a status of
+// internal error. NOTE: This means errors returned by the handler should not
+// contain sensitive information that should not be exposed to peers.
+//
+// If there is an error reading from or writing to the underlying connection,
+// the connection is assumed to be unrecoverable and is closed immediately,
+// without waiting for the full two-way handshake. For more control over
+// error handling and closing behavior, use [ReadMessage], [WriteMessage], and
+// [Close] directly.
+//
+// See also [EchoHandler], a minimal handler that echoes each incoming message
+// verbatim.
+func (ws *Websocket) Handle(ctx context.Context, handler Handler) error {
 	for {
 		msg, err := ws.ReadMessage(ctx)
 		if err != nil {
-			return err
+			// If we failed to read a message for any reason (generally a read
+			// timeout or a validation error), send a close frame to inform
+			// the peer of the reason and close connection immediately without
+			// waiting for a reply.
+			//
+			// This approach seems a) expected by the Autobahn test suite and
+			// b) supported by the RFC:
+			// https://datatracker.ietf.org/doc/html/rfc6455#section-7.1.7
+			//
+			// (Search for "Fail the" to see all of the scenarios where
+			// immediately closing the connection is the correct behavior.)
+			return ws.closeImmediately(err)
 		}
 
 		resp, err := handler(ctx, msg)
 		if err != nil {
-			ws.mu.Lock()
-			defer ws.mu.Unlock()
-			return ws.startCloseOnError(err)
+			// on error from handler function, start full closing handshake
+			// so that clients may be properly informed of application-level
+			// errors.
+			return ws.Close(statusCodeForError(err))
 		}
 		if resp != nil {
 			if err := ws.WriteMessage(ctx, resp); err != nil {
-				return err
+				// As with reads above, an error writing a message for any
+				// reason is considered fatal, so we try writing a close frame
+				// (which will probably also fail) and close the connection
+				// immediately instead of waiting for full two way handshake.
+				return ws.closeImmediately(err)
 			}
 		}
 	}
@@ -327,25 +358,12 @@ func (ws *Websocket) mask() MaskingKey {
 	return NewMaskingKey()
 }
 
-// Close starts the closing handshake for a normal closure not due to an
-// error.
-//
-// TODO: add support for explicitly closing on error to public API.
-func (ws *Websocket) Close() error {
+// Close starts the closing handshake with the given status code and optional
+// reason.
+func (ws *Websocket) Close(status StatusCode, reason string) error {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
-	code := StatusNormalClosure
-	return ws.doCloseHandshake(NewCloseFrame(code, ""), nil)
-}
-
-// startCloseOnError starts a closing handshake that will indicate an error
-// based on the given cause.
-//
-// Note: callers must hold mutex.
-func (ws *Websocket) startCloseOnError(cause error) error {
-	code, reason := statusCodeForError(cause)
-	closeFrame := NewCloseFrame(code, reason)
-	return ws.doCloseHandshake(closeFrame, cause)
+	return ws.doCloseHandshake(NewCloseFrame(status, reason), nil)
 }
 
 // doCloseHandshake initiates the closing handshake and blocks until the
@@ -481,22 +499,14 @@ var EchoHandler Handler = func(_ context.Context, msg *Message) (*Message, error
 // statusCodeForError returns an appropriate close frame status code and reason
 // for the given error. If error is nil, returns a normal closure status code.
 func statusCodeForError(err error) (StatusCode, string) {
-	if err == nil {
+	if err == nil || errors.Is(err, io.EOF) {
 		return StatusNormalClosure, ""
 	}
 	var protoErr *Error
 	if errors.As(err, &protoErr) {
 		return protoErr.code, protoErr.Error()
 	}
-	var (
-		code   = StatusInternalError
-		reason = err.Error()
-	)
-	switch {
-	case errors.Is(err, io.EOF):
-		code = StatusNormalClosure
-	}
-	return code, reason
+	return StatusInternalError, err.Error()
 }
 
 // Hooks define the callbacks that are called during the lifecycle of a
