@@ -201,7 +201,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		switch opcode {
 		case OpcodeBinary, OpcodeText:
 			if msg != nil {
-				return nil, ws.startCloseOnReadError(ErrContinuationExpected)
+				return nil, ws.closeImmediately(ErrContinuationExpected)
 			}
 			msg = &Message{
 				Binary:  opcode == OpcodeBinary,
@@ -209,10 +209,10 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			}
 		case OpcodeContinuation:
 			if msg == nil {
-				return nil, ws.startCloseOnReadError(ErrContinuationUnexpected)
+				return nil, ws.closeImmediately(ErrContinuationUnexpected)
 			}
 			if len(msg.Payload)+len(frame.Payload) > ws.maxMessageSize {
-				return nil, ws.startCloseOnReadError(ErrMessageTooLarge)
+				return nil, ws.closeImmediately(ErrMessageTooLarge)
 			}
 			msg.Payload = append(msg.Payload, frame.Payload...)
 		case OpcodeClose:
@@ -234,7 +234,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 
 		if frame.Fin() {
 			if !msg.Binary && !utf8.Valid(msg.Payload) {
-				return nil, ws.startCloseOnReadError(ErrInvalidFramePayload)
+				return nil, ws.closeImmediately(ErrInvalidFramePayload)
 			}
 			ws.hooks.OnReadMessage(ws.clientKey, msg)
 			return msg, nil
@@ -340,11 +340,6 @@ func (ws *Websocket) startCloseOnError(cause error) error {
 	code, reason := statusCodeForError(cause)
 	closeFrame := NewCloseFrame(code, reason)
 	return ws.doCloseHandshake(closeFrame, cause)
-}
-
-func (ws *Websocket) startCloseOnReadError(err error) error {
-	ws.hooks.OnReadError(ws.clientKey, err)
-	return ws.startCloseOnError(err)
 }
 
 func (ws *Websocket) startCloseOnWriteError(err error) error {
