@@ -223,7 +223,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 		case OpcodePing:
 			frame = NewFrame(OpcodePong, true, frame.Payload)
 			if err := ws.writeFrame(frame); err != nil {
-				return nil, ws.startCloseOnWriteError(err)
+				return nil, ws.startCloseOnError(err)
 			}
 			continue
 		case OpcodePong:
@@ -257,10 +257,10 @@ func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 	for _, frame := range FrameMessage(msg, ws.maxFrameSize) {
 		select {
 		case <-ctx.Done():
-			return ws.startCloseOnWriteError(fmt.Errorf("websocket: write: %w", ctx.Err()))
+			return ws.startCloseOnError(fmt.Errorf("websocket: write: %w", ctx.Err()))
 		default:
 			if err := ws.writeFrame(frame); err != nil {
-				return ws.startCloseOnWriteError(err)
+				return ws.startCloseOnError(err)
 			}
 		}
 	}
@@ -271,9 +271,11 @@ func (ws *Websocket) readFrame() (*Frame, error) {
 	ws.resetReadDeadline()
 	frame, err := ReadFrame(ws.conn, ws.mode, ws.maxFrameSize)
 	if err != nil {
+		ws.hooks.OnReadError(ws.clientKey, err)
 		return nil, err
 	}
 	if err := validateFrame(frame); err != nil {
+		ws.hooks.OnReadError(ws.clientKey, err)
 		return nil, err
 	}
 	ws.hooks.OnReadFrame(ws.clientKey, frame)
@@ -282,8 +284,12 @@ func (ws *Websocket) readFrame() (*Frame, error) {
 
 func (ws *Websocket) writeFrame(frame *Frame) error {
 	ws.resetWriteDeadline()
+	if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
+		ws.hooks.OnWriteError(ws.clientKey, err)
+		return err
+	}
 	ws.hooks.OnWriteFrame(ws.clientKey, frame)
-	return WriteFrame(ws.conn, ws.mask(), frame)
+	return nil
 }
 
 // Serve is a high-level convienience method for request-response style
@@ -340,11 +346,6 @@ func (ws *Websocket) startCloseOnError(cause error) error {
 	code, reason := statusCodeForError(cause)
 	closeFrame := NewCloseFrame(code, reason)
 	return ws.doCloseHandshake(closeFrame, cause)
-}
-
-func (ws *Websocket) startCloseOnWriteError(err error) error {
-	ws.hooks.OnWriteError(ws.clientKey, err)
-	return ws.startCloseOnError(err)
 }
 
 // doCloseHandshake initiates the closing handshake and blocks until the
