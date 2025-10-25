@@ -291,7 +291,7 @@ func (ws *Websocket) writeFrame(frame *Frame) error {
 	return nil
 }
 
-// Handle is a high-level convienience method for request-response style
+// Serve is a high-level convienience method for request-response style
 // websocket connections, where the given [Handler] is called for each
 // incoming message read from the peer.
 //
@@ -311,7 +311,7 @@ func (ws *Websocket) writeFrame(frame *Frame) error {
 //
 // See also [EchoHandler], a minimal handler that echoes each incoming message
 // verbatim.
-func (ws *Websocket) Handle(ctx context.Context, handler Handler) error {
+func (ws *Websocket) Serve(ctx context.Context, handler Handler) error {
 	for {
 		msg, err := ws.ReadMessage(ctx)
 		if err != nil {
