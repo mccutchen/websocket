@@ -128,7 +128,7 @@ func TestHandshake(t *testing.T) {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
 				}
-				_ = ws.Serve(r.Context(), websocket.EchoHandler)
+				_ = ws.Handle(r.Context(), websocket.EchoHandler)
 			}))
 			defer srv.Close()
 
@@ -229,7 +229,7 @@ func TestConnectionLimits(t *testing.T) {
 			},
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
 				start := time.Now()
-				err := ws.Serve(t.Context(), websocket.EchoHandler)
+				err := ws.Handle(t.Context(), websocket.EchoHandler)
 				elapsed := time.Since(start)
 				assert.Equal(t, elapsed >= maxDuration, true, "not enough time passed")
 				assert.Error(t, err, os.ErrDeadlineExceeded)
@@ -374,7 +374,7 @@ func TestProtocolOkay(t *testing.T) {
 
 			// server just runs EchoHandler to reply to client
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				assert.NilError(t, ws.Serve(t.Context(), websocket.EchoHandler))
+				assert.NilError(t, ws.Handle(t.Context(), websocket.EchoHandler))
 			},
 		}.Run(t)
 	})
@@ -459,7 +459,7 @@ func TestProtocolOkay(t *testing.T) {
 
 			// server just echoes messages from the client
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				assert.NilError(t, ws.Serve(t.Context(), websocket.EchoHandler))
+				assert.NilError(t, ws.Handle(t.Context(), websocket.EchoHandler))
 			},
 		}.Run(t)
 	})
@@ -482,7 +482,7 @@ func TestProtocolOkay(t *testing.T) {
 			},
 			// server just echoes messages from the client
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				assert.NilError(t, ws.Serve(t.Context(), websocket.EchoHandler))
+				assert.NilError(t, ws.Handle(t.Context(), websocket.EchoHandler))
 			},
 		}.Run(t)
 	})
@@ -606,7 +606,7 @@ func TestProtocolErrors(t *testing.T) {
 				// protocol errors automatically
 				serverOpts: newOpts(t),
 				serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
-					assert.Error(t, ws.Serve(t.Context(), websocket.EchoHandler), tc.wantCloseReason)
+					assert.Error(t, ws.Handle(t.Context(), websocket.EchoHandler), tc.wantCloseReason)
 				},
 			}.Run(t)
 		})
@@ -675,7 +675,7 @@ func TestCloseFrameValidation(t *testing.T) {
 				// server just runs echo handler, which should process all
 				// protocol errors automatically
 				serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
-					assert.Error(t, ws.Serve(t.Context(), websocket.EchoHandler), tc.wantErr)
+					assert.Error(t, ws.Handle(t.Context(), websocket.EchoHandler), tc.wantErr)
 				},
 			}.Run(t)
 		})
@@ -916,7 +916,7 @@ func TestErrorHandling(t *testing.T) {
 				}
 			},
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				err := ws.Serve(t.Context(), websocket.EchoHandler)
+				err := ws.Handle(t.Context(), websocket.EchoHandler)
 				assert.Error(t, err, writeErr)
 			},
 		}.Run(t)
@@ -941,7 +941,7 @@ func TestErrorHandling(t *testing.T) {
 			// server tries to read message with the cancelable context, which
 			// should be canceled while waiting for the continuation frame.
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				assert.Error(t, ws.Serve(ctx, websocket.EchoHandler), context.Canceled)
+				assert.Error(t, ws.Handle(ctx, websocket.EchoHandler), context.Canceled)
 			},
 		}.Run(t)
 	})
@@ -1143,7 +1143,7 @@ func TestServeLoop(t *testing.T) {
 			// server runs Serve with a custom handler that returns an error
 			// when it receives a "fail" message
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				err := ws.Serve(t.Context(), func(ctx context.Context, msg *websocket.Message) (*websocket.Message, error) {
+				err := ws.Handle(t.Context(), func(ctx context.Context, msg *websocket.Message) (*websocket.Message, error) {
 					if bytes.Equal(msg.Payload, []byte("fail")) {
 						return nil, wantErr
 					}
@@ -1179,7 +1179,7 @@ func TestServeLoop(t *testing.T) {
 				}
 			},
 			serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
-				err := ws.Serve(t.Context(), func(ctx context.Context, msg *websocket.Message) (*websocket.Message, error) {
+				err := ws.Handle(t.Context(), func(ctx context.Context, msg *websocket.Message) (*websocket.Message, error) {
 					return nil, appErr
 				})
 				// the error returned wraps both the application-level error
@@ -1566,7 +1566,7 @@ var (
 // ============================================================================
 // Examples
 // ============================================================================
-func ExampleServe() {
+func ExampleHandle() {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := websocket.Accept(w, r, websocket.Options{
 			ReadTimeout:    500 * time.Millisecond,
@@ -1578,10 +1578,10 @@ func ExampleServe() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := ws.Serve(r.Context(), websocket.EchoHandler); err != nil {
-			// an error returned by Serve is strictly informational; the
+		if err := ws.Handle(r.Context(), websocket.EchoHandler); err != nil {
+			// an error returned by Handle is strictly informational; the
 			// connection will already be closed at this point.
-			log.Printf("error serving websocket connection: %s", err)
+			log.Printf("error handling websocket connection: %s", err)
 		}
 	})
 	if err := http.ListenAndServe(":8080", handler); err != nil {

@@ -61,7 +61,7 @@ func main() {
 			logger.ErrorContext(r.Context(), "websocket handshake failed", "err", err)
 			return
 		}
-		ws.Serve(r.Context(), websocket.EchoHandler)
+		ws.Handle(r.Context(), websocket.EchoHandler)
 	})
 
 	// 3. JSON message test
@@ -82,7 +82,7 @@ func main() {
 			logger.ErrorContext(r.Context(), "websocket handshake failed", "err", err)
 			return
 		}
-		ws.Serve(r.Context(), func(_ context.Context, msg *websocket.Message) (*websocket.Message, error) {
+		ws.Handle(r.Context(), func(_ context.Context, msg *websocket.Message) (*websocket.Message, error) {
 			var m jsonMessage
 			if err := json.Unmarshal(msg.Payload, &m); err != nil {
 				return nil, err
@@ -111,7 +111,7 @@ func main() {
 			logger.ErrorContext(r.Context(), "websocket handshake failed", "err", err)
 			return
 		}
-		ws.Serve(r.Context(), func(_ context.Context, msg *websocket.Message) (*websocket.Message, error) {
+		ws.Handle(r.Context(), func(_ context.Context, msg *websocket.Message) (*websocket.Message, error) {
 			if len(msg.Payload) != 4 {
 				return nil, fmt.Errorf("invalid payload length: %d", len(msg.Payload))
 			}
