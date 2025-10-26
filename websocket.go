@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"slices"
@@ -252,13 +253,18 @@ func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 		return ErrConnectionClosed
 	}
 
+	log.Printf("ZZZ server: writing msg %s", msg)
 	ws.hooks.OnWriteMessage(ws.clientKey, msg)
 	for _, frame := range FrameMessage(msg, ws.maxFrameSize) {
+		log.Printf("ZZZ server: writing frame %s", frame)
 		select {
 		case <-ctx.Done():
+			log.Printf("ZZZ server: context canceled")
 			return fmt.Errorf("websocket: write: %w", ctx.Err())
 		default:
+			log.Printf("ZZZ server: proceeding with write")
 			if err := ws.writeFrame(frame); err != nil {
+				log.Printf("ZZZ server: write error: %s", err)
 				return fmt.Errorf("websocket: write: %w", err)
 			}
 		}

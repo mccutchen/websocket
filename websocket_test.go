@@ -946,6 +946,64 @@ func TestErrorHandling(t *testing.T) {
 		}.Run(t)
 	})
 
+	t.Run("handle context cancelation between writes of multi frame message", func(t *testing.T) {
+		// In this test, the client writes a partial message (fin=false) and
+		// then the context is canceled, so we ensure that the server properly
+		// handles cancelation between reads of multi-frame messages
+		t.Parallel()
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		maxFrameSize := 16
+		var payload []byte
+		payload = append(payload, bytes.Repeat([]byte("0"), maxFrameSize)...)
+		payload = append(payload, bytes.Repeat([]byte("1"), maxFrameSize)...)
+
+		clientServerTest{
+			// client reads first frame from multi-frame message, but then
+			// the connection is closed after server fails to write second
+			// frame
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				frame := mustReadFrame(t, conn, maxFrameSize*2)
+				assert.DeepEqual(t, frame.Payload, payload[:maxFrameSize], "incorrect payload")
+				// complete closing handshake
+				mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
+				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
+			},
+			// server writes a multi-frame message, but the context is
+			// canceled after the first frame is written.
+			serverConn: func(conn net.Conn) net.Conn {
+				var writeCount atomic.Int64
+				return &wrappedConn{
+					conn: conn,
+					write: func(b []byte) (int, error) {
+						n, err := conn.Write(b)
+						// after first write, sleep until context is canceled
+						// to ensure the write loop in WriteMessage sees the
+						// context cancelation between frames
+						if writeCount.Add(1) == 1 {
+							<-ctx.Done()
+						}
+						return n, err
+					},
+				}
+			},
+			serverOpts: websocket.Options{
+				MaxFrameSize: maxFrameSize,
+			},
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				go func() {
+					time.Sleep(100 * time.Millisecond)
+					cancel()
+				}()
+				msg := &websocket.Message{Payload: payload}
+				assert.Error(t, ws.WriteMessage(ctx, msg), context.Canceled)
+				assert.NilError(t, ws.Close())
+			},
+		}.Run(t)
+	})
+
 	t.Run("ReadMessage does not close connection on error", func(t *testing.T) {
 		// This ensures that ReadMessage does not automatically close the
 		// connection on a read error.
