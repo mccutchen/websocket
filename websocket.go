@@ -315,10 +315,16 @@ func (ws *Websocket) Serve(ctx context.Context, handler Handler) error {
 	for {
 		msg, err := ws.ReadMessage(ctx)
 		if err != nil {
-			// If we failed to read a message for any reason (generally a read
-			// timeout or a validation error), send a close frame to inform
-			// the peer of the reason and close connection immediately without
-			// waiting for a reply.
+			// Special case: connection is closed, there's no need to write
+			// closing handshake. Consider this a normal, non-error end to the
+			// connection.
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			// If we failed to read a message for any other reason (generally
+			// a read timeout or a validation error), send a close frame to
+			// inform the peer of the reason and close connection immediately
+			// without waiting for a reply.
 			//
 			// This approach seems a) expected by the Autobahn test suite and
 			// b) supported by the RFC:
@@ -334,7 +340,10 @@ func (ws *Websocket) Serve(ctx context.Context, handler Handler) error {
 			// on error from handler function, start full closing handshake
 			// so that clients may be properly informed of application-level
 			// errors.
-			return ws.CloseWithStatus(statusCodeForError(err))
+			if closeErr := ws.CloseWithStatus(statusCodeForError(err)); closeErr != nil {
+				return fmt.Errorf("websocket: serve: error closing connection after application error: %w: %w", err, closeErr)
+			}
+			return err
 		}
 		if resp != nil {
 			if err := ws.WriteMessage(ctx, resp); err != nil {
@@ -397,10 +406,9 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 	for {
 		frame, err := ws.readFrame()
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				ws.finishClose()
+			if !errors.Is(err, io.EOF) {
+				cause = fmt.Errorf("websocket: close: read failed while waiting for reply: %w", err)
 			}
-			cause = fmt.Errorf("websocket: close: read failed while waiting for reply: %w", err)
 			ws.finishClose()
 			return cause
 		}

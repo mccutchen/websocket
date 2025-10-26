@@ -374,7 +374,7 @@ func TestProtocolOkay(t *testing.T) {
 
 			// server just runs EchoHandler to reply to client
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				assert.Error(t, ws.Serve(t.Context(), websocket.EchoHandler), io.EOF)
+				assert.NilError(t, ws.Serve(t.Context(), websocket.EchoHandler))
 			},
 		}.Run(t)
 	})
@@ -459,7 +459,7 @@ func TestProtocolOkay(t *testing.T) {
 
 			// server just echoes messages from the client
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				assert.Error(t, ws.Serve(t.Context(), websocket.EchoHandler), io.EOF)
+				assert.NilError(t, ws.Serve(t.Context(), websocket.EchoHandler))
 			},
 		}.Run(t)
 	})
@@ -482,7 +482,7 @@ func TestProtocolOkay(t *testing.T) {
 			},
 			// server just echoes messages from the client
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				assert.Error(t, ws.Serve(t.Context(), websocket.EchoHandler), io.EOF)
+				assert.NilError(t, ws.Serve(t.Context(), websocket.EchoHandler))
 			},
 		}.Run(t)
 	})
@@ -675,16 +675,7 @@ func TestCloseFrameValidation(t *testing.T) {
 				// server just runs echo handler, which should process all
 				// protocol errors automatically
 				serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
-					wantErr := tc.wantErr
-					if wantErr == nil {
-						// if we do not expect an error, Serve() should return
-						// io.EOF on the server's end of the connection.
-						//
-						// TODO: it probably shouldn't return an error, if
-						// this is expected behavior.
-						wantErr = io.EOF
-					}
-					assert.Error(t, ws.Serve(t.Context(), websocket.EchoHandler), wantErr)
+					assert.Error(t, ws.Serve(t.Context(), websocket.EchoHandler), tc.wantErr)
 				},
 			}.Run(t)
 		})
@@ -777,9 +768,9 @@ func TestCloseHandshake(t *testing.T) {
 		t.Parallel()
 		clientServerTest{
 			// server closes connection, expects io.EOF error when reading
-			// reply from client
+			// reply from client, which is not treated as an error.
 			serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
-				assert.Error(t, ws.Close(), io.EOF)
+				assert.NilError(t, ws.Close())
 			},
 			// client gets intitial closing frame from server but closes its
 			// end immediately
@@ -886,7 +877,7 @@ func TestCloseHandshake(t *testing.T) {
 	})
 }
 
-func TestNetworkErrors(t *testing.T) {
+func TestErrorHandling(t *testing.T) {
 	t.Run("a write error should cause the server to close the connection", func(t *testing.T) {
 		t.Parallel()
 
@@ -950,9 +941,84 @@ func TestNetworkErrors(t *testing.T) {
 			// server tries to read message with the cancelable context, which
 			// should be canceled while waiting for the continuation frame.
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				msg, err := ws.ReadMessage(ctx) // use context from test setup, not from request
-				assert.Error(t, err, context.Canceled)
-				assert.Equal(t, msg, nil, "expected nil message")
+				assert.Error(t, ws.Serve(ctx, websocket.EchoHandler), context.Canceled)
+			},
+		}.Run(t)
+	})
+
+	t.Run("ReadMessage does not close connection on error", func(t *testing.T) {
+		// This ensures that ReadMessage does not automatically close the
+		// connection on a read error.
+		t.Parallel()
+
+		wantPayload := []byte("valid payload")
+
+		clientServerTest{
+			// client writes an invalid frame (which will cause a read error
+			// on the server) and then a valid frame, server should echo the
+			// valid frame.
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				mustWriteFrames(t, conn, true, []*websocket.Frame{
+					websocket.NewFrame(websocket.OpcodeContinuation, false, []byte("invalid continuation frame")),
+					websocket.NewFrame(websocket.OpcodeText, true, wantPayload),
+				})
+				mustReadFrame(t, conn, 128)
+			},
+			// server calls ReadMessage twice, first getting an error from the
+			// invalid frame and then getting the expected valid payload,
+			// which is echoed back to the client.
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				_, err := ws.ReadMessage(t.Context())
+				assert.Error(t, err, websocket.ErrContinuationUnexpected)
+
+				msg, err := ws.ReadMessage(t.Context())
+				assert.NilError(t, err)
+				assert.DeepEqual(t, msg.Payload, wantPayload, "incorrect payload")
+				assert.NilError(t, ws.WriteMessage(t.Context(), msg))
+			},
+		}.Run(t)
+	})
+
+	t.Run("WriteMessage does not close connection on error", func(t *testing.T) {
+		// This ensures that WriteMessage does not automatically close the
+		// connection on a write error.
+		t.Parallel()
+
+		var (
+			writeErr    = errors.New("fake write error")
+			wantPayload = []byte("valid payload")
+		)
+
+		clientServerTest{
+			// client reads a message from the server
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				frame := mustReadFrame(t, conn, 128)
+				assert.DeepEqual(t, frame.Payload, wantPayload, "incorrect payload")
+			},
+			// server calls ReadMessage twice, first getting an error from the
+			// invalid frame and then getting the expected valid payload,
+			// which is echoed back to the client.
+			serverConn: func(conn net.Conn) net.Conn {
+				var writeCount atomic.Int64
+				return &wrappedConn{
+					conn: conn,
+					write: func(b []byte) (int, error) {
+						count := writeCount.Add(1)
+						// return an error on first write
+						if count == 1 {
+							return 0, writeErr
+						}
+						// otherwise pass thru to underlying conn
+						return conn.Write(b)
+					},
+				}
+			},
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				msg1 := &websocket.Message{Payload: []byte("failed write")}
+				assert.Error(t, ws.WriteMessage(t.Context(), msg1), writeErr)
+
+				msg2 := &websocket.Message{Payload: wantPayload}
+				assert.NilError(t, ws.WriteMessage(t.Context(), msg2))
 			},
 		}.Run(t)
 	})

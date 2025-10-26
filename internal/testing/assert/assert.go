@@ -68,9 +68,6 @@ func Error(t testing.TB, got, expected error, alternates ...error) {
 
 func errorsMatch(t testing.TB, got, expected error) bool {
 	t.Helper()
-	if got == nil {
-		t.Fatalf("got nil error")
-	}
 	switch {
 	case got == expected:
 		return true

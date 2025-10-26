@@ -161,7 +161,7 @@ func TestStatusCodeForError(t *testing.T) {
 		{
 			err:        fmt.Errorf("wrapped io.EOF: %w", io.EOF),
 			wantStatus: StatusNormalClosure,
-			wantReason: "wrapped io.EOF: EOF",
+			wantReason: "", // io.EOF is not considered an error
 		},
 	}
 	for _, tc := range testCases {
