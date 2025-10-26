@@ -163,8 +163,8 @@ func Handshake(w http.ResponseWriter, r *http.Request) (ClientKey, error) {
 }
 
 // ReadMessage reads a single [Message] from the connection, handling
-// fragments and control frames automatically. The connection will be closed
-// on any error.
+// fragments and control frames automatically. Callers are responsible for
+// closing the connection on error.
 func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
@@ -243,8 +243,8 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 }
 
 // WriteMessage writes a single [Message] to the connection, after splitting
-// it into fragments (if necessary). The connection will be closed on any
-// error.
+// it into fragments (if necessary). Callers are responsible for closing the
+// connection on error.
 func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
