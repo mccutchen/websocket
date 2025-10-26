@@ -291,27 +291,27 @@ func (ws *Websocket) writeFrame(frame *Frame) error {
 	return nil
 }
 
-// Serve is a high-level convienience method for request-response style
+// Handle is a high-level convienience method for request-response style
 // websocket connections, where the given [Handler] is called for each
 // incoming message read from the peer.
 //
 // If the handler returns a non-nil message, that message is written back
-// to the peer. Nil messages indicate that there is no reply and are skipped.
+// to the peer. A nil message indicates that there is no reply to send.
 //
 // If the handler returns a non-nil error, its message will be sent to the
 // client as the start of the two-way closing handshake with a status of
-// internal error. NOTE: This means errors returned by the handler should not
+// Internal Error. NOTE: This means errors returned by the handler should not
 // contain sensitive information that should not be exposed to peers.
 //
 // If there is an error reading from or writing to the underlying connection,
 // the connection is assumed to be unrecoverable and is closed immediately,
 // without waiting for the full two-way handshake. For more control over
 // error handling and closing behavior, use [ReadMessage], [WriteMessage], and
-// [Close] directly.
+// [CloseWithStatus] directly.
 //
 // See also [EchoHandler], a minimal handler that echoes each incoming message
 // verbatim.
-func (ws *Websocket) Serve(ctx context.Context, handler Handler) error {
+func (ws *Websocket) Handle(ctx context.Context, handler Handler) error {
 	for {
 		msg, err := ws.ReadMessage(ctx)
 		if err != nil {
@@ -497,7 +497,7 @@ func (ws *Websocket) ClientKey() ClientKey {
 }
 
 // Handler handles a single websocket [Message] as part of the high level
-// [Serve] request-response API.
+// [Handle] request-response API.
 //
 // If the returned message is non-nil, it will be sent to the client. If an
 // error is returned, the connection will be closed.

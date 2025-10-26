@@ -97,7 +97,7 @@ func TestAutobahn(t *testing.T) {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			_ = ws.Serve(r.Context(), websocket.EchoHandler)
+			_ = ws.Handle(r.Context(), websocket.EchoHandler)
 		}))
 		defer srv.Close()
 		targetURL = srv.URL

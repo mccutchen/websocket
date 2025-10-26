@@ -49,7 +49,7 @@ func main() {
 			return
 		}
 		logger.InfoContext(r.Context(), "websocket handshake completed, starting echo handler", "client-key", ws.ClientKey())
-		ws.Serve(r.Context(), websocket.EchoHandler)
+		ws.Handle(r.Context(), websocket.EchoHandler)
 	})
 
 	if pprof {
