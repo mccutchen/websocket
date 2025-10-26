@@ -1004,6 +1004,36 @@ func TestErrorHandling(t *testing.T) {
 		}.Run(t)
 	})
 
+	t.Run("write error handling ping frame", func(t *testing.T) {
+		// test behavior when a ping frame is received but writing the pong
+		// reply fails
+		t.Parallel()
+
+		writeErr := errors.New("fake write error")
+
+		clientServerTest{
+			// client reads a message from the server
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				mustWriteFrame(t, conn, true, websocket.NewFrame(websocket.OpcodePing, true, nil))
+			},
+			// server calls ReadMessage twice, first getting an error from the
+			// invalid frame and then getting the expected valid payload,
+			// which is echoed back to the client.
+			serverConn: func(conn net.Conn) net.Conn {
+				return &wrappedConn{
+					conn: conn,
+					write: func(b []byte) (int, error) {
+						return 0, writeErr
+					},
+				}
+			},
+			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+				_, err := ws.ReadMessage(t.Context())
+				assert.Error(t, err, writeErr)
+			},
+		}.Run(t)
+	})
+
 	t.Run("ReadMessage does not close connection on error", func(t *testing.T) {
 		// This ensures that ReadMessage does not automatically close the
 		// connection on a read error.
