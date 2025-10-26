@@ -1123,6 +1123,45 @@ func TestServeLoop(t *testing.T) {
 			},
 		}.Run(t)
 	})
+
+	t.Run("error occures when closing connection after application error", func(t *testing.T) {
+		t.Parallel()
+
+		var (
+			appErr   = errors.New("fake application error")
+			writeErr = errors.New("fake write error")
+		)
+
+		clientServerTest{
+			// client writes some frame to trigger handler
+			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				mustWriteFrame(t, conn, true, websocket.NewFrame(websocket.OpcodeText, true, []byte("hi")))
+			},
+			// server runs a handler that always returns an application error,
+			// which should cause server to start closing handshake. closing
+			// handshake should fail due to write error.
+			serverConn: func(conn net.Conn) net.Conn {
+				return &wrappedConn{
+					conn: conn,
+					write: func(b []byte) (int, error) {
+						return 0, writeErr
+					},
+				}
+			},
+			serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+				err := ws.Serve(t.Context(), func(ctx context.Context, msg *websocket.Message) (*websocket.Message, error) {
+					return nil, appErr
+				})
+				// the error returned wraps both the application-level error
+				// that triggered the close ...
+				assert.Error(t, err, appErr)
+				// ... and the write error that prevented the closing
+				// handshake from actually completing
+				assert.Error(t, err, writeErr)
+				assertConnClosed(t, conn)
+			},
+		}.Run(t)
+	})
 }
 
 func TestClose(t *testing.T) {
