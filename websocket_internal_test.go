@@ -44,12 +44,12 @@ func TestDefaults(t *testing.T) {
 	assert.Equal(t, ws.mode, ServerMode, "incorrect mode value")
 	assert.Equal(t, ws.hooks.OnCloseHandshakeStart != nil, true, "OnCloseHandshakeStart hook is nil")
 	assert.Equal(t, ws.hooks.OnCloseHandshakeDone != nil, true, "OnCloseHandshakeDone hook is nil")
-	assert.Equal(t, ws.hooks.OnReadError != nil, true, "OnReadError hook is nil")
-	assert.Equal(t, ws.hooks.OnReadFrame != nil, true, "OnReadFrame hook is nil")
-	assert.Equal(t, ws.hooks.OnReadMessage != nil, true, "OnReadMessage hook is nil")
-	assert.Equal(t, ws.hooks.OnWriteError != nil, true, "OnWriteError hook is nil")
-	assert.Equal(t, ws.hooks.OnWriteFrame != nil, true, "OnWriteFrame hook is nil")
-	assert.Equal(t, ws.hooks.OnWriteMessage != nil, true, "OnWriteMessage hook is nil")
+	assert.True(t, ws.hooks.OnReadError != nil, "OnReadError hook is nil")
+	assert.True(t, ws.hooks.OnReadFrame != nil, "OnReadFrame hook is nil")
+	assert.True(t, ws.hooks.OnReadMessage != nil, "OnReadMessage hook is nil")
+	assert.True(t, ws.hooks.OnWriteError != nil, "OnWriteError hook is nil")
+	assert.True(t, ws.hooks.OnWriteFrame != nil, "OnWriteFrame hook is nil")
+	assert.True(t, ws.hooks.OnWriteMessage != nil, "OnWriteMessage hook is nil")
 
 	t.Run("CloseTimeout defaults to ReadTimeout if set", func(t *testing.T) {
 		var (

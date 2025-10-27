@@ -140,7 +140,7 @@ func TestHandshake(t *testing.T) {
 			resp, err := http.DefaultClient.Do(req)
 			assert.NilError(t, err)
 
-			assert.StatusCode(t, resp, tc.wantStatus)
+			assert.Equal(t, resp.StatusCode, tc.wantStatus, "incorrect status code")
 			for k, v := range tc.wantRespHeaders {
 				assert.Equal(t, resp.Header.Get(k), v, "incorrect value for %q response header", k)
 			}
@@ -278,13 +278,13 @@ func TestProtocolOkay(t *testing.T) {
 			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
 				mustWriteFrame(t, conn, true, wantFrame)
 				gotFrame := mustReadFrame(t, conn, len(wantFrame.Payload))
-				assert.DeepEqual(t, gotFrame, wantFrame, "frames should match")
+				assert.Equal(t, gotFrame, wantFrame, "frames should match")
 			},
 			// server reads a single frame, ensures it matches the frame
 			// written by the client, and then echoes it back.
 			serverTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
 				serverFrame := mustReadFrame(t, conn, len(wantFrame.Payload))
-				assert.DeepEqual(t, serverFrame, wantFrame, "frames should match")
+				assert.Equal(t, serverFrame, wantFrame, "frames should match")
 				mustWriteFrame(t, conn, false, serverFrame)
 			},
 		}.Run(t)
@@ -315,7 +315,7 @@ func TestProtocolOkay(t *testing.T) {
 				// correctly
 				mustWriteFrames(t, conn, true, websocket.FrameMessage(wantMessage, maxFrameSize))
 				// read reply to verify round-trip
-				assert.DeepEqual(t, mustReadMessage(t, ws), wantMessage, "incorect message received in reply from server")
+				assert.Equal(t, mustReadMessage(t, ws), wantMessage, "incorect message received in reply from server")
 			},
 
 			// server reads entire message and ensures that it is reassembled
@@ -327,7 +327,7 @@ func TestProtocolOkay(t *testing.T) {
 			},
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
 				msg := mustReadMessage(t, ws)
-				assert.DeepEqual(t, msg, wantMessage, "incorrect messaage received from client")
+				assert.Equal(t, msg, wantMessage, "incorrect messaage received from client")
 				assert.NilError(t, ws.WriteMessage(t.Context(), msg))
 			},
 		}.Run(t)
@@ -344,7 +344,7 @@ func TestProtocolOkay(t *testing.T) {
 					frame := websocket.NewFrame(websocket.OpcodeText, true, []byte("Iñtërnâtiônàlizætiøn"))
 					mustWriteFrame(t, conn, true, frame)
 					msg := mustReadMessage(t, ws)
-					assert.DeepEqual(t, msg.Payload, frame.Payload, "incorrect message payloady")
+					assert.Equal(t, msg.Payload, frame.Payload, "incorrect message payloady")
 				}
 
 				// valid UTF-8 fragmented on codepoint boundaries is okay
@@ -355,7 +355,7 @@ func TestProtocolOkay(t *testing.T) {
 						websocket.NewFrame(websocket.OpcodeContinuation, true, []byte("izætiøn")),
 					})
 					msg := mustReadMessage(t, ws)
-					assert.DeepEqual(t, msg.Payload, []byte("Iñtërnâtiônàlizætiøn"), "incorrect message payloady")
+					assert.Equal(t, msg.Payload, []byte("Iñtërnâtiônàlizætiøn"), "incorrect message payloady")
 				}
 
 				// valid UTF-8 fragmented in the middle of a codepoint is reassembled
@@ -366,7 +366,7 @@ func TestProtocolOkay(t *testing.T) {
 						websocket.NewFrame(websocket.OpcodeContinuation, true, []byte("\xb1o")),
 					})
 					msg := mustReadMessage(t, ws)
-					assert.DeepEqual(t, msg.Payload, []byte("jalapeño"), "payload")
+					assert.Equal(t, msg.Payload, []byte("jalapeño"), "payload")
 				}
 
 				assert.NilError(t, ws.Close())
@@ -389,11 +389,11 @@ func TestProtocolOkay(t *testing.T) {
 			clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
 				mustWriteFrames(t, conn, true, websocket.FrameMessage(wantMessage, len(wantMessage.Payload)))
 				msg := mustReadMessage(t, ws)
-				assert.DeepEqual(t, msg, wantMessage, "client received incorrect message in reply")
+				assert.Equal(t, msg, wantMessage, "client received incorrect message in reply")
 			},
 			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
 				msg := mustReadMessage(t, ws)
-				assert.DeepEqual(t, msg, wantMessage, "server received incorrect message")
+				assert.Equal(t, msg, wantMessage, "server received incorrect message")
 				assert.NilError(t, ws.WriteMessage(t.Context(), msg))
 			},
 		}.Run(t)
@@ -417,7 +417,7 @@ func TestProtocolOkay(t *testing.T) {
 				clientFrame := websocket.NewFrame(websocket.OpcodeText, true, bytes.Repeat([]byte("*"), jumboSize))
 				mustWriteFrame(t, conn, true, clientFrame)
 				respFrame := mustReadFrame(t, conn, jumboSize)
-				assert.DeepEqual(t, respFrame.Payload, clientFrame.Payload, "payload")
+				assert.Equal(t, respFrame.Payload, clientFrame.Payload, "payload")
 			},
 
 			serverOpts: websocket.Options{
@@ -452,7 +452,7 @@ func TestProtocolOkay(t *testing.T) {
 
 				// then should get the echo'd message from the two fragments
 				msg := mustReadMessage(t, ws)
-				assert.DeepEqual(t, msg.Payload, []byte("01"), "incorrect messaage payload")
+				assert.Equal(t, msg.Payload, []byte("01"), "incorrect messaage payload")
 
 				assert.NilError(t, ws.Close())
 			},
@@ -477,7 +477,7 @@ func TestProtocolOkay(t *testing.T) {
 					websocket.NewFrame(websocket.OpcodeText, true, wantPayload),
 				})
 				respFrame := mustReadFrame(t, conn, len(wantPayload))
-				assert.DeepEqual(t, respFrame.Payload, wantPayload, "payload")
+				assert.Equal(t, respFrame.Payload, wantPayload, "payload")
 				assert.NilError(t, ws.Close())
 			},
 			// server just echoes messages from the client
@@ -966,7 +966,7 @@ func TestErrorHandling(t *testing.T) {
 			// frame
 			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
 				frame := mustReadFrame(t, conn, maxFrameSize*2)
-				assert.DeepEqual(t, frame.Payload, payload[:maxFrameSize], "incorrect payload")
+				assert.Equal(t, frame.Payload, payload[:maxFrameSize], "incorrect payload")
 				// complete closing handshake
 				mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
 				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
@@ -1061,7 +1061,7 @@ func TestErrorHandling(t *testing.T) {
 
 				msg, err := ws.ReadMessage(t.Context())
 				assert.NilError(t, err)
-				assert.DeepEqual(t, msg.Payload, wantPayload, "incorrect payload")
+				assert.Equal(t, msg.Payload, wantPayload, "incorrect payload")
 				assert.NilError(t, ws.WriteMessage(t.Context(), msg))
 			},
 		}.Run(t)
@@ -1081,7 +1081,7 @@ func TestErrorHandling(t *testing.T) {
 			// client reads a message from the server
 			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
 				frame := mustReadFrame(t, conn, 128)
-				assert.DeepEqual(t, frame.Payload, wantPayload, "incorrect payload")
+				assert.Equal(t, frame.Payload, wantPayload, "incorrect payload")
 			},
 			// server calls ReadMessage twice, first getting an error from the
 			// invalid frame and then getting the expected valid payload,
@@ -1131,7 +1131,7 @@ func TestServeLoop(t *testing.T) {
 
 				// first frame should be echoed as expected
 				frame := mustReadFrame(t, conn, 128)
-				assert.DeepEqual(t, frame.Payload, []byte("ok"), "incorrect payload")
+				assert.Equal(t, frame.Payload, []byte("ok"), "incorrect payload")
 
 				// second frame should cause the handler to return an error,
 				// which should cause the server to close the connection
@@ -1275,7 +1275,7 @@ func mustReadCloseFrame(t testing.TB, r io.Reader, wantCode websocket.StatusCode
 	gotReason := string(frame.Payload[2:])
 	assert.Equal(t, int(gotCode), int(wantCode), "incorrect close status code")
 	if wantErr != nil {
-		assert.Contains(t, gotReason, wantErr.Error(), "reason")
+		assert.True(t, strings.Contains(gotReason, wantErr.Error()), "incorrect close reason")
 	}
 }
 
@@ -1306,7 +1306,13 @@ func assertConnClosed(t testing.TB, conn net.Conn) {
 	}
 
 	// finally check for concrete errors
-	assert.Error(t, err, io.EOF, net.ErrClosed)
+	switch {
+	case errors.Is(err, io.EOF):
+	case errors.Is(err, net.ErrClosed):
+		// okay, we wanted one of these errors
+	default:
+		t.Errorf("unexpected error: %s", err)
+	}
 }
 
 // clientServerTestFunc is a callback invoked by [clientServerTest.Run]to
@@ -1411,7 +1417,7 @@ func (cst clientServerTest) Run(t testing.TB) {
 		assert.NilError(t, handshakeReq.Write(clientConn))
 		resp, err := http.ReadResponse(br, nil)
 		assert.NilError(t, err)
-		assert.StatusCode(t, resp, http.StatusSwitchingProtocols)
+		assert.Equal(t, resp.StatusCode, http.StatusSwitchingProtocols, "incorrect status code")
 
 		clientSock := websocket.New(clientConn, cst.clientKey, websocket.ClientMode, cst.clientOpts)
 		cst.clientTest(t, clientSock, clientConn)

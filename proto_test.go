@@ -2,7 +2,6 @@ package websocket_test
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"testing"
 
@@ -25,7 +24,7 @@ func TestFrameRoundTrip(t *testing.T) {
 	assert.NilError(t, err)
 
 	// ensure client and server frame match
-	assert.DeepEqual(t, serverFrame, clientFrame, "server and client frame mismatch")
+	assert.Equal(t, serverFrame, clientFrame, "server and client frame mismatch")
 }
 
 func TestMaxFrameSize(t *testing.T) {
@@ -148,7 +147,7 @@ func TestExampleFramesFromRFC(t *testing.T) {
 			t.Parallel()
 			buf := bytes.NewReader(tc.rawBytes)
 			got := mustReadFrame(t, buf, len(tc.rawBytes))
-			assert.DeepEqual(t, got, tc.wantFrame, "frames do not match")
+			assert.Equal(t, got, tc.wantFrame, "frames do not match")
 		})
 	}
 }
@@ -156,23 +155,23 @@ func TestExampleFramesFromRFC(t *testing.T) {
 func TestIncompleteFrames(t *testing.T) {
 	testCases := map[string]struct {
 		rawBytes []byte
-		wantErr  error
+		wantErr  string
 	}{
 		"2-byte extended payload can't be read": {
 			rawBytes: []byte{0x82, 0x7E},
-			wantErr:  errors.New("error reading 2-byte extended payload length: EOF"),
+			wantErr:  "error reading 2-byte extended payload length: EOF",
 		},
 		"8-byte extended payload can't be read": {
 			rawBytes: []byte{0x82, 0x7F},
-			wantErr:  errors.New("error reading 8-byte extended payload length: EOF"),
+			wantErr:  "error reading 8-byte extended payload length: EOF",
 		},
 		"mask can't be read": {
 			rawBytes: []byte{0x81, 0x85},
-			wantErr:  errors.New("error reading mask key: EOF"),
+			wantErr:  "error reading mask key: EOF",
 		},
 		"payload can't be read": {
 			rawBytes: []byte{0x81, 0x05},
-			wantErr:  errors.New("error reading 5 byte payload: EOF"),
+			wantErr:  "error reading 5 byte payload: EOF",
 		},
 	}
 
