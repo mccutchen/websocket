@@ -8,6 +8,13 @@ BENCH_COUNT   ?= 10
 BENCH_ARGS    ?= -bench=. -benchmem -count=$(BENCH_COUNT) -run=^$$
 DOCS_PORT     ?= :8080
 
+# Temporarily -- hopefully -- disable parallelization during CI test runs,
+# because it makes the test suite incredibly flaky for reasons I have not been
+# able to sort out yet.
+#
+# FIXME: fix the flakiness and drop this line.
+CI_TEST_ARGS  := $(CI_TEST_ARGS) -parallel 1
+
 # 3rd party tools
 CMD_GOFUMPT     := go run mvdan.cc/gofumpt@v0.8.0
 CMD_PKGSITE     := go run golang.org/x/pkgsite/cmd/pkgsite@latest
