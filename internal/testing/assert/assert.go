@@ -1,165 +1,124 @@
-// Package assert implements common assertions used in go-httbin's unit tests.
+// Package assert implements a set of basic test helpers.
+//
+// Lightly adapted from this blog post: https://antonz.org/do-not-testify/
 package assert
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
-	"net/http"
 	"reflect"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/mccutchen/websocket/internal/testing/must"
 )
 
-// Equal asserts that two values are equal.
-func Equal[T comparable](t testing.TB, got, want T, msg string, arg ...any) {
-	t.Helper()
-	if got != want {
-		if msg == "" {
-			msg = "expected values to match"
-		}
-		msg = fmt.Sprintf(msg, arg...)
-		t.Fatalf("%s:\nwant: %v\n got: %v", msg, want, got)
+// Equal asserts that got is equal to want.
+func Equal[T any](tb testing.TB, got T, want T, customMsg ...any) {
+	tb.Helper()
+	if areEqual(got, want) {
+		return
+	}
+	msg := formatMsg("expected values to be equal", customMsg)
+	tb.Errorf("%s:\ngot:  %#v\nwant: %#v", msg, got, want)
+}
+
+// True asserts that got is true.
+func True(tb testing.TB, got bool, customMsg ...any) {
+	tb.Helper()
+	if !got {
+		tb.Error(formatMsg("expected value to be true", customMsg))
 	}
 }
 
-// DeepEqual asserts that two values are deeply equal.
-func DeepEqual[T any](t testing.TB, got, want T, msg string, arg ...any) {
-	t.Helper()
-	if !reflect.DeepEqual(got, want) {
-		if msg == "" {
-			msg = "expected values to match"
+// Error asserts that got matches want, which may be an error, an error type,
+// an error string, or nil. If want is a string, it is considered a match if
+// it is ia substring of got's string value.
+func Error(tb testing.TB, got error, want any) {
+	tb.Helper()
+
+	if want != nil && got == nil {
+		tb.Errorf("errors do not match:\ngot:  <nil>\nwant: %v", want)
+		return
+	}
+
+	switch w := want.(type) {
+	case nil:
+		NilError(tb, got)
+	case error:
+		if !errors.Is(got, w) {
+			tb.Errorf("errors do not match:\ngot:  %T(%v)\nwant: %T(%v)", got, got, w, w)
 		}
-		msg = fmt.Sprintf(msg, arg...)
-		t.Fatalf("%s:\nwant: %#v\n got: %#v", msg, want, got)
+	case string:
+		if !strings.Contains(got.Error(), w) {
+			tb.Errorf("error string does not match:\ngot:  %q\nwant: %q", got.Error(), w)
+		}
+	case reflect.Type:
+		target := reflect.New(w).Interface()
+		if !errors.As(got, target) {
+			tb.Errorf("error type does not match:\ngot:  %T\nwant: %s", got, w)
+		}
+	default:
+		tb.Errorf("unsupported want type: %T", want)
 	}
 }
 
-// NilError asserts that an error is nil.
-func NilError(t testing.TB, err error) {
-	t.Helper()
-	if err != nil {
-		t.Fatalf("expected nil error, got %q (%T)", err, err)
+// NilError asserts that got is nil.
+func NilError(tb testing.TB, got error) {
+	tb.Helper()
+	if got != nil {
+		tb.Fatalf("expected nil error, got %q (%T)", got, got)
 	}
 }
 
-// Error asserts that an error matches an expected error or any one of a list
-// of expected errors.
-func Error(t testing.TB, got, expected error, alternates ...error) {
-	t.Helper()
-	matched := false
-	wantAny := append([]error{expected}, alternates...)
-	for _, want := range wantAny {
-		if errorsMatch(t, got, want) {
-			matched = true
-			break
-		}
-	}
-	if !matched {
-		if len(wantAny) == 1 {
-			t.Fatalf("expected error %q, got %q (%T vs %T)", expected, got, expected, got)
-		} else {
-			t.Fatalf("expected one of %v, got %q (%T)", wantAny, got, got)
-		}
-	}
+type equaler[T any] interface {
+	Equal(T) bool
 }
 
-func errorsMatch(t testing.TB, got, expected error) bool {
-	t.Helper()
-	switch {
-	case got == expected:
+func areEqual[T any](a, b T) bool {
+	if isNil(a) && isNil(b) {
 		return true
-	case errors.Is(got, expected):
+	}
+	// special case types with an Equal method
+	if eq, ok := any(a).(equaler[T]); ok {
+		return eq.Equal(b)
+	}
+	// special case byte slices
+	if aBytes, ok := any(a).([]byte); ok {
+		bBytes := any(b).([]byte)
+		return bytes.Equal(aBytes, bBytes)
+	}
+	return reflect.DeepEqual(a, b)
+}
+
+func isNil(v any) bool {
+	if v == nil {
 		return true
-	case got != nil && expected != nil:
-		return got.Error() == expected.Error()
+	}
+	// A non-nil interface can still hold a nil value, so we check the
+	// underlying value.
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan,
+		reflect.Func,
+		reflect.Interface,
+		reflect.Map,
+		reflect.Pointer,
+		reflect.Slice,
+		reflect.UnsafePointer:
+		return rv.IsNil()
 	default:
 		return false
 	}
 }
 
-// StatusCode asserts that a response has a specific status code.
-func StatusCode(t testing.TB, resp *http.Response, code int) {
-	t.Helper()
-	if resp.StatusCode != code {
-		t.Fatalf("expected status code %d, got %d", code, resp.StatusCode)
-	}
-	if resp.StatusCode >= 400 {
-		// Ensure our error responses are never served as HTML, so that we do
-		// not need to worry about XSS or other attacks in error responses.
-		if ct := resp.Header.Get("Content-Type"); !isSafeContentType(ct) {
-			t.Errorf("HTTP %s error served with dangerous content type: %s", resp.Status, ct)
+func formatMsg(defaultMsg string, customMsg []any) string {
+	msg := defaultMsg
+	if len(customMsg) > 0 {
+		tmpl, ok := customMsg[0].(string)
+		if !ok {
+			tmpl = fmt.Sprintf("%v", customMsg[0])
 		}
+		msg = fmt.Sprintf(tmpl, customMsg[1:])
 	}
-}
-
-func isSafeContentType(ct string) bool {
-	return strings.HasPrefix(ct, "application/json") || strings.HasPrefix(ct, "text/plain") || strings.HasPrefix(ct, "application/octet-stream")
-}
-
-// Header asserts that a header key has a specific value in a response.
-func Header(t testing.TB, resp *http.Response, key, want string) {
-	t.Helper()
-	got := resp.Header.Get(key)
-	if want != got {
-		t.Fatalf("expected header %s=%#v, got %#v", key, want, got)
-	}
-}
-
-// ContentType asserts that a response has a specific Content-Type header
-// value.
-func ContentType(t testing.TB, resp *http.Response, contentType string) {
-	t.Helper()
-	Header(t, resp, "Content-Type", contentType)
-}
-
-// Contains asserts that needle is found in the given string.
-func Contains(t testing.TB, s string, needle string, description string) {
-	t.Helper()
-	if !strings.Contains(s, needle) {
-		t.Fatalf("expected string %q in %s %q", needle, description, s)
-	}
-}
-
-// BodyContains asserts that a response body contains a specific substring.
-func BodyContains(t testing.TB, resp *http.Response, needle string) {
-	t.Helper()
-	body := must.ReadAll(t, resp.Body)
-	Contains(t, body, needle, "body")
-}
-
-// BodyEquals asserts that a response body is equal to a specific string.
-func BodyEquals(t testing.TB, resp *http.Response, want string) {
-	t.Helper()
-	got := must.ReadAll(t, resp.Body)
-	Equal(t, got, want, "incorrect response body")
-}
-
-// BodySize asserts that a response body is a specific size.
-func BodySize(t testing.TB, resp *http.Response, want int) {
-	t.Helper()
-	got := must.ReadAll(t, resp.Body)
-	Equal(t, len(got), want, "incorrect response body size")
-}
-
-// DurationRange asserts that a duration is within a specific range.
-func DurationRange(t testing.TB, got, minVal, maxVal time.Duration) {
-	t.Helper()
-	if got < minVal || got > maxVal {
-		t.Fatalf("expected duration between %s and %s, got %s", minVal, maxVal, got)
-	}
-}
-
-type number interface {
-	~int64 | ~float64
-}
-
-// RoughlyEqual asserts that a numeric value is within a certain tolerance.
-func RoughlyEqual[T number](t testing.TB, got, want T, epsilon T) {
-	t.Helper()
-	if got < want-epsilon || got > want+epsilon {
-		t.Fatalf("expected value between %v and %v, got %v", want-epsilon, want+epsilon, got)
-	}
+	return msg
 }
