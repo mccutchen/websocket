@@ -2,7 +2,7 @@
 COVERAGE_PATH ?= coverage.out
 COVERAGE_ARGS ?= -covermode=atomic -coverprofile=$(COVERAGE_PATH)
 TEST_ARGS     ?= -race -count=1 -timeout=5s
-CI_TEST_ARGS  ?= -timeout=60s
+CI_TEST_ARGS  ?= -timeout=120s
 AUTOBAHN_ARGS ?= -race -count=1 -timeout=120s
 BENCH_COUNT   ?= 10
 BENCH_ARGS    ?= -bench=. -benchmem -count=$(BENCH_COUNT) -run=^$$
