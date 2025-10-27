@@ -118,7 +118,7 @@ func formatMsg(defaultMsg string, customMsg []any) string {
 		if !ok {
 			tmpl = fmt.Sprintf("%v", customMsg[0])
 		}
-		msg = fmt.Sprintf(tmpl, customMsg[1:])
+		msg = fmt.Sprintf(tmpl, customMsg[1:]...)
 	}
 	return msg
 }
