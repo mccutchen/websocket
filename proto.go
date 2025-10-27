@@ -455,10 +455,7 @@ type ClientKey string
 // Panics on insufficient randomness.
 func NewClientKey() ClientKey {
 	b := make([]byte, 16)
-	_, err := rand.Read(b)
-	if err != nil {
-		panic(fmt.Sprintf("NewClientKey: failed to read random bytes: %s", err))
-	}
+	_, _ = rand.Read(b) // crypto/rand.Read crashes on error
 	return ClientKey(base64.StdEncoding.EncodeToString(b))
 }
 
@@ -473,10 +470,7 @@ var Unmasked = MaskingKey([4]byte{})
 // Panics on insufficient randomness.
 func NewMaskingKey() MaskingKey {
 	var key [4]byte
-	_, err := rand.Read(key[:]) // Fill the key with 4 random bytes
-	if err != nil {
-		panic(fmt.Sprintf("NewMaskingKey: failed to read random bytes: %s", err))
-	}
+	_, _ = rand.Read(key[:]) // crypto/rand.Read crashes on error
 	return key
 }
 

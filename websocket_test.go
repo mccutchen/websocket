@@ -1425,6 +1425,7 @@ func (cst clientServerTest) Run(t testing.TB) {
 
 	wg.Wait()
 }
+
 func newConnWithBufferedReader(conn net.Conn) (*connWithBufferedReader, *bufio.Reader) {
 	reader := bufio.NewReader(conn)
 	return &connWithBufferedReader{
@@ -1535,6 +1536,7 @@ func (c *wrappedConn) SetWriteDeadline(t time.Time) error {
 func (c *wrappedConn) LocalAddr() net.Addr {
 	return c.conn.LocalAddr()
 }
+
 func (c *wrappedConn) RemoteAddr() net.Addr {
 	return c.conn.RemoteAddr()
 }
