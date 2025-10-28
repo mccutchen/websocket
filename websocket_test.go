@@ -123,12 +123,11 @@ func TestHandshake(t *testing.T) {
 			t.Parallel()
 
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				ws, err := websocket.Accept(w, r, websocket.Options{})
+				_, err := websocket.Accept(w, r, websocket.Options{})
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
 				}
-				_ = ws.Handle(r.Context(), websocket.EchoHandler)
 			}))
 			defer srv.Close()
 
@@ -139,6 +138,7 @@ func TestHandshake(t *testing.T) {
 
 			resp, err := http.DefaultClient.Do(req)
 			assert.NilError(t, err)
+			defer resp.Body.Close()
 
 			assert.Equal(t, resp.StatusCode, tc.wantStatus, "incorrect status code")
 			for k, v := range tc.wantRespHeaders {
