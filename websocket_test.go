@@ -138,7 +138,7 @@ func TestHandshake(t *testing.T) {
 
 			resp, err := http.DefaultClient.Do(req)
 			assert.NilError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, resp.StatusCode, tc.wantStatus, "incorrect status code")
 			for k, v := range tc.wantRespHeaders {
