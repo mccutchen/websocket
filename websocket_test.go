@@ -217,7 +217,6 @@ func TestConnectionLimits(t *testing.T) {
 				mustReadCloseFrame(t, conn, websocket.StatusAbnormalClose, errors.New("error reading frame header"))
 				elapsed := time.Since(start)
 				assert.Equal(t, elapsed >= maxDuration, true, "not enough time passed")
-				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, "server closed connection"))
 				assertConnClosed(t, conn)
 			},
 			// server runs echo handler with read timeout, which should timeout
@@ -240,12 +239,16 @@ func TestConnectionLimits(t *testing.T) {
 	t.Run("client closing connection", func(t *testing.T) {
 		t.Parallel()
 
-		serverTimeout := time.Hour // should never be reached
+		var (
+			clientTimeout = 250 * time.Millisecond
+			serverTimeout = time.Hour // should never be reached
+		)
 
 		clientServerTest{
 			// client closes its end of the connection, which should interrupt
 			// the server's blocking read and cause it to return.
 			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				time.Sleep(clientTimeout)
 				assert.NilError(t, conn.Close())
 			},
 			// server tries to read, which should be interrupted by client
@@ -260,7 +263,8 @@ func TestConnectionLimits(t *testing.T) {
 
 				assert.Error(t, err, io.EOF)
 				assert.Equal(t, msg, nil, "msg should be nil on error")
-				assert.Equal(t, elapsed < serverTimeout, true, "server should not reach its own timeout")
+				assert.True(t, elapsed >= clientTimeout, "server should block until client timeout")
+				assert.Equal(t, elapsed <= serverTimeout, true, "server should not reach its own timeout")
 			},
 		}.Run(t)
 	})
