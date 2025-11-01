@@ -1356,6 +1356,16 @@ func (cst clientServerTest) Run(t testing.TB) {
 		cst.clientKey = websocket.NewClientKey()
 	}
 
+	setDefaultOpts := func(opts *websocket.Options) {
+		defaultTimeout := 500 * time.Millisecond
+		if opts.ReadTimeout == 0 {
+			opts.ReadTimeout = defaultTimeout
+		}
+		if opts.WriteTimeout == 0 {
+			opts.WriteTimeout = defaultTimeout
+		}
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1377,7 +1387,10 @@ func (cst clientServerTest) Run(t testing.TB) {
 			serverConn = cst.serverConn(serverConn)
 		}
 
-		ws := websocket.New(serverConn, clientKey, websocket.ServerMode, cst.serverOpts)
+		opts := cst.serverOpts
+		setDefaultOpts(&opts)
+
+		ws := websocket.New(serverConn, clientKey, websocket.ServerMode, opts)
 		cst.serverTest(t, ws, serverConn)
 	}))
 	t.Cleanup(func() {
@@ -1429,7 +1442,10 @@ func (cst clientServerTest) Run(t testing.TB) {
 		assert.NilError(t, err)
 		assert.Equal(t, resp.StatusCode, http.StatusSwitchingProtocols, "incorrect status code")
 
-		clientSock := websocket.New(clientConn, cst.clientKey, websocket.ClientMode, cst.clientOpts)
+		opts := cst.clientOpts
+		setDefaultOpts(&opts)
+
+		clientSock := websocket.New(clientConn, cst.clientKey, websocket.ClientMode, opts)
 		cst.clientTest(t, clientSock, clientConn)
 	}()
 
