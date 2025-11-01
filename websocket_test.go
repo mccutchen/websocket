@@ -1366,16 +1366,19 @@ func (cst clientServerTest) Run(t testing.TB) {
 		clientKey, err := websocket.Handshake(w, r)
 		assert.NilError(t, err)
 
-		conn, _, err := w.(http.Hijacker).Hijack()
+		serverConn, _, err := w.(http.Hijacker).Hijack()
 		assert.NilError(t, err)
+
+		serverConn = &tappedConn{Conn: serverConn, mode: "server"}
+		defer serverConn.(*tappedConn).Report(t)
 
 		// optionally wrap conn before handing it off to test function
 		if cst.serverConn != nil {
-			conn = cst.serverConn(conn)
+			serverConn = cst.serverConn(serverConn)
 		}
 
-		ws := websocket.New(conn, clientKey, websocket.ServerMode, cst.serverOpts)
-		cst.serverTest(t, ws, conn)
+		ws := websocket.New(serverConn, clientKey, websocket.ServerMode, cst.serverOpts)
+		cst.serverTest(t, ws, serverConn)
 	}))
 	t.Cleanup(func() {
 		// TODO: require all tests to cleanly close the connection?
@@ -1392,6 +1395,9 @@ func (cst clientServerTest) Run(t testing.TB) {
 		t.Cleanup(func() {
 			_ = clientConn.Close()
 		})
+
+		clientConn = &tappedConn{Conn: clientConn, mode: "client"}
+		defer clientConn.(*tappedConn).Report(t)
 
 		// optionally wrap client conn before handing it off to test function
 		if cst.clientConn != nil {
@@ -1574,6 +1580,68 @@ var (
 	_ http.ResponseWriter = &brokenHijackResponseWriter{}
 	_ http.Hijacker       = &brokenHijackResponseWriter{}
 )
+
+// tappedConn is a net.Conn wrapper that records every read and write it sees,
+// in order, and can report on the sequence of reads and writes at the end of
+// a test run.
+//
+// This is dumb and inefficient and only maybe suitable for use in debugging
+// weird test failures.
+type tappedConn struct {
+	net.Conn
+	mode    string // "client" or "server"
+	mu      sync.Mutex
+	entries []tapRecord
+}
+
+func (tap *tappedConn) Read(p []byte) (int, error) {
+	n, err := tap.Conn.Read(p)
+	data := make([]byte, n)
+	copy(data, p[:n])
+	tap.mu.Lock()
+	tap.entries = append(tap.entries, tapRecord{
+		action: "read",
+		data:   data,
+		err:    err,
+	})
+	tap.mu.Unlock()
+	return n, err
+}
+
+func (tap *tappedConn) Write(p []byte) (int, error) {
+	n, err := tap.Conn.Write(p)
+	data := make([]byte, n)
+	copy(data, p[:n])
+	tap.mu.Lock()
+	tap.entries = append(tap.entries, tapRecord{
+		action: "write",
+		data:   data,
+		err:    err,
+	})
+	tap.mu.Unlock()
+	return n, err
+}
+
+func (tap *tappedConn) Report(t testing.TB) {
+	report := &strings.Builder{}
+	fmt.Fprintf(report, "\ntapped %s connection:\n", strings.ToUpper(tap.mode))
+	for i, entry := range tap.entries {
+		if entry.err != nil {
+			fmt.Fprintf(report, "  %02d: %s: ERROR: %s", i, entry.action, entry.err)
+		} else {
+			fmt.Fprintf(report, "  %02d: %s: %q (%d)\n", i, entry.action, entry.data, len(entry.data))
+		}
+	}
+	t.Log(report.String())
+}
+
+var _ net.Conn = &tappedConn{}
+
+type tapRecord struct {
+	action string // "read" or "write"
+	data   []byte
+	err    error
+}
 
 // ============================================================================
 // Examples
