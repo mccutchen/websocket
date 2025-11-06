@@ -168,27 +168,14 @@ func TestHandshake(t *testing.T) {
 			_, ok := w.(http.Hijacker)
 			assert.Equal(t, ok, false, "expected httptest.ResponseRecorder not to implement http.Hijacker")
 
-			defer func() {
-				r := recover()
-				if r == nil {
-					t.Fatalf("expected to catch panic on when http.Hijack not implemented")
-				}
-				assert.Equal(t, fmt.Sprint(r), "websocket: accept: server does not support hijacking", "incorrect panic message")
-			}()
-			_, _ = websocket.Accept(w, handshakeReq, websocket.Options{})
+			_, err := websocket.Accept(w, handshakeReq, websocket.Options{})
+			assert.Error(t, err, "websocket: accept: hijack failed: server does not support hijacking")
 		})
 
 		t.Run("hijack failed", func(t *testing.T) {
 			t.Parallel()
-
-			defer func() {
-				r := recover()
-				if r == nil {
-					t.Fatalf("expected to catch panic on Serve before Handshake")
-				}
-				assert.Equal(t, fmt.Sprint(r), "websocket: accept: hijack failed: error hijacking connection", "incorrect panic message")
-			}()
-			_, _ = websocket.Accept(&brokenHijackResponseWriter{}, handshakeReq, websocket.Options{})
+			_, err := websocket.Accept(&brokenHijackResponseWriter{}, handshakeReq, websocket.Options{})
+			assert.Error(t, err, "websocket: accept: hijack failed: error hijacking connection")
 		})
 	}
 }
@@ -1376,7 +1363,7 @@ func (cst clientServerTest) Run(t testing.TB) {
 		clientKey, err := websocket.Handshake(w, r)
 		assert.NilError(t, err)
 
-		serverConn, _, err := w.(http.Hijacker).Hijack()
+		serverConn, err := websocket.HijackConn(w)
 		assert.NilError(t, err)
 
 		serverConn = &tappedConn{Conn: serverConn, mode: "server"}
@@ -1424,7 +1411,11 @@ func (cst clientServerTest) Run(t testing.TB) {
 		//
 		// this wrapper helps ensure that any data read into the buffer is still
 		// available on subsequent reads directly from the conn.
-		clientConn, br := newConnWithBufferedReader(clientConn)
+		br := bufio.NewReader(clientConn)
+		clientConn = &websocket.BufferedConn{
+			Conn:   clientConn,
+			Reader: br,
+		}
 
 		handshakeReq := httptest.NewRequest(http.MethodGet, "/", nil)
 		for k, v := range map[string]string{
@@ -1451,28 +1442,6 @@ func (cst clientServerTest) Run(t testing.TB) {
 
 	wg.Wait()
 }
-
-func newConnWithBufferedReader(conn net.Conn) (*connWithBufferedReader, *bufio.Reader) {
-	reader := bufio.NewReader(conn)
-	return &connWithBufferedReader{
-		Conn:   conn,
-		reader: reader,
-	}, reader
-}
-
-// connWithbufferedReader wraps a net.Conn with a bufio.Reader to ensure that
-// any partial data left in the buffer is available to subsequent reads from
-// the conn. See usage in setupRawConnWithHandler above for more explanation.
-type connWithBufferedReader struct {
-	net.Conn
-	reader *bufio.Reader
-}
-
-func (c *connWithBufferedReader) Read(b []byte) (int, error) {
-	return c.reader.Read(b)
-}
-
-var _ net.Conn = &connWithBufferedReader{}
 
 func newTestHooks(t testing.TB) websocket.Hooks {
 	t.Helper()
