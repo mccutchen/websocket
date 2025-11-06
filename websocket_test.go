@@ -168,27 +168,14 @@ func TestHandshake(t *testing.T) {
 			_, ok := w.(http.Hijacker)
 			assert.Equal(t, ok, false, "expected httptest.ResponseRecorder not to implement http.Hijacker")
 
-			defer func() {
-				r := recover()
-				if r == nil {
-					t.Fatalf("expected to catch panic on when http.Hijack not implemented")
-				}
-				assert.Equal(t, fmt.Sprint(r), "websocket: accept: server does not support hijacking", "incorrect panic message")
-			}()
-			_, _ = websocket.Accept(w, handshakeReq, websocket.Options{})
+			_, err := websocket.Accept(w, handshakeReq, websocket.Options{})
+			assert.Error(t, err, "websocket: accept: hijack failed: server does not support hijacking")
 		})
 
 		t.Run("hijack failed", func(t *testing.T) {
 			t.Parallel()
-
-			defer func() {
-				r := recover()
-				if r == nil {
-					t.Fatalf("expected to catch panic on Serve before Handshake")
-				}
-				assert.Equal(t, fmt.Sprint(r), "websocket: accept: hijack failed: error hijacking connection", "incorrect panic message")
-			}()
-			_, _ = websocket.Accept(&brokenHijackResponseWriter{}, handshakeReq, websocket.Options{})
+			_, err := websocket.Accept(&brokenHijackResponseWriter{}, handshakeReq, websocket.Options{})
+			assert.Error(t, err, "websocket: accept: hijack failed: error hijacking connection")
 		})
 	}
 }
@@ -217,7 +204,6 @@ func TestConnectionLimits(t *testing.T) {
 				mustReadCloseFrame(t, conn, websocket.StatusAbnormalClose, errors.New("error reading frame header"))
 				elapsed := time.Since(start)
 				assert.Equal(t, elapsed >= maxDuration, true, "not enough time passed")
-				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, "server closed connection"))
 				assertConnClosed(t, conn)
 			},
 			// server runs echo handler with read timeout, which should timeout
@@ -240,12 +226,16 @@ func TestConnectionLimits(t *testing.T) {
 	t.Run("client closing connection", func(t *testing.T) {
 		t.Parallel()
 
-		serverTimeout := time.Hour // should never be reached
+		var (
+			clientTimeout = 250 * time.Millisecond
+			serverTimeout = time.Hour // should never be reached
+		)
 
 		clientServerTest{
 			// client closes its end of the connection, which should interrupt
 			// the server's blocking read and cause it to return.
 			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+				time.Sleep(clientTimeout)
 				assert.NilError(t, conn.Close())
 			},
 			// server tries to read, which should be interrupted by client
@@ -260,7 +250,8 @@ func TestConnectionLimits(t *testing.T) {
 
 				assert.Error(t, err, io.EOF)
 				assert.Equal(t, msg, nil, "msg should be nil on error")
-				assert.Equal(t, elapsed < serverTimeout, true, "server should not reach its own timeout")
+				assert.True(t, elapsed >= clientTimeout, "server should block until client timeout")
+				assert.Equal(t, elapsed <= serverTimeout, true, "server should not reach its own timeout")
 			},
 		}.Run(t)
 	})
@@ -1362,16 +1353,16 @@ func (cst clientServerTest) Run(t testing.TB) {
 		clientKey, err := websocket.Handshake(w, r)
 		assert.NilError(t, err)
 
-		conn, _, err := w.(http.Hijacker).Hijack()
+		serverConn, err := websocket.HijackConn(w)
 		assert.NilError(t, err)
 
 		// optionally wrap conn before handing it off to test function
 		if cst.serverConn != nil {
-			conn = cst.serverConn(conn)
+			serverConn = cst.serverConn(serverConn)
 		}
 
-		ws := websocket.New(conn, clientKey, websocket.ServerMode, cst.serverOpts)
-		cst.serverTest(t, ws, conn)
+		ws := websocket.New(serverConn, clientKey, websocket.ServerMode, cst.serverOpts)
+		cst.serverTest(t, ws, serverConn)
 	}))
 	t.Cleanup(func() {
 		// TODO: require all tests to cleanly close the connection?
@@ -1401,7 +1392,11 @@ func (cst clientServerTest) Run(t testing.TB) {
 		//
 		// this wrapper helps ensure that any data read into the buffer is still
 		// available on subsequent reads directly from the conn.
-		clientConn, br := newConnWithBufferedReader(clientConn)
+		br := bufio.NewReader(clientConn)
+		clientConn = &websocket.BufferedConn{
+			Conn:   clientConn,
+			Reader: br,
+		}
 
 		handshakeReq := httptest.NewRequest(http.MethodGet, "/", nil)
 		for k, v := range map[string]string{
@@ -1425,28 +1420,6 @@ func (cst clientServerTest) Run(t testing.TB) {
 
 	wg.Wait()
 }
-
-func newConnWithBufferedReader(conn net.Conn) (*connWithBufferedReader, *bufio.Reader) {
-	reader := bufio.NewReader(conn)
-	return &connWithBufferedReader{
-		Conn:   conn,
-		reader: reader,
-	}, reader
-}
-
-// connWithbufferedReader wraps a net.Conn with a bufio.Reader to ensure that
-// any partial data left in the buffer is available to subsequent reads from
-// the conn. See usage in setupRawConnWithHandler above for more explanation.
-type connWithBufferedReader struct {
-	net.Conn
-	reader *bufio.Reader
-}
-
-func (c *connWithBufferedReader) Read(b []byte) (int, error) {
-	return c.reader.Read(b)
-}
-
-var _ net.Conn = &connWithBufferedReader{}
 
 func newTestHooks(t testing.TB) websocket.Hooks {
 	t.Helper()

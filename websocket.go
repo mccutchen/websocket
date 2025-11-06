@@ -2,6 +2,7 @@
 package websocket
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -86,18 +87,33 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Websocket, e
 	if err != nil {
 		return nil, fmt.Errorf("websocket: accept: handshake failed: %w", err)
 	}
+	conn, err := HijackConn(w)
+	if err != nil {
+		return nil, fmt.Errorf("websocket: accept: hijack failed: %w", err)
+	}
+	return New(conn, clientKey, ServerMode, opts), nil
+}
 
+// HijackConn takes over the [net.Conn] underlying an [http.ResponseWriter]
+// for use as a websocket.
+func HijackConn(w http.ResponseWriter) (net.Conn, error) {
 	hj, ok := w.(http.Hijacker)
 	if !ok {
-		panic("websocket: accept: server does not support hijacking")
+		return nil, errors.New("server does not support hijacking")
 	}
 
-	conn, _, err := hj.Hijack()
+	conn, rw, err := hj.Hijack()
 	if err != nil {
-		panic(fmt.Errorf("websocket: accept: hijack failed: %s", err))
+		return nil, err
 	}
 
-	return New(conn, clientKey, ServerMode, opts), nil
+	// per the Hijack docs, the returned read buffer may contain unprocessed
+	// data, so we return a net.Conn implementation that will read from that
+	// buffer first.
+	return &BufferedConn{
+		Conn:   conn,
+		Reader: rw.Reader,
+	}, nil
 }
 
 // New is a low-level API that manually creates a new websocket connection.
@@ -521,6 +537,20 @@ func statusCodeForError(err error) (StatusCode, string) {
 	}
 	return StatusInternalError, err.Error()
 }
+
+// BufferedConn ties a [net.Conn] to a [bufio.Reader] wrapping that conn, such
+// as those returned by [http.Hijacker.Hijack], so that all reads go through
+// the buffered reader but writes go directly to the underlying conn.
+type BufferedConn struct {
+	net.Conn
+	Reader *bufio.Reader
+}
+
+func (bc *BufferedConn) Read(p []byte) (int, error) {
+	return bc.Reader.Read(p)
+}
+
+var _ net.Conn = &BufferedConn{}
 
 // Hooks define the callbacks that are called during the lifecycle of a
 // websocket connection.
