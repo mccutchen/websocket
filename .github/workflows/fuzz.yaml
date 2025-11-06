@@ -1,0 +1,103 @@
+name: fuzz
+
+on:
+  schedule:
+   - cron: '13 0 * * *' # every day at 00:13 UTC
+
+  workflow_dispatch:
+    inputs:
+      fuzz_time:
+        description: '-fuzztime argument'
+        required: false
+        default: '5m'
+      fuzz_minimize_time:
+        description: '-fuzzminimizetime argument'
+        required: false
+        default: '60s'
+
+env:
+  # Default values that can be overridden
+  FUZZ_TIME: ${{ github.event.inputs.fuzz_time || '1h' }}
+  FUZZ_MINIMIZE_TIME: ${{ github.event.inputs.fuzz_minimize_time || '5m' }}
+  FUZZ_OUTPUT: ./fuzz.log
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  fuzz_test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: stable
+
+      - name: fuzz
+        id: fuzz
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fuzz
+
+          set +e
+          make fuzz | tee "${FUZZ_OUTPUT}"
+          FUZZ_EXIT_CODE=$?
+
+          cat <<EOF >> $GITHUB_STEP_SUMMARY
+          ### fuzz results
+          \`\`\`
+          $(cat "${FUZZ_OUTPUT}")
+          \`\`\`
+          EOF
+
+          exit $FUZZ_EXIT_CODE
+
+      - name: report failure
+        if: failure()
+        run: |
+          set -euo pipefail
+
+          # make sure something actually changed before we open a PR
+          git add testdata/
+          if git diff --staged --quiet; then
+            echo "No changes to testdata/ directory were found, assuming failure has already been reported."
+            exit 0
+          fi
+
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+          BRANCH_NAME="fuzzer-failure/$(date +%Y%m%d-%H%M%S)"
+          git checkout -b $BRANCH_NAME
+          git commit -m "fuzz: add new findings"
+          git push origin $BRANCH_NAME
+
+          cat <<EOF > pr.txt
+          Scheduled fuzz testing found new failures:
+
+              $(cat "${FUZZ_OUTPUT}")
+
+          Next steps:
+          1. Close and re-open this PR to trigger GitHub Actions (see [explanation here][1])
+          2. Examine the crash inputs in the `testdata/fuzz/` directory
+          3. Run the fuzzer locally to reproduce: `make fuzz`
+          4. ???
+          5. Profit!
+
+          ---
+          <small>*This PR was automatically created by the scheduled daily [fuzz action][2].*</small>
+
+          [1]: https://github.com/peter-evans/create-pull-request/blob/9b309f7eaa24cdc404c6e9e169d35ac06ca3671e/docs/concepts-guidelines.md#triggering-further-workflow-runs
+          [2]: ./.github/workflows/fuzz.yaml
+          EOF
+
+          gh pr create \
+            --base main \
+            --head "${BRANCH_NAME}" \
+            --title "fuzz: new failure on $(date +%Y/%m/%d)" \
+            --body-file pr.txt \
+            --label automated-pr \
+            --label bug \
+            --label fuzzing
