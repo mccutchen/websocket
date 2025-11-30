@@ -1,11 +1,10 @@
-package websocket_test
+package websocket
 
 import (
 	"bytes"
 	"fmt"
 	"testing"
 
-	"github.com/mccutchen/websocket"
 	"github.com/mccutchen/websocket/internal/testing/assert"
 )
 
@@ -15,12 +14,12 @@ func TestFrameRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	// write masked "client" frame to buffer
-	clientFrame := websocket.NewFrame(websocket.OpcodeText, true, []byte("hello"))
+	clientFrame := NewFrame(OpcodeText, true, []byte("hello"))
 	buf := &bytes.Buffer{}
-	assert.NilError(t, websocket.WriteFrame(buf, websocket.NewMaskingKey(), clientFrame))
+	assert.NilError(t, WriteFrame(buf, NewMaskingKey(), clientFrame))
 
 	// read "server" frame from buffer.
-	serverFrame, err := websocket.ReadFrame(buf, websocket.ServerMode, len(clientFrame.Payload))
+	serverFrame, err := ReadFrame(buf, ServerMode, len(clientFrame.Payload))
 	assert.NilError(t, err)
 
 	// ensure client and server frame match
@@ -33,23 +32,23 @@ func TestMaxFrameSize(t *testing.T) {
 	t.Parallel()
 
 	// write masked "client" frame to buffer
-	clientFrame := websocket.NewFrame(websocket.OpcodeText, true, []byte("hello"))
+	clientFrame := NewFrame(OpcodeText, true, []byte("hello"))
 	buf := &bytes.Buffer{}
-	assert.NilError(t, websocket.WriteFrame(buf, websocket.NewMaskingKey(), clientFrame))
+	assert.NilError(t, WriteFrame(buf, NewMaskingKey(), clientFrame))
 
 	// read "server" frame from buffer.
-	serverFrame, err := websocket.ReadFrame(buf, websocket.ServerMode, len(clientFrame.Payload)-1)
-	assert.Error(t, err, websocket.ErrFrameTooLarge)
+	serverFrame, err := ReadFrame(buf, ServerMode, len(clientFrame.Payload)-1)
+	assert.Error(t, err, ErrFrameTooLarge)
 	assert.Equal(t, serverFrame, nil, "expected nil frame on error")
 }
 
 func TestRSV(t *testing.T) {
 	// We don't currently support any extensions, so RSV bits are not allowed.
 	// But we still need to be able properly parse and marshal them.
-	marshalledFrame := func(rsvBits ...websocket.RSVBit) []byte {
+	marshalledFrame := func(rsvBits ...RSVBit) []byte {
 		buf := &bytes.Buffer{}
-		frame := websocket.NewFrame(websocket.OpcodeText, true, nil, rsvBits...)
-		assert.NilError(t, websocket.WriteFrame(buf, websocket.Unmasked, frame))
+		frame := NewFrame(OpcodeText, true, nil, rsvBits...)
+		assert.NilError(t, WriteFrame(buf, Unmasked, frame))
 		return buf.Bytes()
 	}
 
@@ -63,19 +62,19 @@ func TestRSV(t *testing.T) {
 			rawBytes: marshalledFrame(),
 		},
 		"RSV1 set": {
-			rawBytes: marshalledFrame(websocket.RSV1),
+			rawBytes: marshalledFrame(RSV1),
 			wantRSV1: true,
 		},
 		"RSV2 set": {
-			rawBytes: marshalledFrame(websocket.RSV2),
+			rawBytes: marshalledFrame(RSV2),
 			wantRSV2: true,
 		},
 		"RSV3 set": {
-			rawBytes: marshalledFrame(websocket.RSV3),
+			rawBytes: marshalledFrame(RSV3),
 			wantRSV3: true,
 		},
 		"all RSV bits set": {
-			rawBytes: marshalledFrame(websocket.RSV1, websocket.RSV2, websocket.RSV3),
+			rawBytes: marshalledFrame(RSV1, RSV2, RSV3),
 			wantRSV1: true,
 			wantRSV2: true,
 			wantRSV3: true,
@@ -98,47 +97,47 @@ func TestExampleFramesFromRFC(t *testing.T) {
 	// https://datatracker.ietf.org/doc/html/rfc6455#section-5.7
 	testCases := map[string]struct {
 		rawBytes  []byte
-		wantFrame *websocket.Frame
+		wantFrame *Frame
 	}{
 		"single-frame unmasked text": {
 			rawBytes:  []byte{0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f},
-			wantFrame: websocket.NewFrame(websocket.OpcodeText, true, []byte("Hello")),
+			wantFrame: NewFrame(OpcodeText, true, []byte("Hello")),
 		},
 		"single-frame masked text": {
 			rawBytes:  []byte{0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58},
-			wantFrame: websocket.NewFrame(websocket.OpcodeText, true, []byte("Hello")),
+			wantFrame: NewFrame(OpcodeText, true, []byte("Hello")),
 		},
 		"fragmented unmasked text part 1": {
 			rawBytes:  []byte{0x01, 0x03, 0x48, 0x65, 0x6c},
-			wantFrame: websocket.NewFrame(websocket.OpcodeText, false, []byte("Hel")),
+			wantFrame: NewFrame(OpcodeText, false, []byte("Hel")),
 		},
 		"fragmented unmasked text part 2": {
 			rawBytes:  []byte{0x80, 0x02, 0x6c, 0x6f},
-			wantFrame: websocket.NewFrame(websocket.OpcodeContinuation, true, []byte("lo")),
+			wantFrame: NewFrame(OpcodeContinuation, true, []byte("lo")),
 		},
 		"unmasked ping": {
 			rawBytes: []byte{
 				0x89, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f,
 			},
-			wantFrame: websocket.NewFrame(websocket.OpcodePing, true, []byte("Hello")),
+			wantFrame: NewFrame(OpcodePing, true, []byte("Hello")),
 		},
 		"masked ping response": {
 			rawBytes:  []byte{0x8a, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58},
-			wantFrame: websocket.NewFrame(websocket.OpcodePong, true, []byte("Hello")),
+			wantFrame: NewFrame(OpcodePong, true, []byte("Hello")),
 		},
 		"256 bytes binary message": {
 			rawBytes: append(
 				[]byte{0x82, 0x7E, 0x01, 0x00},
 				make([]byte, 256)...,
 			),
-			wantFrame: websocket.NewFrame(websocket.OpcodeBinary, true, make([]byte, 256)),
+			wantFrame: NewFrame(OpcodeBinary, true, make([]byte, 256)),
 		},
 		"64KiB binary message": {
 			rawBytes: append(
 				[]byte{0x82, 0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00},
 				make([]byte, 65536)...,
 			),
-			wantFrame: websocket.NewFrame(websocket.OpcodeBinary, true, make([]byte, 65536)),
+			wantFrame: NewFrame(OpcodeBinary, true, make([]byte, 65536)),
 		},
 	}
 
@@ -179,7 +178,7 @@ func TestIncompleteFrames(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			buf := bytes.NewReader(tc.rawBytes)
-			_, err := websocket.ReadFrame(buf, websocket.ClientMode, 70000)
+			_, err := ReadFrame(buf, ClientMode, 70000)
 			assert.Error(t, err, tc.wantErr)
 		})
 	}
@@ -217,9 +216,9 @@ func FuzzReadFrame(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, input []byte) {
-		modes := []websocket.Mode{websocket.ClientMode, websocket.ServerMode}
+		modes := []Mode{ClientMode, ServerMode}
 		for _, mode := range modes {
-			frame, err := websocket.ReadFrame(bytes.NewReader(input), mode, 1<<20)
+			frame, err := ReadFrame(bytes.NewReader(input), mode, 1<<20)
 			if err != nil {
 				t.Skipf("skipping eror: %s", err)
 				return
@@ -240,9 +239,9 @@ var benchMarkFrameSizes = []int{
 
 func BenchmarkReadFrame(b *testing.B) {
 	for _, size := range benchMarkFrameSizes {
-		frame := makeFrame(websocket.OpcodeText, true, size)
+		frame := makeFrame(OpcodeText, true, size)
 		buf := &bytes.Buffer{}
-		assert.NilError(b, websocket.WriteFrame(buf, websocket.NewMaskingKey(), frame))
+		assert.NilError(b, WriteFrame(buf, NewMaskingKey(), frame))
 
 		// Run sub-benchmarks for each payload size
 		b.Run(formatSize(size), func(b *testing.B) {
@@ -251,7 +250,7 @@ func BenchmarkReadFrame(b *testing.B) {
 			b.ResetTimer()
 			for b.Loop() {
 				_, _ = src.Seek(0, 0)
-				frame2, err := websocket.ReadFrame(src, websocket.ServerMode, size)
+				frame2, err := ReadFrame(src, ServerMode, size)
 				if err != nil {
 					b.Fatalf("unexpected error: %v", err)
 				}
@@ -264,31 +263,31 @@ func BenchmarkReadFrame(b *testing.B) {
 func BenchmarkWriteFrame(b *testing.B) {
 	for _, size := range benchMarkFrameSizes {
 		b.Run(formatSize(size), func(b *testing.B) {
-			frame := makeFrame(websocket.OpcodeText, true, size)
-			mask := websocket.NewMaskingKey()
+			frame := makeFrame(OpcodeText, true, size)
+			mask := NewMaskingKey()
 			buf := &bytes.Buffer{}
 
 			// Write the frame to the buffer once to get the size.
-			assert.NilError(b, websocket.WriteFrame(buf, mask, frame))
+			assert.NilError(b, WriteFrame(buf, mask, frame))
 			expectedSize := len(buf.Bytes())
 			b.SetBytes(int64(expectedSize))
 			b.ResetTimer()
 
 			for b.Loop() {
 				buf.Reset()
-				assert.NilError(b, websocket.WriteFrame(buf, mask, frame))
+				assert.NilError(b, WriteFrame(buf, mask, frame))
 				assert.Equal(b, buf.Len(), expectedSize, "payload length")
 			}
 		})
 	}
 }
 
-func makeFrame(opcode websocket.Opcode, fin bool, payloadLen int) *websocket.Frame {
+func makeFrame(opcode Opcode, fin bool, payloadLen int) *Frame {
 	payload := make([]byte, payloadLen)
 	for i := range payload {
 		payload[i] = 0x20 + byte(i%95) // Map to range 0x20 (space) to 0x7E (~)
 	}
-	return websocket.NewFrame(opcode, fin, payload)
+	return NewFrame(opcode, fin, payload)
 }
 
 func formatSize(b int) string {
