@@ -1,4 +1,4 @@
-package websocket_test
+package websocket
 
 import (
 	"bufio"
@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,7 +21,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/mccutchen/websocket"
 	"github.com/mccutchen/websocket/internal/testing/assert"
 )
 
@@ -123,7 +123,7 @@ func TestHandshake(t *testing.T) {
 			t.Parallel()
 
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				_, err := websocket.Accept(w, r, websocket.Options{})
+				_, err := Accept(w, r, Options{})
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
@@ -168,13 +168,13 @@ func TestHandshake(t *testing.T) {
 			_, ok := w.(http.Hijacker)
 			assert.Equal(t, ok, false, "expected httptest.ResponseRecorder not to implement http.Hijacker")
 
-			_, err := websocket.Accept(w, handshakeReq, websocket.Options{})
+			_, err := Accept(w, handshakeReq, Options{})
 			assert.Error(t, err, "websocket: accept: hijack failed: server does not support hijacking")
 		})
 
 		t.Run("hijack failed", func(t *testing.T) {
 			t.Parallel()
-			_, err := websocket.Accept(&brokenHijackResponseWriter{}, handshakeReq, websocket.Options{})
+			_, err := Accept(&brokenHijackResponseWriter{}, handshakeReq, Options{})
 			assert.Error(t, err, "websocket: accept: hijack failed: error hijacking connection")
 		})
 	}
@@ -199,23 +199,23 @@ func TestConnectionLimits(t *testing.T) {
 		clientServerTest{
 			// client never sends a message, just waits for the server to
 			// timeout and then completes the closing handshake
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
 				start := time.Now()
-				mustReadCloseFrame(t, conn, websocket.StatusAbnormalClose, errors.New("error reading frame header"))
+				mustReadCloseFrame(t, conn, StatusAbnormalClose, errors.New("error reading frame header"))
 				elapsed := time.Since(start)
 				assert.Equal(t, elapsed >= maxDuration, true, "not enough time passed")
 				assertConnClosed(t, conn)
 			},
 			// server runs echo handler with read timeout, which should timeout
 			// after maxDuration and start closing handshake
-			serverOpts: websocket.Options{
+			serverOpts: Options{
 				ReadTimeout:  maxDuration,
 				WriteTimeout: maxDuration,
 				Hooks:        newTestHooks(t),
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
 				start := time.Now()
-				err := ws.Handle(t.Context(), websocket.EchoHandler)
+				err := ws.Handle(t.Context(), EchoHandler)
 				elapsed := time.Since(start)
 				assert.Equal(t, elapsed >= maxDuration, true, "not enough time passed")
 				assert.Error(t, err, os.ErrDeadlineExceeded)
@@ -234,16 +234,16 @@ func TestConnectionLimits(t *testing.T) {
 		clientServerTest{
 			// client closes its end of the connection, which should interrupt
 			// the server's blocking read and cause it to return.
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
 				time.Sleep(clientTimeout)
 				assert.NilError(t, conn.Close())
 			},
 			// server tries to read, which should be interrupted by client
 			// closing connection
-			serverOpts: websocket.Options{
+			serverOpts: Options{
 				ReadTimeout: serverTimeout,
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
 				start := time.Now()
 				msg, err := ws.ReadMessage(t.Context())
 				elapsed := time.Since(start)
@@ -261,19 +261,19 @@ func TestProtocolOkay(t *testing.T) {
 	t.Run("single frame round trip", func(t *testing.T) {
 		t.Parallel()
 
-		wantFrame := websocket.NewFrame(websocket.OpcodeText, true, []byte("hello"))
+		wantFrame := NewFrame(OpcodeText, true, []byte("hello"))
 
 		clientServerTest{
 			// client writes a single frame and ensures the server echoes the
 			// same frame back
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
 				mustWriteFrame(t, conn, true, wantFrame)
 				gotFrame := mustReadFrame(t, conn, len(wantFrame.Payload))
 				assert.Equal(t, gotFrame, wantFrame, "frames should match")
 			},
 			// server reads a single frame, ensures it matches the frame
 			// written by the client, and then echoes it back.
-			serverTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+			serverTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
 				serverFrame := mustReadFrame(t, conn, len(wantFrame.Payload))
 				assert.Equal(t, serverFrame, wantFrame, "frames should match")
 				mustWriteFrame(t, conn, false, serverFrame)
@@ -288,7 +288,7 @@ func TestProtocolOkay(t *testing.T) {
 			// msg size must be double frame size for this test case
 			maxFrameSize   = 128
 			maxMessageSize = maxFrameSize * 2
-			wantMessage    = &websocket.Message{
+			wantMessage    = &Message{
 				Payload: bytes.Repeat([]byte("X"), maxMessageSize),
 			}
 		)
@@ -296,27 +296,27 @@ func TestProtocolOkay(t *testing.T) {
 		clientServerTest{
 			// client manually writes a fragmented message and reads reply
 			// from server to ensure correct round trip
-			clientOpts: websocket.Options{
+			clientOpts: Options{
 				MaxFrameSize:   maxFrameSize,
 				MaxMessageSize: maxMessageSize,
 				Hooks:          newTestHooks(t),
 			},
-			clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+			clientTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
 				// manually write fragmented message to ensure server reassembles
 				// correctly
-				mustWriteFrames(t, conn, true, websocket.FrameMessage(wantMessage, maxFrameSize))
+				mustWriteFrames(t, conn, true, FrameMessage(wantMessage, maxFrameSize))
 				// read reply to verify round-trip
 				assert.Equal(t, mustReadMessage(t, ws), wantMessage, "incorect message received in reply from server")
 			},
 
 			// server reads entire message and ensures that it is reassembled
 			// correctly before echoing back to client
-			serverOpts: websocket.Options{
+			serverOpts: Options{
 				MaxFrameSize:   maxFrameSize,
 				MaxMessageSize: maxMessageSize,
 				Hooks:          newTestHooks(t),
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
 				msg := mustReadMessage(t, ws)
 				assert.Equal(t, msg, wantMessage, "incorrect messaage received from client")
 				assert.NilError(t, ws.WriteMessage(t.Context(), msg))
@@ -329,10 +329,10 @@ func TestProtocolOkay(t *testing.T) {
 		clientServerTest{
 			// client sends a variety of valid utf8-encoded messages and
 			// ensures that the server echoes them correctly.
-			clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+			clientTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
 				// valid UTF-8 accepted and echoed back
 				{
-					frame := websocket.NewFrame(websocket.OpcodeText, true, []byte("Iñtërnâtiônàlizætiøn"))
+					frame := NewFrame(OpcodeText, true, []byte("Iñtërnâtiônàlizætiøn"))
 					mustWriteFrame(t, conn, true, frame)
 					msg := mustReadMessage(t, ws)
 					assert.Equal(t, msg.Payload, frame.Payload, "incorrect message payloady")
@@ -340,10 +340,10 @@ func TestProtocolOkay(t *testing.T) {
 
 				// valid UTF-8 fragmented on codepoint boundaries is okay
 				{
-					mustWriteFrames(t, conn, true, []*websocket.Frame{
-						websocket.NewFrame(websocket.OpcodeText, false, []byte("Iñtër")),
-						websocket.NewFrame(websocket.OpcodeContinuation, false, []byte("nâtiônàl")),
-						websocket.NewFrame(websocket.OpcodeContinuation, true, []byte("izætiøn")),
+					mustWriteFrames(t, conn, true, []*Frame{
+						NewFrame(OpcodeText, false, []byte("Iñtër")),
+						NewFrame(OpcodeContinuation, false, []byte("nâtiônàl")),
+						NewFrame(OpcodeContinuation, true, []byte("izætiøn")),
 					})
 					msg := mustReadMessage(t, ws)
 					assert.Equal(t, msg.Payload, []byte("Iñtërnâtiônàlizætiøn"), "incorrect message payloady")
@@ -352,9 +352,9 @@ func TestProtocolOkay(t *testing.T) {
 				// valid UTF-8 fragmented in the middle of a codepoint is reassembled
 				// into a valid message
 				{
-					mustWriteFrames(t, conn, true, []*websocket.Frame{
-						websocket.NewFrame(websocket.OpcodeText, false, []byte("jalape\xc3")),
-						websocket.NewFrame(websocket.OpcodeContinuation, true, []byte("\xb1o")),
+					mustWriteFrames(t, conn, true, []*Frame{
+						NewFrame(OpcodeText, false, []byte("jalape\xc3")),
+						NewFrame(OpcodeContinuation, true, []byte("\xb1o")),
 					})
 					msg := mustReadMessage(t, ws)
 					assert.Equal(t, msg.Payload, []byte("jalapeño"), "payload")
@@ -364,8 +364,8 @@ func TestProtocolOkay(t *testing.T) {
 			},
 
 			// server just runs EchoHandler to reply to client
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				assert.NilError(t, ws.Handle(t.Context(), websocket.EchoHandler))
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
+				assert.NilError(t, ws.Handle(t.Context(), EchoHandler))
 			},
 		}.Run(t)
 	})
@@ -373,16 +373,16 @@ func TestProtocolOkay(t *testing.T) {
 	t.Run("binary messages can be invalid UTF-8", func(t *testing.T) {
 		t.Parallel()
 
-		wantMessage := &websocket.Message{Binary: true, Payload: []byte{0xc3}}
+		wantMessage := &Message{Binary: true, Payload: []byte{0xc3}}
 		assert.Equal(t, utf8.Valid(wantMessage.Payload), false, "test payload should not be valid utf8")
 
 		clientServerTest{
-			clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
-				mustWriteFrames(t, conn, true, websocket.FrameMessage(wantMessage, len(wantMessage.Payload)))
+			clientTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
+				mustWriteFrames(t, conn, true, FrameMessage(wantMessage, len(wantMessage.Payload)))
 				msg := mustReadMessage(t, ws)
 				assert.Equal(t, msg, wantMessage, "client received incorrect message in reply")
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
 				msg := mustReadMessage(t, ws)
 				assert.Equal(t, msg, wantMessage, "server received incorrect message")
 				assert.NilError(t, ws.WriteMessage(t.Context(), msg))
@@ -399,24 +399,24 @@ func TestProtocolOkay(t *testing.T) {
 		jumboSize := 65536
 
 		clientServerTest{
-			clientOpts: websocket.Options{
+			clientOpts: Options{
 				MaxFrameSize:   jumboSize,
 				MaxMessageSize: jumboSize,
 				Hooks:          newTestHooks(t),
 			},
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
-				clientFrame := websocket.NewFrame(websocket.OpcodeText, true, bytes.Repeat([]byte("*"), jumboSize))
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
+				clientFrame := NewFrame(OpcodeText, true, bytes.Repeat([]byte("*"), jumboSize))
 				mustWriteFrame(t, conn, true, clientFrame)
 				respFrame := mustReadFrame(t, conn, jumboSize)
 				assert.Equal(t, respFrame.Payload, clientFrame.Payload, "payload")
 			},
 
-			serverOpts: websocket.Options{
+			serverOpts: Options{
 				MaxFrameSize:   jumboSize,
 				MaxMessageSize: jumboSize,
 				Hooks:          newTestHooks(t),
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
 				msg := mustReadMessage(t, ws)
 				assert.NilError(t, ws.WriteMessage(t.Context(), msg))
 			},
@@ -429,17 +429,17 @@ func TestProtocolOkay(t *testing.T) {
 			// client writes a fragmented message with a ping control frame
 			// between fragments and ensures that the server handles the ping
 			// and then replies with the correct response.
-			clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
-				mustWriteFrames(t, conn, true, []*websocket.Frame{
-					websocket.NewFrame(websocket.OpcodeText, false, []byte("0")),
-					websocket.NewFrame(websocket.OpcodePing, true, nil),
-					websocket.NewFrame(websocket.OpcodeContinuation, true, []byte("1")),
+			clientTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
+				mustWriteFrames(t, conn, true, []*Frame{
+					NewFrame(OpcodeText, false, []byte("0")),
+					NewFrame(OpcodePing, true, nil),
+					NewFrame(OpcodeContinuation, true, []byte("1")),
 				})
 
 				// should get a pong control frame first, even though ping was sent
 				// as second frame
 				pongFrame := mustReadFrame(t, conn, 125)
-				assert.Equal(t, pongFrame.Opcode(), websocket.OpcodePong, "opcode")
+				assert.Equal(t, pongFrame.Opcode(), OpcodePong, "opcode")
 
 				// then should get the echo'd message from the two fragments
 				msg := mustReadMessage(t, ws)
@@ -449,8 +449,8 @@ func TestProtocolOkay(t *testing.T) {
 			},
 
 			// server just echoes messages from the client
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				assert.NilError(t, ws.Handle(t.Context(), websocket.EchoHandler))
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
+				assert.NilError(t, ws.Handle(t.Context(), EchoHandler))
 			},
 		}.Run(t)
 	})
@@ -461,19 +461,19 @@ func TestProtocolOkay(t *testing.T) {
 			// client writes a pong control frame followed by a text frame and
 			// ensures that the server ignores the pong frame and echoes the
 			// text frame.
-			clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+			clientTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
 				wantPayload := []byte("hi")
-				mustWriteFrames(t, conn, true, []*websocket.Frame{
-					websocket.NewFrame(websocket.OpcodePong, true, nil),
-					websocket.NewFrame(websocket.OpcodeText, true, wantPayload),
+				mustWriteFrames(t, conn, true, []*Frame{
+					NewFrame(OpcodePong, true, nil),
+					NewFrame(OpcodeText, true, wantPayload),
 				})
 				respFrame := mustReadFrame(t, conn, len(wantPayload))
 				assert.Equal(t, respFrame.Payload, wantPayload, "payload")
 				assert.NilError(t, ws.Close())
 			},
 			// server just echoes messages from the client
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				assert.NilError(t, ws.Handle(t.Context(), websocket.EchoHandler))
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
+				assert.NilError(t, ws.Handle(t.Context(), EchoHandler))
 			},
 		}.Run(t)
 	})
@@ -485,8 +485,8 @@ func TestProtocolErrors(t *testing.T) {
 		maxMessageSize = maxFrameSize * 2
 	)
 
-	newOpts := func(t *testing.T) websocket.Options {
-		return websocket.Options{
+	newOpts := func(t *testing.T) Options {
+		return Options{
 			MaxFrameSize:   maxFrameSize,
 			MaxMessageSize: maxMessageSize,
 			Hooks:          newTestHooks(t),
@@ -494,87 +494,87 @@ func TestProtocolErrors(t *testing.T) {
 	}
 
 	testCases := map[string]struct {
-		frames          []*websocket.Frame
-		wantCloseCode   websocket.StatusCode
+		frames          []*Frame
+		wantCloseCode   StatusCode
 		wantCloseReason error
 
 		// further customize behavior
 		unmasked bool
 	}{
 		"unexpected continuation frame": {
-			frames: []*websocket.Frame{
-				websocket.NewFrame(websocket.OpcodeContinuation, true, []byte("0")),
+			frames: []*Frame{
+				NewFrame(OpcodeContinuation, true, []byte("0")),
 			},
-			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrContinuationUnexpected,
+			wantCloseCode:   StatusProtocolError,
+			wantCloseReason: ErrContinuationUnexpected,
 		},
 		"max frame size": {
-			frames: []*websocket.Frame{
-				websocket.NewFrame(websocket.OpcodeText, true, bytes.Repeat([]byte("0"), maxFrameSize+1)),
+			frames: []*Frame{
+				NewFrame(OpcodeText, true, bytes.Repeat([]byte("0"), maxFrameSize+1)),
 			},
-			wantCloseCode:   websocket.StatusTooLarge,
-			wantCloseReason: websocket.ErrFrameTooLarge,
+			wantCloseCode:   StatusTooLarge,
+			wantCloseReason: ErrFrameTooLarge,
 		},
 		"max message size": {
 			// 3rd frame will exceed max message size
-			frames: []*websocket.Frame{
-				websocket.NewFrame(websocket.OpcodeText, false, bytes.Repeat([]byte("0"), maxFrameSize)),
-				websocket.NewFrame(websocket.OpcodeContinuation, false, bytes.Repeat([]byte("1"), maxFrameSize)),
-				websocket.NewFrame(websocket.OpcodeContinuation, true, []byte("2")),
+			frames: []*Frame{
+				NewFrame(OpcodeText, false, bytes.Repeat([]byte("0"), maxFrameSize)),
+				NewFrame(OpcodeContinuation, false, bytes.Repeat([]byte("1"), maxFrameSize)),
+				NewFrame(OpcodeContinuation, true, []byte("2")),
 			},
-			wantCloseCode:   websocket.StatusTooLarge,
-			wantCloseReason: websocket.ErrMessageTooLarge,
+			wantCloseCode:   StatusTooLarge,
+			wantCloseReason: ErrMessageTooLarge,
 		},
 		"server requires masked frames": {
-			frames: []*websocket.Frame{
-				websocket.NewFrame(websocket.OpcodeText, true, []byte("hello")),
+			frames: []*Frame{
+				NewFrame(OpcodeText, true, []byte("hello")),
 			},
 			unmasked:        true,
-			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrClientFrameUnmasked,
+			wantCloseCode:   StatusProtocolError,
+			wantCloseReason: ErrClientFrameUnmasked,
 		},
 		"server rejects RSV bits": {
-			frames: []*websocket.Frame{
-				websocket.NewFrame(websocket.OpcodeText, true, []byte("hello"), websocket.RSV1),
+			frames: []*Frame{
+				NewFrame(OpcodeText, true, []byte("hello"), RSV1),
 			},
-			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrRSVBitsUnsupported,
+			wantCloseCode:   StatusProtocolError,
+			wantCloseReason: ErrRSVBitsUnsupported,
 		},
 		"control frames must not be fragmented": {
-			frames: []*websocket.Frame{
-				websocket.NewFrame(websocket.OpcodeClose, false, nil),
+			frames: []*Frame{
+				NewFrame(OpcodeClose, false, nil),
 			},
-			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrControlFrameFragmented,
+			wantCloseCode:   StatusProtocolError,
+			wantCloseReason: ErrControlFrameFragmented,
 		},
 		"control frames must be less than 125 bytes": {
-			frames: []*websocket.Frame{
-				websocket.NewFrame(websocket.OpcodeClose, true, bytes.Repeat([]byte("0"), 126)),
+			frames: []*Frame{
+				NewFrame(OpcodeClose, true, bytes.Repeat([]byte("0"), 126)),
 			},
-			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrControlFrameTooLarge,
+			wantCloseCode:   StatusProtocolError,
+			wantCloseReason: ErrControlFrameTooLarge,
 		},
 		"text messages must be valid utf8": {
-			frames: []*websocket.Frame{
-				websocket.NewFrame(websocket.OpcodeText, true, []byte{0xc3}),
+			frames: []*Frame{
+				NewFrame(OpcodeText, true, []byte{0xc3}),
 			},
-			wantCloseCode:   websocket.StatusInvalidFramePayload,
-			wantCloseReason: websocket.ErrInvalidFramePayload,
+			wantCloseCode:   StatusInvalidFramePayload,
+			wantCloseReason: ErrInvalidFramePayload,
 		},
 		"missing continuation frame": {
-			frames: []*websocket.Frame{
-				websocket.NewFrame(websocket.OpcodeText, false, bytes.Repeat([]byte("0"), maxFrameSize)),
-				websocket.NewFrame(websocket.OpcodeText, true, bytes.Repeat([]byte("1"), maxFrameSize)),
+			frames: []*Frame{
+				NewFrame(OpcodeText, false, bytes.Repeat([]byte("0"), maxFrameSize)),
+				NewFrame(OpcodeText, true, bytes.Repeat([]byte("1"), maxFrameSize)),
 			},
-			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrContinuationExpected,
+			wantCloseCode:   StatusProtocolError,
+			wantCloseReason: ErrContinuationExpected,
 		},
 		"unknown opcode": {
-			frames: []*websocket.Frame{
-				websocket.NewFrame(websocket.Opcode(255), true, nil),
+			frames: []*Frame{
+				NewFrame(Opcode(255), true, nil),
 			},
-			wantCloseCode:   websocket.StatusProtocolError,
-			wantCloseReason: websocket.ErrOpcodeUnknown,
+			wantCloseCode:   StatusProtocolError,
+			wantCloseReason: ErrOpcodeUnknown,
 		},
 	}
 	for name, tc := range testCases {
@@ -588,7 +588,7 @@ func TestProtocolErrors(t *testing.T) {
 				// for these protocol-level errors, the server closes the
 				// conection immediately after sending its close frame, not
 				// waiting for the client to reply.
-				clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+				clientTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
 					mustWriteFrames(t, conn, !tc.unmasked, tc.frames)
 					mustReadCloseFrame(t, conn, tc.wantCloseCode, tc.wantCloseReason)
 					assertConnClosed(t, conn)
@@ -596,8 +596,8 @@ func TestProtocolErrors(t *testing.T) {
 				// server just runs echo handler, which should process all
 				// protocol errors automatically
 				serverOpts: newOpts(t),
-				serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
-					assert.Error(t, ws.Handle(t.Context(), websocket.EchoHandler), tc.wantCloseReason)
+				serverTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
+					assert.Error(t, ws.Handle(t.Context(), EchoHandler), tc.wantCloseReason)
 				},
 			}.Run(t)
 		})
@@ -607,46 +607,46 @@ func TestProtocolErrors(t *testing.T) {
 func TestCloseFrameValidation(t *testing.T) {
 	// construct a special close frame with an invalid utf8 reason outside of
 	// test table because it can't be defined inline in a struct literal
-	frameWithInvalidUTF8Reason := func() *websocket.Frame {
+	frameWithInvalidUTF8Reason := func() *Frame {
 		payload := make([]byte, 0, 3)
-		payload = binary.BigEndian.AppendUint16(payload, uint16(websocket.StatusNormalClosure))
+		payload = binary.BigEndian.AppendUint16(payload, uint16(StatusNormalClosure))
 		payload = append(payload, 0xc3)
-		return websocket.NewFrame(websocket.OpcodeClose, true, payload)
+		return NewFrame(OpcodeClose, true, payload)
 	}
 
 	testCases := map[string]struct {
-		frame    *websocket.Frame
-		wantCode websocket.StatusCode
+		frame    *Frame
+		wantCode StatusCode
 		wantErr  error
 	}{
 		"empty payload ok": {
-			frame:    websocket.NewFrame(websocket.OpcodeClose, true, nil),
-			wantCode: websocket.StatusNormalClosure,
+			frame:    NewFrame(OpcodeClose, true, nil),
+			wantCode: StatusNormalClosure,
 		},
 		"one byte payload is illegal": {
-			frame:    websocket.NewFrame(websocket.OpcodeClose, true, []byte("X")),
-			wantCode: websocket.StatusProtocolError,
-			wantErr:  websocket.ErrClosePayloadInvalid,
+			frame:    NewFrame(OpcodeClose, true, []byte("X")),
+			wantCode: StatusProtocolError,
+			wantErr:  ErrClosePayloadInvalid,
 		},
 		"invalid close code (too low)": {
-			frame:    websocket.NewCloseFrame(websocket.StatusCode(999), ""),
-			wantCode: websocket.StatusProtocolError,
-			wantErr:  websocket.ErrCloseStatusInvalid,
+			frame:    NewCloseFrame(StatusCode(999), ""),
+			wantCode: StatusProtocolError,
+			wantErr:  ErrCloseStatusInvalid,
 		},
 		"invalid close code (too high))": {
-			frame:    websocket.NewCloseFrame(websocket.StatusCode(5001), ""),
-			wantCode: websocket.StatusProtocolError,
-			wantErr:  websocket.ErrCloseStatusInvalid,
+			frame:    NewCloseFrame(StatusCode(5001), ""),
+			wantCode: StatusProtocolError,
+			wantErr:  ErrCloseStatusInvalid,
 		},
 		"reserved close code": {
-			frame:    websocket.NewCloseFrame(websocket.StatusCode(1015), ""),
-			wantCode: websocket.StatusProtocolError,
-			wantErr:  websocket.ErrCloseStatusReserved,
+			frame:    NewCloseFrame(StatusCode(1015), ""),
+			wantCode: StatusProtocolError,
+			wantErr:  ErrCloseStatusReserved,
 		},
 		"invalid utf8 in close reason": {
 			frame:    frameWithInvalidUTF8Reason(),
-			wantCode: websocket.StatusInvalidFramePayload,
-			wantErr:  websocket.ErrInvalidFramePayload,
+			wantCode: StatusInvalidFramePayload,
+			wantErr:  ErrInvalidFramePayload,
 		},
 	}
 
@@ -659,14 +659,14 @@ func TestCloseFrameValidation(t *testing.T) {
 				// for these protocol-level errors, the server closes the
 				// conection immediately after sending its close frame, not
 				// waiting for the client to reply.
-				clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
-					assert.NilError(t, websocket.WriteFrame(conn, websocket.NewMaskingKey(), tc.frame))
+				clientTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
+					assert.NilError(t, WriteFrame(conn, NewMaskingKey(), tc.frame))
 					mustReadCloseFrame(t, conn, tc.wantCode, tc.wantErr)
 				},
 				// server just runs echo handler, which should process all
 				// protocol errors automatically
-				serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
-					assert.Error(t, ws.Handle(t.Context(), websocket.EchoHandler), tc.wantErr)
+				serverTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
+					assert.Error(t, ws.Handle(t.Context(), EchoHandler), tc.wantErr)
 				},
 			}.Run(t)
 		})
@@ -682,17 +682,17 @@ func TestCloseHandshake(t *testing.T) {
 
 		clientServerTest{
 			// client manually finishes closing handshake
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
-				mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
-				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
+				mustReadCloseFrame(t, conn, StatusNormalClosure, nil)
+				mustWriteFrame(t, conn, true, NewCloseFrame(StatusNormalClosure, ""))
 				assertConnClosed(t, conn)
 			},
 			// server starts closing handshake, will get no error if the client
 			// finishes the handshake as expected
-			serverOpts: websocket.Options{
+			serverOpts: Options{
 				CloseTimeout: 1 * time.Second,
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
 				assert.NilError(t, ws.Close())
 				assertConnClosed(t, conn)
 			},
@@ -704,19 +704,19 @@ func TestCloseHandshake(t *testing.T) {
 		// handshake when it is initiated by a well-behaved client.
 		t.Parallel()
 
-		closeStatus := websocket.StatusGoingAway
+		closeStatus := StatusGoingAway
 
 		clientServerTest{
 			// client initiates closing handshake and expects an appropriate reply
 			// from the server
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
-				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(closeStatus, ""))
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
+				mustWriteFrame(t, conn, true, NewCloseFrame(closeStatus, ""))
 				mustReadCloseFrame(t, conn, closeStatus, nil)
 				assertConnClosed(t, conn)
 			},
 			// server replies to close frame automatically during a ReadMessage
 			// call, which returns io.EOF when the connection is closed.
-			serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
 				msg, err := ws.ReadMessage(t.Context())
 				assert.Error(t, err, io.EOF)
 				assert.Equal(t, msg, nil, "expected nil message")
@@ -735,15 +735,15 @@ func TestCloseHandshake(t *testing.T) {
 		clientServerTest{
 			// client gets the closing handshake message but does not reply,
 			// causing the server to time out while waiting
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
-				mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
+				mustReadCloseFrame(t, conn, StatusNormalClosure, nil)
 			},
 			// server starts closing handshake, which should end with a timeout
 			// error when the client does not reply in time
-			serverOpts: websocket.Options{
+			serverOpts: Options{
 				CloseTimeout: closeTimeout,
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
 				start := time.Now()
 				closeErr := ws.Close()
 				elapsed := time.Since(start)
@@ -760,13 +760,13 @@ func TestCloseHandshake(t *testing.T) {
 		clientServerTest{
 			// server closes connection, expects io.EOF error when reading
 			// reply from client, which is not treated as an error.
-			serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
 				assert.NilError(t, ws.Close())
 			},
 			// client gets intitial closing frame from server but closes its
 			// end immediately
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
-				mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
+				mustReadCloseFrame(t, conn, StatusNormalClosure, nil)
 				assert.NilError(t, conn.Close())
 			},
 		}.Run(t)
@@ -784,21 +784,21 @@ func TestCloseHandshake(t *testing.T) {
 		clientServerTest{
 			// client receives initial closing handshake but sends additional data
 			// before closing its end.
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
-				mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
-				mustWriteFrames(t, conn, true, []*websocket.Frame{
-					websocket.NewFrame(websocket.OpcodePing, true, nil),
-					websocket.NewFrame(websocket.OpcodeText, true, []byte("ignore me")),
-					websocket.NewCloseFrame(websocket.StatusNormalClosure, ""),
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
+				mustReadCloseFrame(t, conn, StatusNormalClosure, nil)
+				mustWriteFrames(t, conn, true, []*Frame{
+					NewFrame(OpcodePing, true, nil),
+					NewFrame(OpcodeText, true, []byte("ignore me")),
+					NewCloseFrame(StatusNormalClosure, ""),
 				})
 				assertConnClosed(t, conn)
 			},
 			// server initiates closing handshake, which should complete without
 			// error despite additional data frames sent by the client.
-			serverOpts: websocket.Options{
+			serverOpts: Options{
 				CloseTimeout: closeTimeout,
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
 				assert.NilError(t, ws.Close())
 			},
 		}.Run(t)
@@ -814,8 +814,8 @@ func TestCloseHandshake(t *testing.T) {
 
 		clientServerTest{
 			// client starts closing handshake
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
-				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
+				mustWriteFrame(t, conn, true, NewCloseFrame(StatusNormalClosure, ""))
 			},
 			// server conn has write failures injected, which will prevent
 			// the server from replying to the client's closing handshake.
@@ -827,7 +827,7 @@ func TestCloseHandshake(t *testing.T) {
 					},
 				}
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
 				msg, err := ws.ReadMessage(t.Context())
 				assert.Error(t, err, writeErr)
 				assert.Equal(t, msg, nil, "msg should be nil on error")
@@ -846,7 +846,7 @@ func TestCloseHandshake(t *testing.T) {
 		clientServerTest{
 			// client should get an error on any action it takes because the
 			// server will close the connection when its write fails
-			clientTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+			clientTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
 				msg, err := ws.ReadMessage(t.Context())
 				assert.Error(t, err, io.EOF)
 				assert.Equal(t, msg, nil, "expected nil message on error")
@@ -861,7 +861,7 @@ func TestCloseHandshake(t *testing.T) {
 					},
 				}
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
 				assert.Error(t, ws.Close(), writeErr)
 			},
 		}.Run(t)
@@ -881,11 +881,11 @@ func TestErrorHandling(t *testing.T) {
 			// response should fail. The server should then write a close frame
 			// (which succeeds). Client reads the close frame and then closes
 			// the connection to unblock the server.
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
-				mustWriteFrame(t, conn, true, websocket.NewFrame(websocket.OpcodeText, true, []byte("hello")))
-				mustReadCloseFrame(t, conn, websocket.StatusAbnormalClose, writeErr)
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
+				mustWriteFrame(t, conn, true, NewFrame(OpcodeText, true, []byte("hello")))
+				mustReadCloseFrame(t, conn, StatusAbnormalClose, writeErr)
 				// reply to the close frame to complete the closing handshake
-				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
+				mustWriteFrame(t, conn, true, NewCloseFrame(StatusNormalClosure, ""))
 				assertConnClosed(t, conn)
 			},
 			// server conn has write failures injected: first write fails,
@@ -906,8 +906,8 @@ func TestErrorHandling(t *testing.T) {
 					},
 				}
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				err := ws.Handle(t.Context(), websocket.EchoHandler)
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
+				err := ws.Handle(t.Context(), EchoHandler)
 				assert.Error(t, err, writeErr)
 			},
 		}.Run(t)
@@ -924,15 +924,15 @@ func TestErrorHandling(t *testing.T) {
 
 		clientServerTest{
 			// client writes partial message, cancels context, then reads close frame
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
-				mustWriteFrame(t, conn, true, websocket.NewFrame(websocket.OpcodeText, false, []byte("frame 1")))
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
+				mustWriteFrame(t, conn, true, NewFrame(OpcodeText, false, []byte("frame 1")))
 				cancel()
-				mustReadCloseFrame(t, conn, websocket.StatusInternalError, context.Canceled)
+				mustReadCloseFrame(t, conn, StatusInternalError, context.Canceled)
 			},
 			// server tries to read message with the cancelable context, which
 			// should be canceled while waiting for the continuation frame.
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				assert.Error(t, ws.Handle(ctx, websocket.EchoHandler), context.Canceled)
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
+				assert.Error(t, ws.Handle(ctx, EchoHandler), context.Canceled)
 			},
 		}.Run(t)
 	})
@@ -955,12 +955,12 @@ func TestErrorHandling(t *testing.T) {
 			// client reads first frame from multi-frame message, but then
 			// the connection is closed after server fails to write second
 			// frame
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
 				frame := mustReadFrame(t, conn, maxFrameSize*2)
 				assert.Equal(t, frame.Payload, payload[:maxFrameSize], "incorrect payload")
 				// complete closing handshake
-				mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
-				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
+				mustReadCloseFrame(t, conn, StatusNormalClosure, nil)
+				mustWriteFrame(t, conn, true, NewCloseFrame(StatusNormalClosure, ""))
 			},
 			// server writes a multi-frame message, but the context is
 			// canceled after the first frame is written.
@@ -980,15 +980,15 @@ func TestErrorHandling(t *testing.T) {
 					},
 				}
 			},
-			serverOpts: websocket.Options{
+			serverOpts: Options{
 				MaxFrameSize: maxFrameSize,
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
 				go func() {
 					time.Sleep(100 * time.Millisecond)
 					cancel()
 				}()
-				msg := &websocket.Message{Payload: payload}
+				msg := &Message{Payload: payload}
 				assert.Error(t, ws.WriteMessage(ctx, msg), context.Canceled)
 				assert.NilError(t, ws.Close())
 			},
@@ -1004,8 +1004,8 @@ func TestErrorHandling(t *testing.T) {
 
 		clientServerTest{
 			// client reads a message from the server
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
-				mustWriteFrame(t, conn, true, websocket.NewFrame(websocket.OpcodePing, true, nil))
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
+				mustWriteFrame(t, conn, true, NewFrame(OpcodePing, true, nil))
 			},
 			// server calls ReadMessage twice, first getting an error from the
 			// invalid frame and then getting the expected valid payload,
@@ -1018,7 +1018,7 @@ func TestErrorHandling(t *testing.T) {
 					},
 				}
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
 				_, err := ws.ReadMessage(t.Context())
 				assert.Error(t, err, writeErr)
 			},
@@ -1036,19 +1036,19 @@ func TestErrorHandling(t *testing.T) {
 			// client writes an invalid frame (which will cause a read error
 			// on the server) and then a valid frame, server should echo the
 			// valid frame.
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
-				mustWriteFrames(t, conn, true, []*websocket.Frame{
-					websocket.NewFrame(websocket.OpcodeContinuation, false, []byte("invalid continuation frame")),
-					websocket.NewFrame(websocket.OpcodeText, true, wantPayload),
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
+				mustWriteFrames(t, conn, true, []*Frame{
+					NewFrame(OpcodeContinuation, false, []byte("invalid continuation frame")),
+					NewFrame(OpcodeText, true, wantPayload),
 				})
 				mustReadFrame(t, conn, 128)
 			},
 			// server calls ReadMessage twice, first getting an error from the
 			// invalid frame and then getting the expected valid payload,
 			// which is echoed back to the client.
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
 				_, err := ws.ReadMessage(t.Context())
-				assert.Error(t, err, websocket.ErrContinuationUnexpected)
+				assert.Error(t, err, ErrContinuationUnexpected)
 
 				msg, err := ws.ReadMessage(t.Context())
 				assert.NilError(t, err)
@@ -1070,7 +1070,7 @@ func TestErrorHandling(t *testing.T) {
 
 		clientServerTest{
 			// client reads a message from the server
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
 				frame := mustReadFrame(t, conn, 128)
 				assert.Equal(t, frame.Payload, wantPayload, "incorrect payload")
 			},
@@ -1092,11 +1092,11 @@ func TestErrorHandling(t *testing.T) {
 					},
 				}
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				msg1 := &websocket.Message{Payload: []byte("failed write")}
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
+				msg1 := &Message{Payload: []byte("failed write")}
 				assert.Error(t, ws.WriteMessage(t.Context(), msg1), writeErr)
 
-				msg2 := &websocket.Message{Payload: wantPayload}
+				msg2 := &Message{Payload: wantPayload}
 				assert.NilError(t, ws.WriteMessage(t.Context(), msg2))
 			},
 		}.Run(t)
@@ -1107,17 +1107,17 @@ func TestServeLoop(t *testing.T) {
 	t.Run("serve should close the connection when handler returns an error", func(t *testing.T) {
 		t.Parallel()
 
-		// the error our websocket.Handler will return in response to a
+		// the error our Handler will return in response to a
 		// specially crafted "fail" frame
 		wantErr := errors.New("fail")
 
 		clientServerTest{
 			// client writes two frames: one that should be echoed, and one
 			// that should cause the handler to return an error
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
-				mustWriteFrames(t, conn, true, []*websocket.Frame{
-					websocket.NewFrame(websocket.OpcodeText, true, []byte("ok")),
-					websocket.NewFrame(websocket.OpcodeText, true, []byte("fail")),
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
+				mustWriteFrames(t, conn, true, []*Frame{
+					NewFrame(OpcodeText, true, []byte("ok")),
+					NewFrame(OpcodeText, true, []byte("fail")),
 				})
 
 				// first frame should be echoed as expected
@@ -1126,15 +1126,15 @@ func TestServeLoop(t *testing.T) {
 
 				// second frame should cause the handler to return an error,
 				// which should cause the server to close the connection
-				mustReadCloseFrame(t, conn, websocket.StatusInternalError, wantErr)
+				mustReadCloseFrame(t, conn, StatusInternalError, wantErr)
 				// reply to the close frame to complete the closing handshake
-				mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
+				mustWriteFrame(t, conn, true, NewCloseFrame(StatusNormalClosure, ""))
 				assertConnClosed(t, conn)
 			},
 			// server runs Serve with a custom handler that returns an error
 			// when it receives a "fail" message
-			serverTest: func(t testing.TB, ws *websocket.Websocket, _ net.Conn) {
-				err := ws.Handle(t.Context(), func(ctx context.Context, msg *websocket.Message) (*websocket.Message, error) {
+			serverTest: func(t testing.TB, ws *Websocket, _ net.Conn) {
+				err := ws.Handle(t.Context(), func(ctx context.Context, msg *Message) (*Message, error) {
 					if bytes.Equal(msg.Payload, []byte("fail")) {
 						return nil, wantErr
 					}
@@ -1155,8 +1155,8 @@ func TestServeLoop(t *testing.T) {
 
 		clientServerTest{
 			// client writes some frame to trigger handler
-			clientTest: func(t testing.TB, _ *websocket.Websocket, conn net.Conn) {
-				mustWriteFrame(t, conn, true, websocket.NewFrame(websocket.OpcodeText, true, []byte("hi")))
+			clientTest: func(t testing.TB, _ *Websocket, conn net.Conn) {
+				mustWriteFrame(t, conn, true, NewFrame(OpcodeText, true, []byte("hi")))
 			},
 			// server runs a handler that always returns an application error,
 			// which should cause server to start closing handshake. closing
@@ -1169,8 +1169,8 @@ func TestServeLoop(t *testing.T) {
 					},
 				}
 			},
-			serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
-				err := ws.Handle(t.Context(), func(ctx context.Context, msg *websocket.Message) (*websocket.Message, error) {
+			serverTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
+				err := ws.Handle(t.Context(), func(ctx context.Context, msg *Message) (*Message, error) {
 					return nil, appErr
 				})
 				// the error returned wraps both the application-level error
@@ -1191,50 +1191,199 @@ func TestClose(t *testing.T) {
 	clientServerTest{
 		// server initiates and successfully completes closing handshake and
 		// ensures that any subsequent use of the websocket is rejected.
-		serverTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
+		serverTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
 			assert.NilError(t, ws.Close())
 			{
 				msg, err := ws.ReadMessage(t.Context())
 				assert.Equal(t, msg, nil, "msg should be nil")
-				assert.Error(t, err, websocket.ErrConnectionClosed)
+				assert.Error(t, err, ErrConnectionClosed)
 			}
 			{
-				err := ws.WriteMessage(t.Context(), &websocket.Message{})
-				assert.Error(t, err, websocket.ErrConnectionClosed)
+				err := ws.WriteMessage(t.Context(), &Message{})
+				assert.Error(t, err, ErrConnectionClosed)
 			}
 		},
 		// client receives and finishes closing handshake
-		clientTest: func(t testing.TB, ws *websocket.Websocket, conn net.Conn) {
-			mustReadCloseFrame(t, conn, websocket.StatusNormalClosure, nil)
-			mustWriteFrame(t, conn, true, websocket.NewCloseFrame(websocket.StatusNormalClosure, ""))
+		clientTest: func(t testing.TB, ws *Websocket, conn net.Conn) {
+			mustReadCloseFrame(t, conn, StatusNormalClosure, nil)
+			mustWriteFrame(t, conn, true, NewCloseFrame(StatusNormalClosure, ""))
 		},
 	}.Run(t)
 }
 
-func mustReadFrame(t testing.TB, src io.Reader, maxPayloadLen int) *websocket.Frame {
+func TestDefaults(t *testing.T) {
+	t.Parallel()
+
+	var (
+		conn net.Conn
+		key  = ClientKey("test-client-key")
+		opts = Options{}
+		ws   = New(conn, key, ServerMode, opts)
+	)
+
+	assert.Equal(t, ws.ClientKey(), key, "incorrect client key")
+	assert.Equal(t, ws.maxFrameSize, DefaultMaxFrameSize, "incorrect max framesize")
+	assert.Equal(t, ws.maxMessageSize, DefaultMaxMessageSize, "incorrect max message size")
+	assert.Equal(t, ws.readTimeout, 0, "incorrect read timeout")
+	assert.Equal(t, ws.writeTimeout, 0, "incorrect write timeout")
+	assert.Equal(t, ws.closeTimeout, 0, "incorrect close timeout")
+	assert.Equal(t, ws.mode, ServerMode, "incorrect mode value")
+	assert.Equal(t, ws.hooks.OnCloseHandshakeStart != nil, true, "OnCloseHandshakeStart hook is nil")
+	assert.Equal(t, ws.hooks.OnCloseHandshakeDone != nil, true, "OnCloseHandshakeDone hook is nil")
+	assert.True(t, ws.hooks.OnReadError != nil, "OnReadError hook is nil")
+	assert.True(t, ws.hooks.OnReadFrame != nil, "OnReadFrame hook is nil")
+	assert.True(t, ws.hooks.OnReadMessage != nil, "OnReadMessage hook is nil")
+	assert.True(t, ws.hooks.OnWriteError != nil, "OnWriteError hook is nil")
+	assert.True(t, ws.hooks.OnWriteFrame != nil, "OnWriteFrame hook is nil")
+	assert.True(t, ws.hooks.OnWriteMessage != nil, "OnWriteMessage hook is nil")
+
+	t.Run("CloseTimeout defaults to ReadTimeout if set", func(t *testing.T) {
+		var (
+			conn        *net.TCPConn
+			key         = ClientKey("test-client-key")
+			readTimeout = 10 * time.Second
+			opts        = Options{
+				ReadTimeout: readTimeout,
+			}
+			ws = New(conn, key, ServerMode, opts)
+		)
+		assert.Equal(t, ws.readTimeout, readTimeout, "incorrect read timeout")
+		assert.Equal(t, ws.closeTimeout, readTimeout, "incorrect close timeout")
+		assert.Equal(t, ws.writeTimeout, 0, "incorrect write timeout")
+	})
+}
+
+func TestMask(t *testing.T) {
+	t.Parallel()
+
+	var (
+		conn net.Conn
+		key  = ClientKey("test-client-key")
+		opts = Options{}
+	)
+
+	{
+		ws := New(conn, key, ServerMode, opts)
+		mask := ws.mask()
+		assert.Equal(t, mask, Unmasked, "ServerMode should be unmasked")
+	}
+
+	{
+		ws := New(conn, key, ClientMode, opts)
+		mask := ws.mask()
+		assert.Equal(t, mask != Unmasked, true, "ClientMode should be masked")
+	}
+}
+
+func TestSetState(t *testing.T) {
+	t.Parallel()
+
+	// build map of invalid transitions as the inverse of validTransitions
+	invalidTransitions := make(map[connState][]connState)
+	for state, validStates := range validTransitions {
+		var invalidStates []connState
+		for candidate := range validTransitions {
+			if candidate == state {
+				continue
+			}
+			if !slices.Contains(validStates, candidate) {
+				invalidStates = append(invalidStates, candidate)
+			}
+		}
+		if len(invalidStates) > 0 {
+			invalidTransitions[state] = invalidStates
+		}
+	}
+
+	// ensure each invalid transition triggers a panic
+	for state, invalidStates := range invalidTransitions {
+		for _, invalidState := range invalidStates {
+			t.Run(fmt.Sprintf("illegal transition %s -> %s", state, invalidState), func(t *testing.T) {
+				t.Parallel()
+				defer func() {
+					r := recover()
+					if r == nil {
+						t.Fatalf("expected to catch panic on invalid transition from %s -> %s", state, invalidState)
+					}
+					assert.Equal(t, fmt.Sprint(r), fmt.Sprintf("websocket: setState: invalid transition from %q to %q", state, invalidState), "incorrect panic message")
+				}()
+
+				var (
+					conn net.Conn
+					key  = ClientKey("test-client-key")
+					opts = Options{}
+					ws   = New(conn, key, ServerMode, opts)
+				)
+				ws.state = state
+				ws.setState(invalidState)
+			})
+		}
+	}
+}
+
+func TestStatusCodeForError(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		err        error
+		wantStatus StatusCode
+		wantReason string
+	}{
+		{
+			err:        nil,
+			wantStatus: StatusNormalClosure,
+			wantReason: "",
+		},
+		{
+			err:        ErrClientFrameUnmasked,
+			wantStatus: StatusProtocolError,
+			wantReason: "client frame must be masked",
+		},
+		{
+			err:        context.DeadlineExceeded,
+			wantStatus: StatusInternalError,
+			wantReason: context.DeadlineExceeded.Error(),
+		},
+		{
+			err:        fmt.Errorf("wrapped io.EOF: %w", io.EOF),
+			wantStatus: StatusNormalClosure,
+			wantReason: "", // io.EOF is not considered an error
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(fmt.Sprint(tc.err), func(t *testing.T) {
+			t.Parallel()
+			gotStatus, gotReason := statusCodeForError(tc.err)
+			assert.Equal(t, gotStatus, tc.wantStatus, "incorrect status code")
+			assert.Equal(t, gotReason, tc.wantReason, "incorrect reason")
+		})
+	}
+}
+
+func mustReadFrame(t testing.TB, src io.Reader, maxPayloadLen int) *Frame {
 	t.Helper()
-	frame, err := websocket.ReadFrame(src, websocket.ClientMode, maxPayloadLen)
+	frame, err := ReadFrame(src, ClientMode, maxPayloadLen)
 	assert.NilError(t, err)
 	return frame
 }
 
-func mustReadMessage(t testing.TB, ws *websocket.Websocket) *websocket.Message {
+func mustReadMessage(t testing.TB, ws *Websocket) *Message {
 	t.Helper()
 	msg, err := ws.ReadMessage(t.Context())
 	assert.NilError(t, err)
 	return msg
 }
 
-func mustWriteFrame(t testing.TB, dst io.Writer, masked bool, frame *websocket.Frame) {
+func mustWriteFrame(t testing.TB, dst io.Writer, masked bool, frame *Frame) {
 	t.Helper()
-	mask := websocket.Unmasked
+	mask := Unmasked
 	if masked {
-		mask = websocket.NewMaskingKey()
+		mask = NewMaskingKey()
 	}
-	assert.NilError(t, websocket.WriteFrame(dst, mask, frame))
+	assert.NilError(t, WriteFrame(dst, mask, frame))
 }
 
-func mustWriteFrames(t testing.TB, dst io.Writer, masked bool, frames []*websocket.Frame) {
+func mustWriteFrames(t testing.TB, dst io.Writer, masked bool, frames []*Frame) {
 	t.Helper()
 	for _, frame := range frames {
 		mustWriteFrame(t, dst, masked, frame)
@@ -1244,7 +1393,7 @@ func mustWriteFrames(t testing.TB, dst io.Writer, masked bool, frames []*websock
 // mustReadCloseFrame ensures that we can read a close frame from the given
 // reader and optionally ensures that the close frame includes a specific
 // status code and message.
-func mustReadCloseFrame(t testing.TB, r io.Reader, wantCode websocket.StatusCode, wantErr error) {
+func mustReadCloseFrame(t testing.TB, r io.Reader, wantCode StatusCode, wantErr error) {
 	t.Helper()
 
 	// All control frames MUST have a payload length of 125 bytes or less
@@ -1254,7 +1403,7 @@ func mustReadCloseFrame(t testing.TB, r io.Reader, wantCode websocket.StatusCode
 	// This is already enforced in validateFrame, called by ReadFrame, but we
 	// must pass in a max payload size here.
 	frame := mustReadFrame(t, r, 125)
-	assert.Equal(t, frame.Opcode(), websocket.OpcodeClose, "opcode")
+	assert.Equal(t, frame.Opcode(), OpcodeClose, "opcode")
 
 	// nothing else to validate
 	if wantCode == 0 {
@@ -1262,7 +1411,7 @@ func mustReadCloseFrame(t testing.TB, r io.Reader, wantCode websocket.StatusCode
 	}
 
 	assert.Equal(t, len(frame.Payload) >= 2, true, "expected close frame payload to be at least 2 bytes, got %v", frame.Payload)
-	gotCode := websocket.StatusCode(binary.BigEndian.Uint16(frame.Payload[:2]))
+	gotCode := StatusCode(binary.BigEndian.Uint16(frame.Payload[:2]))
 	gotReason := string(frame.Payload[2:])
 	assert.Equal(t, int(gotCode), int(wantCode), "incorrect close status code")
 	if wantErr != nil {
@@ -1312,19 +1461,19 @@ func assertConnClosed(t testing.TB, conn net.Conn) {
 // Each test func will be called in a separate goroutine. The [Websocket]
 // will be configured with clientOpts or serverOpts and the [net.Conn] will be
 // configured with clientConn or serverConn (if given).
-type clientServerTestFunc func(testing.TB, *websocket.Websocket, net.Conn)
+type clientServerTestFunc func(testing.TB, *Websocket, net.Conn)
 
 // clientServerTest encapsulates coordinates a unit test involving a websocket
 // client and server communicating with each other. See [clientServerTest.Run]
 // for details.
 type clientServerTest struct {
 	clientTest clientServerTestFunc
-	clientOpts websocket.Options
-	clientKey  websocket.ClientKey
+	clientOpts Options
+	clientKey  ClientKey
 	clientConn func(net.Conn) net.Conn
 
 	serverTest clientServerTestFunc
-	serverOpts websocket.Options
+	serverOpts Options
 	serverConn func(net.Conn) net.Conn
 }
 
@@ -1333,14 +1482,14 @@ type clientServerTest struct {
 // given clientTest and serverTest callbacks and d) ensuring that both
 // callbacks complete before returning.
 //
-// The client and server [websocket.Websocket] instances can be configured via
+// The client and server [Websocket] instances can be configured via
 // [clientOpts] and [serverOpts]. The underlying [net.Conn] can be configured
 // (e.g. wrapped, having deadlines set, etc) via [clientConn] and [serverConn].
 func (cst clientServerTest) Run(t testing.TB) {
 	t.Helper()
 
 	if cst.clientKey == "" {
-		cst.clientKey = websocket.NewClientKey()
+		cst.clientKey = NewClientKey()
 	}
 
 	var wg sync.WaitGroup
@@ -1348,12 +1497,12 @@ func (cst clientServerTest) Run(t testing.TB) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer wg.Done()
 
-		// Manually re-implement websocket.Accept in order to capture the
+		// Manually re-implement Accept in order to capture the
 		// underlying net.Conn
-		clientKey, err := websocket.Handshake(w, r)
+		clientKey, err := Handshake(w, r)
 		assert.NilError(t, err)
 
-		serverConn, err := websocket.HijackConn(w)
+		serverConn, err := HijackConn(w)
 		assert.NilError(t, err)
 
 		// optionally wrap conn before handing it off to test function
@@ -1361,7 +1510,7 @@ func (cst clientServerTest) Run(t testing.TB) {
 			serverConn = cst.serverConn(serverConn)
 		}
 
-		ws := websocket.New(serverConn, clientKey, websocket.ServerMode, cst.serverOpts)
+		ws := New(serverConn, clientKey, ServerMode, cst.serverOpts)
 		cst.serverTest(t, ws, serverConn)
 	}))
 	t.Cleanup(func() {
@@ -1393,7 +1542,7 @@ func (cst clientServerTest) Run(t testing.TB) {
 		// this wrapper helps ensure that any data read into the buffer is still
 		// available on subsequent reads directly from the conn.
 		br := bufio.NewReader(clientConn)
-		clientConn = &websocket.BufferedConn{
+		clientConn = &bufferedConn{
 			Conn:   clientConn,
 			Reader: br,
 		}
@@ -1414,38 +1563,38 @@ func (cst clientServerTest) Run(t testing.TB) {
 		assert.NilError(t, err)
 		assert.Equal(t, resp.StatusCode, http.StatusSwitchingProtocols, "incorrect status code")
 
-		clientSock := websocket.New(clientConn, cst.clientKey, websocket.ClientMode, cst.clientOpts)
+		clientSock := New(clientConn, cst.clientKey, ClientMode, cst.clientOpts)
 		cst.clientTest(t, clientSock, clientConn)
 	}()
 
 	wg.Wait()
 }
 
-func newTestHooks(t testing.TB) websocket.Hooks {
+func newTestHooks(t testing.TB) Hooks {
 	t.Helper()
-	return websocket.Hooks{
-		OnCloseHandshakeStart: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
+	return Hooks{
+		OnCloseHandshakeStart: func(key ClientKey, code StatusCode, err error) {
 			t.Logf("HOOK: client=%s OnCloseHandshakeStart code=%v err=%q", key, code, err)
 		},
-		OnCloseHandshakeDone: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
+		OnCloseHandshakeDone: func(key ClientKey, code StatusCode, err error) {
 			t.Logf("HOOK: client=%s OnCloseHandshakeDone code=%v err=%q", key, code, err)
 		},
-		OnReadError: func(key websocket.ClientKey, err error) {
+		OnReadError: func(key ClientKey, err error) {
 			t.Logf("HOOK: client=%s OnReadError err=%v", key, err)
 		},
-		OnReadFrame: func(key websocket.ClientKey, frame *websocket.Frame) {
+		OnReadFrame: func(key ClientKey, frame *Frame) {
 			t.Logf("HOOK: client=%s OnReadFrame frame=%v", key, frame)
 		},
-		OnReadMessage: func(key websocket.ClientKey, msg *websocket.Message) {
+		OnReadMessage: func(key ClientKey, msg *Message) {
 			t.Logf("HOOK: client=%s OnReadMessage msg=%v", key, msg)
 		},
-		OnWriteError: func(key websocket.ClientKey, err error) {
+		OnWriteError: func(key ClientKey, err error) {
 			t.Logf("HOOK: client=%s OnWriteError err=%v", key, err)
 		},
-		OnWriteFrame: func(key websocket.ClientKey, frame *websocket.Frame) {
+		OnWriteFrame: func(key ClientKey, frame *Frame) {
 			t.Logf("HOOK: client=%s OnWriteFrame frame=%v", key, frame)
 		},
-		OnWriteMessage: func(key websocket.ClientKey, msg *websocket.Message) {
+		OnWriteMessage: func(key ClientKey, msg *Message) {
 			t.Logf("HOOK: client=%s OnWriteMessage msg=%v", key, msg)
 		},
 	}
@@ -1549,7 +1698,7 @@ var (
 // ============================================================================
 func ExampleHandle() {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ws, err := websocket.Accept(w, r, websocket.Options{
+		ws, err := Accept(w, r, Options{
 			ReadTimeout:    500 * time.Millisecond,
 			WriteTimeout:   500 * time.Millisecond,
 			MaxFrameSize:   16 << 10, // 16KiB
@@ -1559,7 +1708,7 @@ func ExampleHandle() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := ws.Handle(r.Context(), websocket.EchoHandler); err != nil {
+		if err := ws.Handle(r.Context(), EchoHandler); err != nil {
 			// an error returned by Handle is strictly informational; the
 			// connection will already be closed at this point.
 			log.Printf("error handling websocket connection: %s", err)

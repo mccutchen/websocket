@@ -110,7 +110,7 @@ func HijackConn(w http.ResponseWriter) (net.Conn, error) {
 	// per the Hijack docs, the returned read buffer may contain unprocessed
 	// data, so we return a net.Conn implementation that will read from that
 	// buffer first.
-	return &BufferedConn{
+	return &bufferedConn{
 		Conn:   conn,
 		Reader: rw.Reader,
 	}, nil
@@ -538,19 +538,19 @@ func statusCodeForError(err error) (StatusCode, string) {
 	return StatusInternalError, err.Error()
 }
 
-// BufferedConn ties a [net.Conn] to a [bufio.Reader] wrapping that conn, such
+// bufferedConn ties a [net.Conn] to a [bufio.Reader] wrapping that conn, such
 // as those returned by [http.Hijacker.Hijack], so that all reads go through
 // the buffered reader but writes go directly to the underlying conn.
-type BufferedConn struct {
+type bufferedConn struct {
 	net.Conn
 	Reader *bufio.Reader
 }
 
-func (bc *BufferedConn) Read(p []byte) (int, error) {
+func (bc *bufferedConn) Read(p []byte) (int, error) {
 	return bc.Reader.Read(p)
 }
 
-var _ net.Conn = &BufferedConn{}
+var _ net.Conn = &bufferedConn{}
 
 // Hooks define the callbacks that are called during the lifecycle of a
 // websocket connection.

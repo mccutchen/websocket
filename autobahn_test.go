@@ -1,4 +1,4 @@
-package websocket_test
+package websocket
 
 // ============================================================================
 // Autobahn Test Suite
@@ -41,7 +41,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mccutchen/websocket"
 	"github.com/mccutchen/websocket/internal/testing/assert"
 )
 
@@ -74,7 +73,7 @@ func TestAutobahn(t *testing.T) {
 	}
 
 	// Hooks can be expensive, so only enable them if necessary for debugging
-	var hooks websocket.Hooks
+	var hooks Hooks
 	if debug := os.Getenv("DEBUG"); debug == "1" {
 		hooks = newTestHooks(t)
 	}
@@ -82,7 +81,7 @@ func TestAutobahn(t *testing.T) {
 	targetURL := os.Getenv("TARGET")
 	if targetURL == "" {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ws, err := websocket.Accept(w, r, websocket.Options{
+			ws, err := Accept(w, r, Options{
 				Hooks: hooks,
 				// long ReadTimeout because some autobahn test cases (e.g. 5.19)
 				// sleep up to 1 second between frames
@@ -97,7 +96,7 @@ func TestAutobahn(t *testing.T) {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			_ = ws.Handle(r.Context(), websocket.EchoHandler)
+			_ = ws.Handle(r.Context(), EchoHandler)
 		}))
 		defer srv.Close()
 		targetURL = srv.URL
