@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"slices"
@@ -31,9 +32,19 @@ const (
 	ClientMode      = true
 )
 
+func (m Mode) String() string {
+	switch m {
+	case ServerMode:
+		return "server"
+	case ClientMode:
+		return "client"
+	}
+	panic("unknown mode: " + fmt.Sprintf("%#v", m))
+}
+
 // Options define the limits imposed on a websocket connection.
 type Options struct {
-	Hooks          Hooks
+	Logger         *slog.Logger
 	ReadTimeout    time.Duration
 	WriteTimeout   time.Duration
 	CloseTimeout   time.Duration // defaults to ReadTimeout if set
@@ -70,7 +81,7 @@ type Websocket struct {
 
 	// observability
 	clientKey ClientKey
-	hooks     Hooks
+	logger    *slog.Logger
 
 	// limits
 	closeTimeout   time.Duration
@@ -124,12 +135,18 @@ func HijackConn(w http.ResponseWriter) (net.Conn, error) {
 // using New directly.
 func New(conn net.Conn, clientKey ClientKey, mode Mode, opts Options) *Websocket {
 	setDefaults(&opts)
+	if opts.Logger != nil {
+		opts.Logger = opts.Logger.With(
+			slog.String("client-key", string(clientKey)),
+			slog.String("mode", mode.String()),
+		)
+	}
 	return &Websocket{
 		conn:           conn,
 		state:          connStateOpen,
 		mode:           mode,
 		clientKey:      clientKey,
-		hooks:          opts.Hooks,
+		logger:         opts.Logger,
 		closeTimeout:   opts.CloseTimeout,
 		readTimeout:    opts.ReadTimeout,
 		writeTimeout:   opts.WriteTimeout,
@@ -149,7 +166,6 @@ func setDefaults(opts *Options) {
 	if opts.CloseTimeout == 0 && opts.ReadTimeout != 0 {
 		opts.CloseTimeout = opts.ReadTimeout
 	}
-	setupHooks(&opts.Hooks)
 }
 
 // Handshake is a low-level helper that validates the request and performs
@@ -251,7 +267,7 @@ func (ws *Websocket) ReadMessage(ctx context.Context) (*Message, error) {
 			if !msg.Binary && !utf8.Valid(msg.Payload) {
 				return nil, ErrInvalidFramePayload
 			}
-			ws.hooks.OnReadMessage(ws.clientKey, msg)
+			ws.logEvent(eventReadMessage, slog.Any("msg", msg))
 			return msg, nil
 		}
 	}
@@ -268,7 +284,6 @@ func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 		return ErrConnectionClosed
 	}
 
-	ws.hooks.OnWriteMessage(ws.clientKey, msg)
 	for _, frame := range FrameMessage(msg, ws.maxFrameSize) {
 		select {
 		case <-ctx.Done():
@@ -279,6 +294,7 @@ func (ws *Websocket) WriteMessage(ctx context.Context, msg *Message) error {
 			}
 		}
 	}
+	ws.logEvent(eventWriteMessage, slog.Any("msg", msg))
 	return nil
 }
 
@@ -286,24 +302,24 @@ func (ws *Websocket) readFrame() (*Frame, error) {
 	ws.resetReadDeadline()
 	frame, err := ReadFrame(ws.conn, ws.mode, ws.maxFrameSize)
 	if err != nil {
-		ws.hooks.OnReadError(ws.clientKey, err)
+		ws.logEvent(eventReadError, slog.Any("error", err))
 		return nil, fmt.Errorf("websocket: read: %w", err)
 	}
 	if err := validateFrame(frame); err != nil {
-		ws.hooks.OnReadError(ws.clientKey, err)
+		ws.logEvent(eventReadError, slog.Any("frame", frame), slog.Any("error", err))
 		return nil, fmt.Errorf("websocket: read: %w", err)
 	}
-	ws.hooks.OnReadFrame(ws.clientKey, frame)
+	ws.logEvent(eventReadFrame, slog.Any("frame", frame))
 	return frame, nil
 }
 
 func (ws *Websocket) writeFrame(frame *Frame) error {
 	ws.resetWriteDeadline()
-	ws.hooks.OnWriteFrame(ws.clientKey, frame)
 	if err := WriteFrame(ws.conn, ws.mask(), frame); err != nil {
-		ws.hooks.OnWriteError(ws.clientKey, err)
+		ws.logEvent(eventWriteError, slog.Any("frame", frame), slog.Any("error", err))
 		return err
 	}
+	ws.logEvent(eventWriteFrame, slog.Any("frame", frame))
 	return nil
 }
 
@@ -393,6 +409,7 @@ func (ws *Websocket) Close() error {
 func (ws *Websocket) CloseWithStatus(status StatusCode, reason string) error {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
+	ws.logEvent(eventCloseHandshakeStart, slog.Any("status", status), slog.String("reason", reason))
 	return ws.doCloseHandshake(NewCloseFrame(status, reason), nil)
 }
 
@@ -409,10 +426,11 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 	ws.readTimeout = ws.closeTimeout
 	ws.writeTimeout = ws.closeTimeout
 
-	ws.hooks.OnCloseHandshakeStart(ws.clientKey, 0, cause)
 	if err := ws.writeFrame(closeFrame); err != nil {
+		err = fmt.Errorf("websocket: close: failed to write close frame %w", err)
+		ws.logEvent(eventCloseError, slog.Any("error", err))
 		ws.finishClose()
-		return fmt.Errorf("websocket: close: failed to write close frame %w", err)
+		return err
 	}
 
 	// Once we've written the frame to start the closing handshake, we
@@ -425,6 +443,7 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 			if !errors.Is(err, io.EOF) {
 				cause = fmt.Errorf("websocket: close: read failed while waiting for reply: %w", err)
 			}
+			ws.logEvent(eventCloseError, slog.Any("error", err))
 			ws.finishClose()
 			return cause
 		}
@@ -433,7 +452,7 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 			// is started
 			continue
 		}
-		ws.hooks.OnCloseHandshakeDone(ws.clientKey, 0, nil)
+		ws.logEvent(eventCloseHandshakeDone, slog.Any("reply", frame))
 		ws.finishClose()
 		return cause
 	}
@@ -444,7 +463,7 @@ func (ws *Websocket) doCloseHandshake(closeFrame *Frame, cause error) error {
 // connection.
 func (ws *Websocket) doCloseHandshakeReply(closeFrame *Frame) error {
 	err := ws.writeFrame(closeFrame)
-	ws.hooks.OnCloseHandshakeDone(ws.clientKey, 0, err)
+	ws.logEvent(eventCloseHandshakeDone, slog.Any("error", err))
 	ws.finishClose()
 	return err
 }
@@ -453,7 +472,11 @@ func (ws *Websocket) closeImmediately(cause error) error {
 	code, reason := statusCodeForError(cause)
 	frame := NewCloseFrame(code, reason)
 	_ = ws.writeFrame(frame) // connection is closed on our end, error not actionable
-	ws.hooks.OnCloseHandshakeDone(ws.clientKey, code, cause)
+	ws.logEvent(
+		eventCloseNoHandshake,
+		slog.Any("status", code),
+		slog.String("reason", reason),
+	)
 	ws.finishClose()
 	return cause
 }
@@ -512,6 +535,15 @@ func (ws *Websocket) ClientKey() ClientKey {
 	return ws.clientKey
 }
 
+// logEvent is a helper that logs a websocket event with consistent structure.
+// It's a no-op if logger is nil.
+func (ws *Websocket) logEvent(event lifecycleEvent, attrs ...slog.Attr) {
+	if ws.logger == nil {
+		return
+	}
+	ws.logger.LogAttrs(context.Background(), slog.LevelDebug, string(event), attrs...)
+}
+
 // Handler handles a single websocket [Message] as part of the high level
 // [Handle] request-response API.
 //
@@ -552,51 +584,20 @@ func (bc *bufferedConn) Read(p []byte) (int, error) {
 
 var _ net.Conn = &bufferedConn{}
 
-// Hooks define the callbacks that are called during the lifecycle of a
-// websocket connection.
-type Hooks struct {
-	// OnCloseStart is called when the a close handshake is initiated.
-	OnCloseHandshakeStart func(ClientKey, StatusCode, error)
-	// OnCloseHandshakeDone is called when the close handshake is complete.
-	OnCloseHandshakeDone func(ClientKey, StatusCode, error)
-	// OnReadError is called when a read error occurs.
-	OnReadError func(ClientKey, error)
-	// OnReadFrame is called when a frame is read.
-	OnReadFrame func(ClientKey, *Frame)
-	// OnReadMessage is called when a complete message is read.
-	OnReadMessage func(ClientKey, *Message)
-	// OnWriteError is called when a write error occurs.
-	OnWriteError func(ClientKey, error)
-	// OnWriteFrame is called when a frame is written.
-	OnWriteFrame func(ClientKey, *Frame)
-	// OnWriteMessage is called when a complete message is written.
-	OnWriteMessage func(ClientKey, *Message)
-}
+// lifecycleEvent represents a specific websocket lifecycle event that can be
+// logged.
+type lifecycleEvent string
 
-// setupHooks ensures that all hooks have a default no-op function if unset.
-func setupHooks(hooks *Hooks) {
-	if hooks.OnCloseHandshakeStart == nil {
-		hooks.OnCloseHandshakeStart = func(ClientKey, StatusCode, error) {}
-	}
-	if hooks.OnCloseHandshakeDone == nil {
-		hooks.OnCloseHandshakeDone = func(ClientKey, StatusCode, error) {}
-	}
-	if hooks.OnReadError == nil {
-		hooks.OnReadError = func(ClientKey, error) {}
-	}
-	if hooks.OnReadFrame == nil {
-		hooks.OnReadFrame = func(ClientKey, *Frame) {}
-	}
-	if hooks.OnReadMessage == nil {
-		hooks.OnReadMessage = func(ClientKey, *Message) {}
-	}
-	if hooks.OnWriteError == nil {
-		hooks.OnWriteError = func(ClientKey, error) {}
-	}
-	if hooks.OnWriteFrame == nil {
-		hooks.OnWriteFrame = func(ClientKey, *Frame) {}
-	}
-	if hooks.OnWriteMessage == nil {
-		hooks.OnWriteMessage = func(ClientKey, *Message) {}
-	}
-}
+// lifecycle events
+const (
+	eventReadFrame           lifecycleEvent = "websocket:read_frame"
+	eventReadMessage         lifecycleEvent = "websocket:read_message"
+	eventWriteFrame          lifecycleEvent = "websocket:write_frame"
+	eventWriteMessage        lifecycleEvent = "websocket:write_message"
+	eventReadError           lifecycleEvent = "websocket:read_error"
+	eventWriteError          lifecycleEvent = "websocket:write_error"
+	eventCloseError          lifecycleEvent = "websocket:close_error"
+	eventCloseNoHandshake    lifecycleEvent = "websocket:close_no_handshake"
+	eventCloseHandshakeStart lifecycleEvent = "websocket:close_handshake_start"
+	eventCloseHandshakeDone  lifecycleEvent = "websocket:close_handshake_done"
+)

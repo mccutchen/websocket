@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"unicode/utf8"
 )
 
@@ -169,6 +170,14 @@ func (f Frame) String() string {
 	return fmt.Sprintf("Frame{Fin: %v, Opcode: %v, Payload: %s}", f.Fin(), f.Opcode(), formatPayload(f.Payload))
 }
 
+func (f Frame) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Bool("fin", f.Fin()),
+		slog.Uint64("opcode", uint64(f.Opcode())),
+		slog.String("payload", formatPayload(f.Payload)),
+	)
+}
+
 // Message is an application-level message from the client, which may be
 // constructed from one or more individual frames.
 type Message struct {
@@ -178,6 +187,13 @@ type Message struct {
 
 func (m Message) String() string {
 	return fmt.Sprintf("Message{Binary: %v, Payload: %s}", m.Binary, formatPayload(m.Payload))
+}
+
+func (m Message) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Bool("binary", m.Binary),
+		slog.String("payload", formatPayload(m.Payload)),
+	)
 }
 
 // formatPayload is the formatter used by Frame and Message String() methods,

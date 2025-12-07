@@ -2,7 +2,6 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"log"
 	"log/slog"
@@ -23,17 +22,11 @@ func main() {
 	flag.BoolVar(&pprof, "pprof", false, "Enable pprof endpoints on port 6060")
 	flag.Parse()
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-
+	logger := getLogger(debug)
 	mux := http.NewServeMux()
-
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		var hooks websocket.Hooks
-		if debug {
-			hooks = newDebugHooks(r.Context(), logger)
-		}
 		ws, err := websocket.Accept(w, r, websocket.Options{
-			Hooks:        hooks,
+			Logger:       getLogger(debug),
 			ReadTimeout:  60 * time.Second,
 			WriteTimeout: 1 * time.Second,
 			// Allow very large frames and messages to allow testing with
@@ -62,39 +55,13 @@ func main() {
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
-func newDebugHooks(ctx context.Context, logger *slog.Logger) websocket.Hooks {
-	levelForErr := func(err error) slog.Level {
-		if err != nil {
-			return slog.LevelError
-		}
-		return slog.LevelInfo
+func getLogger(debug bool) *slog.Logger {
+	if !debug {
+		return nil
 	}
-	return websocket.Hooks{
-		OnCloseHandshakeStart: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
-			logger.Log(ctx, levelForErr(err), "OnCloseHandshakeStart", "client", key, "code", code, "err", err)
-		},
-		OnCloseHandshakeDone: func(key websocket.ClientKey, code websocket.StatusCode, err error) {
-			logger.Log(ctx, levelForErr(err), "OnCloseHandshakeDone", "client", key, "code", code, "err", err)
-		},
-		OnReadError: func(key websocket.ClientKey, err error) {
-			logger.ErrorContext(ctx, "OnReadError", "client", key, "err", err)
-		},
-		OnReadFrame: func(key websocket.ClientKey, frame *websocket.Frame) {
-			logger.InfoContext(ctx, "OnReadFrame", "client", key, "frame", frame)
-		},
-		OnReadMessage: func(key websocket.ClientKey, msg *websocket.Message) {
-			logger.InfoContext(ctx, "OnReadMessage", "client", key, "msg", msg)
-		},
-		OnWriteError: func(key websocket.ClientKey, err error) {
-			logger.ErrorContext(ctx, "OnWriteError", "client", key, "err", err)
-		},
-		OnWriteFrame: func(key websocket.ClientKey, frame *websocket.Frame) {
-			logger.InfoContext(ctx, "OnWriteFrame", "client", key, "frame", frame)
-		},
-		OnWriteMessage: func(key websocket.ClientKey, msg *websocket.Message) {
-			logger.InfoContext(ctx, "OnWriteMessage", "client", key, "msg", msg)
-		},
-	}
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
 }
 
 func getListenAddr() string {

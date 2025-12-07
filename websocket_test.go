@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -211,7 +212,6 @@ func TestConnectionLimits(t *testing.T) {
 			serverOpts: Options{
 				ReadTimeout:  maxDuration,
 				WriteTimeout: maxDuration,
-				Hooks:        newTestHooks(t),
 			},
 			serverTest: func(t testing.TB, ws *Websocket) {
 				start := time.Now()
@@ -299,7 +299,6 @@ func TestProtocolOkay(t *testing.T) {
 			clientOpts: Options{
 				MaxFrameSize:   maxFrameSize,
 				MaxMessageSize: maxMessageSize,
-				Hooks:          newTestHooks(t),
 			},
 			clientTest: func(t testing.TB, ws *Websocket) {
 				// manually write fragmented message to ensure server reassembles
@@ -314,7 +313,6 @@ func TestProtocolOkay(t *testing.T) {
 			serverOpts: Options{
 				MaxFrameSize:   maxFrameSize,
 				MaxMessageSize: maxMessageSize,
-				Hooks:          newTestHooks(t),
 			},
 			serverTest: func(t testing.TB, ws *Websocket) {
 				msg := mustReadMessage(t, ws)
@@ -402,7 +400,6 @@ func TestProtocolOkay(t *testing.T) {
 			clientOpts: Options{
 				MaxFrameSize:   jumboSize,
 				MaxMessageSize: jumboSize,
-				Hooks:          newTestHooks(t),
 			},
 			clientTest: func(t testing.TB, ws *Websocket) {
 				clientFrame := NewFrame(OpcodeText, true, bytes.Repeat([]byte("*"), jumboSize))
@@ -414,7 +411,6 @@ func TestProtocolOkay(t *testing.T) {
 			serverOpts: Options{
 				MaxFrameSize:   jumboSize,
 				MaxMessageSize: jumboSize,
-				Hooks:          newTestHooks(t),
 			},
 			serverTest: func(t testing.TB, ws *Websocket) {
 				msg := mustReadMessage(t, ws)
@@ -484,14 +480,6 @@ func TestProtocolErrors(t *testing.T) {
 		maxFrameSize   = 128
 		maxMessageSize = maxFrameSize * 2
 	)
-
-	newOpts := func(t *testing.T) Options {
-		return Options{
-			MaxFrameSize:   maxFrameSize,
-			MaxMessageSize: maxMessageSize,
-			Hooks:          newTestHooks(t),
-		}
-	}
 
 	testCases := map[string]struct {
 		frames          []*Frame
@@ -595,7 +583,10 @@ func TestProtocolErrors(t *testing.T) {
 				},
 				// server just runs echo handler, which should process all
 				// protocol errors automatically
-				serverOpts: newOpts(t),
+				serverOpts: Options{
+					MaxFrameSize:   maxFrameSize,
+					MaxMessageSize: maxMessageSize,
+				},
 				serverTest: func(t testing.TB, ws *Websocket) {
 					assert.Error(t, ws.Handle(t.Context(), EchoHandler), tc.wantCloseReason)
 				},
@@ -1228,14 +1219,7 @@ func TestDefaults(t *testing.T) {
 	assert.Equal(t, ws.writeTimeout, 0, "incorrect write timeout")
 	assert.Equal(t, ws.closeTimeout, 0, "incorrect close timeout")
 	assert.Equal(t, ws.mode, ServerMode, "incorrect mode value")
-	assert.Equal(t, ws.hooks.OnCloseHandshakeStart != nil, true, "OnCloseHandshakeStart hook is nil")
-	assert.Equal(t, ws.hooks.OnCloseHandshakeDone != nil, true, "OnCloseHandshakeDone hook is nil")
-	assert.True(t, ws.hooks.OnReadError != nil, "OnReadError hook is nil")
-	assert.True(t, ws.hooks.OnReadFrame != nil, "OnReadFrame hook is nil")
-	assert.True(t, ws.hooks.OnReadMessage != nil, "OnReadMessage hook is nil")
-	assert.True(t, ws.hooks.OnWriteError != nil, "OnWriteError hook is nil")
-	assert.True(t, ws.hooks.OnWriteFrame != nil, "OnWriteFrame hook is nil")
-	assert.True(t, ws.hooks.OnWriteMessage != nil, "OnWriteMessage hook is nil")
+	assert.Equal(t, ws.logger, nil, "incorrect logger value")
 
 	t.Run("CloseTimeout defaults to ReadTimeout if set", func(t *testing.T) {
 		var (
@@ -1510,6 +1494,10 @@ func (cst clientServerTest) Run(t testing.TB) {
 			serverConn = cst.serverConn(serverConn)
 		}
 
+		if cst.serverOpts.Logger == nil {
+			cst.serverOpts.Logger = newTestLogger(t)
+		}
+
 		ws := New(serverConn, clientKey, ServerMode, cst.serverOpts)
 		cst.serverTest(t, ws)
 	}))
@@ -1532,6 +1520,10 @@ func (cst clientServerTest) Run(t testing.TB) {
 		// optionally wrap client conn before handing it off to test function
 		if cst.clientConn != nil {
 			clientConn = cst.clientConn(clientConn)
+		}
+
+		if cst.clientOpts.Logger == nil {
+			cst.clientOpts.Logger = newTestLogger(t)
 		}
 
 		// tie our client conn to a bufio.Reader because we need to pass the latter into
@@ -1568,36 +1560,6 @@ func (cst clientServerTest) Run(t testing.TB) {
 	}()
 
 	wg.Wait()
-}
-
-func newTestHooks(t testing.TB) Hooks {
-	t.Helper()
-	return Hooks{
-		OnCloseHandshakeStart: func(key ClientKey, code StatusCode, err error) {
-			t.Logf("HOOK: client=%s OnCloseHandshakeStart code=%v err=%q", key, code, err)
-		},
-		OnCloseHandshakeDone: func(key ClientKey, code StatusCode, err error) {
-			t.Logf("HOOK: client=%s OnCloseHandshakeDone code=%v err=%q", key, code, err)
-		},
-		OnReadError: func(key ClientKey, err error) {
-			t.Logf("HOOK: client=%s OnReadError err=%v", key, err)
-		},
-		OnReadFrame: func(key ClientKey, frame *Frame) {
-			t.Logf("HOOK: client=%s OnReadFrame frame=%v", key, frame)
-		},
-		OnReadMessage: func(key ClientKey, msg *Message) {
-			t.Logf("HOOK: client=%s OnReadMessage msg=%v", key, msg)
-		},
-		OnWriteError: func(key ClientKey, err error) {
-			t.Logf("HOOK: client=%s OnWriteError err=%v", key, err)
-		},
-		OnWriteFrame: func(key ClientKey, frame *Frame) {
-			t.Logf("HOOK: client=%s OnWriteFrame frame=%v", key, frame)
-		},
-		OnWriteMessage: func(key ClientKey, msg *Message) {
-			t.Logf("HOOK: client=%s OnWriteMessage msg=%v", key, msg)
-		},
-	}
 }
 
 // wrappedConn is a minimal wrapper around a net.Conn that allows tests to
@@ -1692,6 +1654,26 @@ var (
 	_ http.ResponseWriter = &brokenHijackResponseWriter{}
 	_ http.Hijacker       = &brokenHijackResponseWriter{}
 )
+
+func newTestLogger(tb testing.TB) *slog.Logger {
+	w := &testWriter{tb: tb}
+	handler := slog.NewTextHandler(w, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	})
+	return slog.New(handler)
+}
+
+// testWriter wraps testing.TB to implement io.Writer
+type testWriter struct {
+	tb testing.TB
+}
+
+func (w *testWriter) Write(p []byte) (n int, err error) {
+	// Remove trailing newline that slog.TextHandler adds
+	s := strings.TrimSuffix(string(p), "\n")
+	w.tb.Logf("%s", s)
+	return len(p), nil
+}
 
 // ============================================================================
 // Examples

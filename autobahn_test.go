@@ -25,6 +25,7 @@ package websocket
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -72,17 +73,17 @@ func TestAutobahn(t *testing.T) {
 		excludedTestCases = []string{}
 	}
 
-	// Hooks can be expensive, so only enable them if necessary for debugging
-	var hooks Hooks
+	// Debug logging can be expensive, so only enable it if requested
+	var logger *slog.Logger
 	if debug := os.Getenv("DEBUG"); debug == "1" {
-		hooks = newTestHooks(t)
+		logger = newTestLogger(t)
 	}
 
 	targetURL := os.Getenv("TARGET")
 	if targetURL == "" {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ws, err := Accept(w, r, Options{
-				Hooks: hooks,
+				Logger: logger,
 				// long ReadTimeout because some autobahn test cases (e.g. 5.19)
 				// sleep up to 1 second between frames
 				ReadTimeout:  5000 * time.Millisecond,
